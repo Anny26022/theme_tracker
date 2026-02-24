@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+@theme {
+    --font-sans: "Outfit", "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+    color-scheme: dark light;
+    --bg-main: #050508;
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.4);
+    --accent-primary: #c5a059;
+    --accent-secondary: #4f46e5;
+    --glass-bg: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --nav-bg: rgba(0, 0, 0, 0.6);
+    --ui-divider: rgba(255, 255, 255, 0.05);
+    --ui-muted: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-theme='light'] {
+    --bg-main: #ffffff;
+    --text-main: #000000;
+    --text-muted: rgba(0, 0, 0, 0.6);
+    --accent-primary: #af8a44;
+    --accent-secondary: #4338ca;
+    --glass-bg: #f9fafb;
+    --glass-border: rgba(0, 0, 0, 0.12);
+    --nav-bg: rgba(255, 255, 255, 0.95);
+    --ui-divider: rgba(0, 0, 0, 0.15);
+    --ui-muted: rgba(0, 0, 0, 0.3);
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    transition: background-color 0.4s ease, color 0.4s ease;
+    background-image:
+        radial-gradient(at 0% 0%, rgba(197, 160, 89, 0.05) 0, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(79, 70, 229, 0.05) 0, transparent 50%);
+}
+
+@layer base {
+    * {
+        border-color: var(--glass-border);
+    }
+}
+
+.glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    transition: all 0.5s ease;
+}
+
+.glass-button {
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1px;
+    transition: all 0.5s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.glass-button:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 1);
+}
+
+.text-luxury {
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #ffffff;
+}
+
+.text-glow-blue {
+    text-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+}
+
+.text-glow-gold {
+    text-shadow: 0 0 20px rgba(234, 179, 8, 0.5);
+}
+
+.hairline {
+    height: 1px;
+    background-image: linear-gradient(to right, transparent, rgba(59, 130, 246, 0.2), transparent);
+}
+
+.text-gradient {
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    background-image: linear-gradient(to bottom right, #ffffff, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.4));
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}

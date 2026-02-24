@@ -1,0 +1,1212 @@
+# All RPC Endpoints Test Results - Comprehensive Analysis (Updated Feb 2026)
+
+## 📊 Executive Summary
+
+**Total Endpoints Tested**: 10  
+**✅ Working Endpoints (via batchexecute)**: 7  
+**✅ Working Endpoints (via HTML extraction)**: 1 (AiCwsd)  
+**❌ Non-Working Endpoints**: 2  
+
+**Testing Methods**: curl + Python requests  
+**Session ID Testing**: Dummy + Real session IDs  
+**Build Label**: Verified `boq_finance-ui_20260204.01_p0`
+
+### 🍪 Cookie Requirements Summary (Feb 9, 2026)
+
+| Endpoint | Purpose | No Cookies | With Cookies | Method |
+|----------|---------|------------|--------------|--------|
+| **xh8wxf** | Price | ✅ Works | ✅ Works | batchexecute |
+| **HqGpWd** | Fundamentals | ✅ Works | ✅ Works | batchexecute |
+| **SICF5d** | Related | ✅ Works | ✅ Works | batchexecute |
+| **lvVhof** | Trending | ✅ Works | ✅ Works | batchexecute |
+| **uwlMvd** | Metadata | ✅ Works | ✅ Works | batchexecute |
+| **Pr8h2e** | Financials | ✅ Works | ✅ Works | batchexecute |
+| **o6pODe** | News | ✅ Works | ✅ Works | batchexecute |
+| **AiCwsd** | Chart | ❌ Empty | ❌ Empty | **HTML ds:11** ✅ |
+| **ZugVf** | Quote State | ❌ Empty | ❌ Empty | N/A |
+| **yYvDpf** | Financials Alt | ❌ Null | ❌ Null | N/A |
+
+**Key Finding**: **7 out of 8 working endpoints require NO cookies and work with dummy session ID!**
+
+---
+
+
+## ✅ WORKING ENDPOINTS (8 Total)
+
+### 1. **xh8wxf** - Price Data ✅
+- **Status**: ✅ WORKING
+- **Data**: Current price, change, previous close, currency, timezone
+
+### 2. **HqGpWd** - Stock Information ✅
+- **Status**: ✅ WORKING (Requires 4 brackets `]]]]`)
+- **Note**: Updated Feb 2026 - must use 4 brackets in payload string. Correct format section below.
+- **Data Structure**: 72 fields per stock.
+
+### 3. **AiCwsd** - Chart/Intraday Data ✅
+- **Status**: ✅ WORKING (via HTML extraction, NOT batchexecute)
+- **Data**: Price data with timestamps, volume, change %
+- **Intervals Supported**: 1D, 5D, 1M, 6M, YTD, 1Y, 5Y, MAX
+- **⚠️ Important Discovery (Feb 2026)**: 
+  - The `batchexecute` RPC call returns `[]` for AiCwsd
+  - **BUT** chart data is PRE-BAKED in the HTML page under `ds:11`
+  - Extract using regex: `AF_initDataCallback({key: 'ds:11', ... data:([...])}`
+
+### 4. **SICF5d** - Related Stocks ✅
+- **Status**: ✅ WORKING
+- **Data**: Related/competitor stocks in same sector
+
+### 5. **lvVhof** - News/Index Data ✅
+- **Status**: ✅ WORKING
+- **Data**: Stock/index data (news-related stocks/indices)
+
+### 6. **uwlMvd** - Stock Metadata ✅
+- **Status**: ✅ WORKING (Requires 4 brackets `]]]]`)
+- **Data**: Stock type and listing information (metadata)
+
+### 7. **Pr8h2e** - Company Financials ✅
+- **Status**: ✅ WORKING (Requires 4 brackets `]]]]`)
+- **Data**: Comprehensive financial statements, quarterly/annual results.
+
+### 8. **o6pODe** - News Links/Trending ✅
+- **Status**: ✅ WORKING
+- **Data**: Direct links to news articles and trending news metadata.
+
+---
+
+## 🔑 Key Discovery Feb 2026: The "4-Bracket" Payload
+Google Finance backend strictly validates the nesting of JSON payloads for `HqGpWd`, `uwlMvd`, and `Pr8h2e`.
+
+- ❌ Incorrect: `[[[null,["SYM","EXC"]]]` (3 brackets) -> Returns `null`
+- ✅ Correct: `[[[null,["SYM","EXC"]]]]` (4 brackets) -> Returns **Full Data**
+
+---
+
+## 📝 Request Body Formats (Updated Feb 2026)
+
+### ✅ Working Endpoints:
+
+1. **xh8wxf** - Price Data:
+   ```json
+   [[["xh8wxf","[[[null,["SYMBOL","EXCHANGE"]]],1]]",null,"generic"]]]
+   ```
+
+2. **HqGpWd** - Stock Information (4-bracket fix):
+   ```json
+   [[["HqGpWd","[[[null,["SYMBOL","EXCHANGE"]]]]",null,"generic"]]]
+   ```
+
+3. **AiCwsd** - Chart Data:
+   ```json
+   [[["AiCwsd","[[[null,["SYMBOL","EXCHANGE"]]],WINDOW,null,null,null,null,null,0]",null,"generic"]]]
+   ```
+   *Windows: 1=1D, 2=5D, 3=1M, 4=6M, 5=YTD, 6=1Y, 7=5Y, 8=MAX*
+
+4. **SICF5d** - Related Stocks:
+   ```json
+   [[["SICF5d","[[null,["SYMBOL","EXCHANGE"]],18]]",null,"generic"]]]
+   ```
+
+5. **lvVhof** - News/Index Data:
+   ```json
+   [[["lvVhof","[18]",null,"generic"]]]
+   ```
+
+6. **uwlMvd** - Stock Metadata (4-bracket fix):
+   ```json
+   [[["uwlMvd","[[[null,["SYMBOL","EXCHANGE"]]]]",null,"generic"]]]
+   ```
+
+7. **Pr8h2e** - Company Financials (4-bracket fix):
+   ```json
+   [[["Pr8h2e","[[[null,["SYMBOL","EXCHANGE"]]]]",null,"generic"]]]
+   ```
+
+8. **o6pODe** - News Links:
+   ```json
+   [[["o6pODe","[[null,["SYMBOL","EXCHANGE"]]]",null,"generic"]]]
+   ```
+
+---
+
+## 📋 Detailed API Response Formats (All 8 Working Endpoints)
+
+### 1. **xh8wxf** - Price Data
+**Access Path**: `data[0][0]`
+**Update Frequency**: ~15-20 seconds (near real-time)
+
+| Index | Field | Type | Example |
+|-------|-------|------|---------|
+| `[0]` | Symbol | string | `"RELIANCE"` |
+| `[1]` | Exchange | string | `"NSE"` |
+| `[2]` | Current Price | float | `1234.50` |
+| `[3]` | Price Change | float | `-5.25` |
+| `[4]` | Change Percent | float | `-0.42` |
+| `[5]` | Previous Close | float | `1239.75` |
+| `[6]` | Currency | string | `"INR"` |
+| `[7]` | Timestamp | varies | Unix/Array |
+| `[8]` | Timezone | string | `"Asia/Kolkata"` |
+
+---
+
+### 2. **HqGpWd** - Fundamentals (72 Fields)
+**Access Path**: `data[0][0]`
+
+| Index | Field | Example |
+|-------|-------|---------|
+| `[0]` | Company ID | `"/g/1dv5zf_w"` |
+| `[1]` | Company Name | `"Reliance Industries"` |
+| `[2]` | Description | `"Indian multinational..."` |
+| `[4]` | Founded Year | `[1966]` |
+| `[6]` | Employees | `364` |
+| `[7]` | Market Cap | `25640000000` |
+| `[8]` | Current Price | `1234.50` |
+| `[9]` | Previous Close | `1239.75` |
+| `[10]` | Open | `1240.00` |
+| `[11]` | Day High | `1250.00` |
+| `[12]` | Day Low | `1230.00` |
+| `[13]` | 52-Week High | `1500.00` |
+| `[14]` | 52-Week Low | `900.00` |
+| `[17]` | Volume | `1234567` |
+| `[18]` | Avg Volume | `2000000` |
+| `[19]` | P/E Ratio | `17.67` |
+| `[20]` | EPS | `65.32` |
+| `[21]` | Dividend Yield | `0.45` |
+| `[22]` | Beta | `1.12` |
+
+*...and 50+ more fields*
+
+---
+
+### 3. **AiCwsd** - Chart Data
+**Access Path**: `data[0][0][3][0][1]`
+**Intervals**: 1D, 5D, 1M, 6M, YTD, 1Y, 5Y, MAX
+
+**Each Data Point**:
+```json
+[
+  [2026, 2, 9, 10, 30, 0],    // [year, month, day, hour, minute, second]
+  [1234.50, 1235.00, -0.04, 0], // [close, open, change%, flags]
+  1500000                     // volume
+]
+```
+
+---
+
+### 4. **SICF5d** - Related Stocks
+**Access Path**: `data[1]` (array of stocks)
+
+**Each Stock Object**:
+| Index | Field | Example |
+|-------|-------|---------|
+| `[0]` | Stock ID | `"/g/1abc123"` |
+| `[1][0]` | Symbol | `"ONGC"` |
+| `[1][1]` | Exchange | `"NSE"` |
+| `[2]` | Company Name | `"Oil & Natural Gas Corp"` |
+| `[3]` | Currency | `"INR"` |
+| `[5][0]` | Price | `245.50` |
+| `[5][1]` | Change | `+2.35` |
+| `[5][2]` | Change % | `+0.97` |
+
+---
+
+### 5. **lvVhof** - News/Index Data
+**Access Path**: `data[0]` (array of indices/stocks)
+
+Similar structure to SICF5d - returns trending stocks/indices.
+
+---
+
+### 6. **uwlMvd** - Stock Metadata
+**Access Path**: `data[0]`
+
+```json
+[
+  [
+    "/g/1dv5zf_w",           // Stock ID
+    [
+      ["Stock", "Ownership of a fraction of a corporation...", 0, 1, 1],
+      ["IN listed security", "Listed on NSE", null, null, 10],
+      ["IN headquartered", "Headquartered in Mumbai", null, null, 11]
+    ]
+  ]
+]
+```
+
+---
+
+### 7. **Pr8h2e** - Financial Statements
+**Access Path**: `data[0]` (contains quarterly + annual data)
+
+**Quarterly Data** (`data[0][0][0]`):
+| Index | Field | Example |
+|-------|-------|---------|
+| `[0]` | Year | `2026` |
+| `[1]` | Quarter | `3` |
+| `[2][0]` | Revenue | `2649050000000` |
+| `[2][1]` | Net Income | `186450000000` |
+| `[2][2]` | Profit Margin | `13.78` |
+| `[2][3]` | Operating Margin | `7.04` |
+| `[2][4]` | Operating Income | `313960000000` |
+| `[2][7]` | Total Assets | `1716280000000` |
+| `[2][16]` | Currency | `"INR"` |
+| `[2][17]` | Report Date | `[2025, 12, 31]` |
+| `[2][18]` | EPS | `5.51` |
+
+**Annual Data**: Same structure, aggregated yearly.
+
+---
+
+### 8. **o6pODe** - News Links
+**Access Path**: `data[0]` (array of news articles)
+
+**Each Article**:
+```json
+[
+  1,                          // Type
+  [
+    [
+      "https://example.com/article",  // URL
+      "Article Title",               // Title
+      "Publisher Name",              // Source
+      "https://image.url/thumb.jpg", // Thumbnail
+      1770364639,                    // Timestamp
+      null, null, null, null, null,
+      null, null, null, null, null,
+      null,
+      "Related topic"                // Topic
+    ]
+  ]
+]
+```
+
+---
+
+
+## 🎯 Recommended Endpoints for Production
+1. **xh8wxf**: Real-time Price
+2. **HqGpWd**: Fundamentals (72 fields)
+3. **AiCwsd**: Multi-interval charts (via HTML extraction)
+4. **Pr8h2e**: Financial Statements
+5. **o6pODe**: News links
+
+---
+
+## 🚀 PRODUCTION DEPLOYMENT CHECKLIST
+
+### ✅ 1. Use an Edge Proxy (REQUIRED)
+
+**Why?** Browser-only requests won't work long-term because of CORS restrictions and stability issues.
+
+**Architecture:**
+```
+Client → Edge Function → Google Finance API
+```
+
+**Edge Options:**
+| Platform | Best For |
+|----------|----------|
+| **Cloudflare Worker** | High volume, global distribution |
+| **Vercel Edge Function** | Easy if already on Vercel |
+| **AWS Lambda@Edge** | Enterprise, existing AWS setup |
+| **Deno Deploy** | Simple, fast deployment |
+
+**What the Proxy Must Do:**
+```javascript
+// 1. Add correct query params
+const params = new URLSearchParams({
+  rpcids: 'xh8wxf',           // Endpoint name
+  'source-path': '/finance/quote/RELIANCE:NSE',
+  'f.sid': 'dummy',           // Can be "dummy"
+  bl: 'boq_finance-ui_20260204.01_p0',  // Build label (auto-refresh!)
+  hl: 'en-US',
+  rt: 'c'
+});
+
+// 2. Set Content-Type
+headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+
+// 3. Forward f.req body
+body: `f.req=${encodeURIComponent(f_req_payload)}`
+
+// 4. Parse batchexecute response → return clean JSON
+const text = await response.text();
+const parsed = parseBatchExecuteResponse(text);
+return Response.json(parsed);
+```
+
+---
+
+### ✅ 2. Auto-Refresh the `bl` Build Label (REQUIRED)
+
+**⚠️ WARNING:** Hardcoding `boq_finance-ui_20260204.01_p0` will eventually break!
+
+**Strategy:**
+```python
+# Once per day (or per deploy):
+import requests, re
+
+def get_latest_build_label():
+    r = requests.get('https://www.google.com/finance/quote/GOOG:NASDAQ')
+    match = re.search(r'boq_finance-ui_\d+\.\d+_p\d+', r.text)
+    return match.group(0) if match else None
+
+# Cache it in memory (and/or KV store)
+BUILD_LABEL = get_latest_build_label()
+```
+
+**Implementation Patterns:**
+
+| Pattern | How |
+|---------|-----|
+| **Cron Job** | Fetch once per day, store in KV/Redis |
+| **On Deploy** | Fetch during build, inject as env var |
+| **Lazy Refresh** | Cache with TTL, refresh on access |
+| **Fallback** | If RPC fails, refresh `bl` and retry once |
+
+**Cloudflare Worker Example:**
+```javascript
+// KV store for build label
+const BL_KEY = 'google_finance_bl';
+const BL_TTL = 86400; // 24 hours
+
+async function getBuildLabel(env) {
+  let bl = await env.KV.get(BL_KEY);
+  if (!bl) {
+    const html = await fetch('https://www.google.com/finance/quote/GOOG:NASDAQ').then(r => r.text());
+    bl = html.match(/boq_finance-ui_\d+\.\d+_p\d+/)?.[0] || 'boq_finance-ui_20260204.01_p0';
+    await env.KV.put(BL_KEY, bl, { expirationTtl: BL_TTL });
+  }
+  return bl;
+}
+```
+
+**Fallback with Retry:**
+```javascript
+async function fetchWithRetry(endpoint, payload) {
+  let bl = await getBuildLabel();
+  let response = await callGoogleFinance(endpoint, payload, bl);
+  
+  // If error, refresh BL and retry once
+  if (response.error || response.data === null) {
+    bl = await refreshBuildLabel();  // Force refresh
+    response = await callGoogleFinance(endpoint, payload, bl);
+  }
+  
+  return response;
+}
+```
+
+---
+
+### ✅ 3. Rate Limiting & Caching (RECOMMENDED)
+
+| Strategy | Implementation |
+|----------|---------------|
+| **Cache responses** | 15-60 seconds for price, 1 hour for fundamentals |
+| **Rate limit** | Max 1-2 requests/second to avoid blocks |
+| **Batch requests** | Combine multiple symbols in one page fetch |
+| **Error handling** | Exponential backoff on failures |
+
+---
+
+### ✅ 4. Chart Data Special Handling (REQUIRED for AiCwsd)
+
+**AiCwsd batchexecute returns `[]`!** Extract from HTML instead:
+
+```python
+import requests, re, json
+
+def get_chart_data(symbol, exchange):
+    r = requests.get(f'https://www.google.com/finance/quote/{symbol}:{exchange}')
+    
+    # Chart data is pre-baked in ds:11
+    pattern = r"AF_initDataCallback\({key: 'ds:11', hash: '[^']*', data:(\[.*?\]), sideChannel"
+    match = re.search(pattern, r.text, re.DOTALL)
+    
+    if match:
+        return json.loads(match.group(1))
+    return None
+```
+
+---
+
+## 🏗️ COMPLETE PRODUCTION ARCHITECTURE GUIDE
+
+> You've done the hard part: stable stateless RPC payloads for 7 endpoints + HTML ds:11 for charts.  
+> What's left is turning this into something that won't melt (or randomly break) in production.
+
+---
+
+### 1️⃣ Reality Check: "No Backend" Still Needs an Edge Proxy
+
+Even if your app is local + IndexedDB, browsers can't reliably call `google.com/finance` directly:
+- ❌ CORS restrictions
+- ❌ Anti-bot defenses
+- ❌ Header/cookie weirdness
+
+**Solution: Thin edge layer (stateless relay with caching)**
+```
+Client → Your Worker/Edge → Google Finance → Worker returns clean JSON
+```
+
+This is NOT a "backend with DB". It's a stateless relay with caching + rate limiting.
+
+---
+
+### 2️⃣ Minimal Production API Surface
+
+**Expose your own endpoints** (don't leak Google RPC names to clients):
+
+| Your API | Google Endpoint | Purpose |
+|----------|-----------------|---------|
+| `GET /api/price?symbol=X&exchange=Y` | xh8wxf | Real-time price |
+| `GET /api/fundamentals?symbol=X&exchange=Y` | HqGpWd | Stock fundamentals |
+| `GET /api/financials?symbol=X&exchange=Y` | Pr8h2e | Financial statements |
+| `GET /api/news?symbol=X&exchange=Y` | o6pODe | News articles |
+| `GET /api/related?symbol=X&exchange=Y` | SICF5d | Related stocks |
+| `GET /api/trending` | lvVhof | Trending/indices |
+| `GET /api/chart?symbol=X&exchange=Y&window=1` | HTML ds:11 | Chart data |
+
+**Keep the client dumb**: It calls your API and never sees `rpcids`, `f.req`, `bl`, etc.
+
+---
+
+### 3️⃣ Caching + Rate Limiting (Makes "10M Requests" Possible)
+
+> If you brute-force Google with unlimited requests, you WILL get blocked.  
+> The only scalable way is aggressive caching.
+
+#### Recommended TTLs
+
+| Endpoint | TTL | Reason |
+|----------|-----|--------|
+| **Price** (xh8wxf) | 15-20 seconds | Near real-time, but not tick-by-tick |
+| **Trending** (lvVhof) | 30-60 seconds | Market indices change slowly |
+| **News** (o6pODe) | 2-5 minutes | News doesn't update every second |
+| **Fundamentals** (HqGpWd) | 6-24 hours | Changes only on corporate actions |
+| **Financials** (Pr8h2e) | 6-24 hours | Quarterly updates only |
+| **Related** (SICF5d) | 24 hours | Rarely changes |
+| **Chart 1D** | 30-60 seconds | Intraday updates |
+| **Chart 5D/1M** | 5-15 minutes | Less frequent updates needed |
+| **Chart 6M+** | 1-24 hours | Historical data is stable |
+
+#### Rate Limiting
+
+```javascript
+// At the edge:
+const RATE_LIMIT = {
+  perIP: 60,        // requests per minute
+  burst: 10,        // in 10 seconds
+  onExceeded: 429   // Too Many Requests
+};
+```
+
+#### Cache Key Pattern
+
+```javascript
+// Normalize for consistent caching
+const cacheKey = `${endpoint}:${exchange}:${symbol}:${window || 'default'}`;
+// Example: "price:NSE:RELIANCE:default"
+```
+
+#### Cloudflare Workers Best Practice
+
+```javascript
+// Use caches.default for response caching
+const cache = caches.default;
+const cacheKey = new Request(url.toString());
+
+let response = await cache.match(cacheKey);
+if (!response) {
+  response = await fetchFromGoogle(endpoint, symbol, exchange);
+  response = new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=15'  // CDN + browser cache
+    }
+  });
+  ctx.waitUntil(cache.put(cacheKey, response.clone()));
+}
+return response;
+```
+
+**Result**: 10M client hits → ~50k origin fetches to Google 🎯
+
+---
+
+### 4️⃣ Build Label (`bl`) Refresh Strategy
+
+**⚠️ Don't let prod die from stale build label!**
+
+```javascript
+// Pattern: Cached BL with failure-triggered refresh
+async function fetchWithBLRetry(endpoint, payload) {
+  let bl = await getCachedBL();  // From KV, 12-24h TTL
+  let response = await callGoogleRPC(endpoint, payload, bl);
+  
+  // If parse fails or empty response unexpectedly
+  if (!response.data || response.data === '[]') {
+    bl = await refreshBL();  // Fetch fresh from quote page
+    response = await callGoogleRPC(endpoint, payload, bl);  // Single retry
+  }
+  
+  return response;
+}
+
+async function refreshBL() {
+  const html = await fetch('https://www.google.com/finance/quote/GOOG:NASDAQ').then(r => r.text());
+  const bl = html.match(/boq_finance-ui_\d+\.\d+_p\d+/)?.[0];
+  await env.KV.put('bl', bl, { expirationTtl: 86400 });
+  return bl;
+}
+```
+
+---
+
+### 5️⃣ Cookies: Don't Fetch Per Request
+
+Based on testing: **Most endpoints work without cookies + dummy `f.sid`**. Keep it that way!
+
+**❌ DON'T:**
+- Emulate browser sessions
+- Rotate cookies per request
+- This is fragile, expensive, and triggers bot defenses
+
+**✅ DO (if an endpoint starts requiring cookies):**
+1. First try: correct headers
+2. Then try: correct `source-path`
+3. Then try: fresh `bl`
+4. Finally: consistent `User-Agent`
+
+Handle cookies server-side only as a last resort.
+
+---
+
+### 6️⃣ Chart Endpoint: Separate Pipeline
+
+**AiCwsd via batchexecute gives `[]`** — treat chart as a different flow:
+
+```
+GET quote HTML → Extract ds:11 → Parse JSON → Cache → Return
+```
+
+**Production Tips:**
+- Use tight regex targeting `ds:11` only
+- Cache aggressively (especially >1D windows)
+- Consider downsampling: client doesn't need 10k data points
+
+```python
+def get_chart(symbol, exchange, window='1M'):
+    cache_key = f"chart:{exchange}:{symbol}:{window}"
+    
+    cached = redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    
+    html = requests.get(f'https://www.google.com/finance/quote/{symbol}:{exchange}').text
+    data = extract_ds11(html)
+    
+    # Downsample if needed
+    if len(data) > 500:
+        data = downsample(data, 500)
+    
+    redis.setex(cache_key, TTL_BY_WINDOW[window], json.dumps(data))
+    return data
+```
+
+---
+
+### 7️⃣ Multi-Symbol Batching (10-50x Cost Reduction)
+
+**For watchlists/portfolios, don't call price 50 times!**
+
+```javascript
+// Client sends:
+POST /api/prices
+{
+  "symbols": [
+    ["RELIANCE", "NSE"],
+    ["TCS", "NSE"],
+    ["INFY", "NSE"]
+  ]
+}
+
+// Your proxy builds a single batchexecute with multiple entries
+const f_req = `[
+  [["xh8wxf","[[[null,[\\"RELIANCE\\",\\"NSE\\"]]]],1]]",null,"generic"]],
+  [["xh8wxf","[[[null,[\\"TCS\\",\\"NSE\\"]]]],1]]",null,"generic"]],
+  [["xh8wxf","[[[null,[\\"INFY\\",\\"NSE\\"]]]],1]]",null,"generic"]]
+]`;
+```
+
+**Single request = 50 prices** → Massive cost reduction!
+
+---
+
+### 8️⃣ Parsing & Output Contract
+
+**Your proxy should return clean, typed JSON** — not Google's raw arrays.
+
+```json
+{
+  "symbol": "RELIANCE",
+  "exchange": "NSE",
+  "price": 1463.9,
+  "change": 13.099976,
+  "changePct": 0.9029484,
+  "previousClose": 1450.8,
+  "currency": "INR",
+  "timestamp": 1770613774,
+  "timezone": "Asia/Calcutta"
+}
+```
+
+**Why?** Prevents frontend from depending on Google's array indices forever.  
+If Google changes `[5]` to `[6]`, only your proxy needs updating — not 100 frontend files.
+
+---
+
+### 9️⃣ Production Hardening Checklist
+
+| Category | Requirement |
+|----------|-------------|
+| **Security** | ✅ Symbol allowlist/validation (prevent open proxy abuse) |
+| **CORS** | ✅ Allow your domain only |
+| **Timeouts** | ✅ 3-6 seconds max to Google |
+| **Retries** | ✅ Only 1 retry, only on "bl refresh" scenario |
+| **Observability** | ✅ Log: cache hit/miss, fetch failures, parse errors, bl refresh events |
+| **Circuit Breaker** | ✅ If Google blocks, serve stale cached data |
+| **Rate Limit** | ✅ Per-IP limits (e.g., 60/min) |
+| **Validation** | ✅ Validate symbol format before calling Google |
+
+#### Circuit Breaker Example
+
+```javascript
+let circuitOpen = false;
+let lastFailure = 0;
+
+async function fetchWithCircuitBreaker(endpoint, payload) {
+  // If circuit is open, serve stale cache
+  if (circuitOpen && Date.now() - lastFailure < 60000) {
+    return await getStaleCache(endpoint, payload);
+  }
+  
+  try {
+    const data = await fetchFromGoogle(endpoint, payload);
+    circuitOpen = false;
+    return data;
+  } catch (e) {
+    circuitOpen = true;
+    lastFailure = Date.now();
+    return await getStaleCache(endpoint, payload);
+  }
+}
+```
+
+---
+
+### 🎯 Summary: Production Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         YOUR APP                                │
+├─────────────────────────────────────────────────────────────────┤
+│  Browser/Client                                                 │
+│    ↓                                                            │
+│  /api/price?symbol=RELIANCE&exchange=NSE                        │
+│    ↓                                                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Edge Worker (Cloudflare/Vercel/Deno)                           │
+│    ├── Check cache (15s TTL for price)                          │
+│    ├── If miss: call Google with fresh/cached bl                │
+│    ├── Parse batchexecute → clean JSON                          │
+│    ├── Cache response                                           │
+│    └── Return to client                                         │
+├─────────────────────────────────────────────────────────────────┤
+│  Google Finance (batchexecute or HTML for charts)               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**This is how you scale to millions of requests without getting blocked!**
+
+---
+
+
+
+
+### 1. **xh8wxf** - Price Data (REAL)
+```json
+[
+  [
+    [
+      [
+        "/g/1dv5zf_w",
+        ["RELIANCE", "NSE"],
+        "Reliance Industries Ltd",
+        0,
+        "INR",
+        [1463.9, 13.099976, 0.9029484, 2, 2, 2],  // [price, change, change%, ...]
+        null,
+        1450.8,  // Previous Close
+        "#987f4b",
+        "IN",
+        "/m/0242c6",
+        [1770613774],  // Timestamp
+        "Asia/Calcutta",
+        19800,
+        "/g/1dv5zf_w",
+        null, null,
+        [1770613565],
+        null,
+        [[1, [2026, 2, 9, 9, 15, null, null, [19800]], [2026, 2, 9, 15, 30, null, null, [19800]]]],
+        null,
+        "RELIANCE:NSE",
+        null, null, null, null,
+        true
+      ]
+    ]
+  ]
+]
+```
+
+**Parsed Values:**
+- **Price**: ₹1463.9
+- **Change**: +₹13.10 (+0.90%)
+- **Previous Close**: ₹1450.8
+- **Market Hours**: 9:15 AM - 3:30 PM IST
+
+---
+
+### 2. **HqGpWd** - Fundamentals (REAL)
+```json
+[
+  [
+    [
+      "/g/1dv5zf_w",
+      "Reliance Industries",
+      "Reliance Industries Limited is an Indian multinational conglomerate...",
+      ["Mumbai", "Maharashtra", "India", "IN", "Maker Chambers IV, Nariman Point"],
+      [1957],  // Founded Year
+      "Mukesh Ambani",  // CEO
+      403303,  // Employees
+      19807193647712.402,  // Market Cap (₹19.8T)
+      1450.8,  // Previous Close
+      1458,    // Open
+      1464.9,  // Day High
+      1453,    // Day Low
+      1611.8,  // 52-Week High
+      1114.85, // 52-Week Low
+      1762611, // Volume
+      "INR",
+      23.808292,  // P/E Ratio
+      0.37570873, // Dividend Yield %
+      12305493,   // Avg Volume
+      61.48698,   // EPS
+      null,
+      6338512384, // Shares Outstanding
+      "http://www.ril.com/",
+      "INR", "NSE",
+      0, 0, 0, 1, null,
+      "https://en.wikipedia.org/wiki/Reliance_Industries",
+      // ... more fields ...
+      "Energy"  // Sector
+    ]
+  ]
+]
+```
+
+**Key Fundamentals:**
+| Metric | Value |
+|--------|-------|
+| Market Cap | ₹19.8 Trillion |
+| P/E Ratio | 23.81 |
+| EPS | ₹61.49 |
+| Employees | 403,303 |
+| 52-Week High | ₹1,611.80 |
+| 52-Week Low | ₹1,114.85 |
+| Sector | Energy |
+
+---
+---
+
+### 3. **AiCwsd** - Chart Data (REAL - From HTML ds:11)
+**⚠️ Note**: This data is extracted from the HTML page, NOT from batchexecute (which returns `[]`)
+
+```json
+[
+  [
+    [["RELIANCE", "NSE"], "/g/1dv5zf_w", "INR", [
+      [[1],  // interval = 1 (1M)
+        [
+          [[2026, 1, 9, 15, 30, null, null, [19800]], [1475.3, 0, 0, 2, 2, 2], 8335311],
+          [[2026, 1, 12, 15, 30, null, null, [19800]], [1483.2, 7.90, 0.0054, 2, 2, 4], 8883745],
+          [[2026, 1, 13, 15, 30, null, null, [19800]], [1452.8, -22.50, -0.0153, 2, 2, 3], 13499760],
+          // ... more data points
+        ]
+      ]
+    ]]
+  ]
+]
+```
+
+**Data Point Structure**:
+| Index | Field | Example |
+|-------|-------|---------|
+| `[0]` | Timestamp | `[2026, 1, 9, 15, 30, null, null, [19800]]` (Y, M, D, H, M, ..., TZ) |
+| `[1][0]` | Close Price | `1475.3` |
+| `[1][1]` | Change | `+7.90` |
+| `[1][2]` | Change % | `0.0054` (0.54%) |
+| `[2]` | Volume | `8,335,311` |
+
+**Sample Data Points (Feb 9, 2026)**:
+| Date | Close | Change | Volume |
+|------|-------|--------|--------|
+| 2026-01-09 | ₹1,475.30 | +0.00 (+0.00%) | 8.3M |
+| 2026-01-12 | ₹1,483.20 | +7.90 (+0.54%) | 8.9M |
+| 2026-01-13 | ₹1,452.80 | -22.50 (-1.53%) | 13.5M |
+| 2026-02-06 | ₹1,450.80 | — | 8.3M |
+
+---
+
+### 4. **SICF5d** - Related Stocks (REAL)
+
+```json
+[
+  [
+    ["/g/1dttk_d7", ["BAJFINANCE", "NSE"], "Bajaj Finance Ltd", 0, "INR", [976.95, -4.75, -0.48, ...], ...],
+    ["/g/1dv0jmby", ["BHARTIARTL", "NSE"], "Bharti Airtel Ltd", 0, "INR", [2048.6, 10.20, 0.50, ...], ...],
+    ["/g/1dv1hvg6", ["ICICIBANK", "NSE"], "ICICI Bank Ltd", 0, "INR", [1398.2, -7.90, -0.56, ...], ...],
+    ["/g/11x19n5ft", ["INFY", "NYSE"], "Infosys Ltd", 0, "USD", [16.84, 0.04, 0.24, ...], ...],
+    ["/g/1hbvj1yyr", ["SBIN", "NSE"], "State Bank of India", 0, "INR", [1134.8, 68.40, 6.41, ...], ...],
+    // ... 10+ more related stocks
+  ]
+]
+```
+
+**Related Stocks Found:**
+- BAJFINANCE, BHARTIARTL, ICICIBANK, INFY, SBIN, LT, HINDUNILVR, KOTAKBANK, NTPC, TATASTEEL, HCLTECH
+
+---
+
+### 4. **lvVhof** - Trending/Market Indices (REAL)
+```json
+[
+  [
+    ["/m/046k_p", ["SENSEX", "INDEXBOM"], "BSE SENSEX", 1, null, [84024.51, 444.11, 0.53, ...], ...],
+    ["/m/04t5sp", ["NIFTY_50", "INDEXNSE"], "NIFTY 50", 1, null, [25840.9, 147.20, 0.57, ...], ...],
+    ["/m/0cqyw", [".DJI", "INDEXDJX"], "Dow Jones Industrial Average", 1, null, [50115.67, 1206.95, 2.47, ...], ...],
+    ["/m/016yss", [".INX", "INDEXSP"], "S&P 500", 1, null, [6932.3, 133.90, 1.97, ...], ...],
+    // ... more indices and trending stocks
+  ]
+]
+```
+
+**Live Market Data:**
+| Index | Value | Change |
+|-------|-------|--------|
+| SENSEX | 84,024.51 | +444.11 (+0.53%) |
+| NIFTY 50 | 25,840.90 | +147.20 (+0.57%) |
+| Dow Jones | 50,115.67 | +1,206.95 (+2.47%) |
+| S&P 500 | 6,932.30 | +133.90 (+1.97%) |
+
+---
+
+### 5. **uwlMvd** - Stock Metadata (REAL)
+```json
+[
+  [
+    [
+      "/g/1dv5zf_w",
+      [
+        ["Stock", "Ownership of a fraction of a corporation and the right to claim a share...", 0, 1, 1],
+        ["IN listed security", "Listed on NSE", null, null, 10],
+        ["IN headquartered", "Headquartered in Mumbai, Maharashtra, India", null, null, 11]
+      ]
+    ]
+  ]
+]
+```
+
+---
+
+### 6. **Pr8h2e** - Financial Statements (REAL)
+```json
+[
+  [
+    [
+      // Q3 FY2026 (Dec 2025)
+      [2026, 3, [
+        2649050000000,  // Revenue (₹2.65T)
+        186450000000,   // Net Income (₹186B)
+        13.78,          // Profit Margin %
+        7.04,           // Operating Margin %
+        313960000000,   // Operating Income
+        null, null,
+        1716280000000,  // Total Assets
+        2559217933330,  // Market Cap
+        null,
+        14.88712,       // P/E Ratio
+        0.035,          // Revenue Growth QoQ
+        -0.074,         // Net Income Growth QoQ
+        3,              // Quarter
+        null, null,
+        "INR",
+        [2025, 12, 31], // Report Date
+        5.51,           // EPS
+        2335090000000,  // Gross Profit
+        434430000000,   // EBITDA
+        25.25,          // EBITDA Margin %
+        2238710000000,  // Total Liabilities
+        // ... 20+ more fields
+      ]],
+      // Previous quarters available...
+    ]
+  ]
+]
+```
+
+**Q3 FY2026 Financials:**
+| Metric | Value |
+|--------|-------|
+| Revenue | ₹2.65 Trillion |
+| Net Income | ₹186.45 Billion |
+| Profit Margin | 13.78% |
+| EPS | ₹5.51 |
+| Total Assets | ₹1.72 Trillion |
+
+---
+
+### 7. **o6pODe** - News Articles (REAL)
+```json
+[
+  [
+    [1, [[
+      "https://www.thehindubusinessline.com/markets/over-dozen-stocks...",
+      "Stocks to Watch Today: Reliance, Belrise, Bajel, Anant Raj...",
+      "BusinessLine",
+      "https://encrypted-tbn3.gstatic.com/images?q=tbn:ANd9GcT7azCI...",
+      1770603080,
+      null, null, null, null, null, null, null, null, null, null, null,
+      "Key stocks like Reliance, Bajel, and Go Digit are in focus today..."
+    ]]],
+    [1, [[
+      "https://upstox.com/news/market-news/stocks/airtel-outperforms...",
+      "Airtel outperforms Reliance Jio in Q3 revenue and ARPU",
+      "Upstox",
+      "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQCN1BA...",
+      1770364639,
+      // ...
+    ]]],
+    // ... more news articles
+  ]
+]
+```
+
+**Latest News:**
+1. "Stocks to Watch Today: Reliance, Belrise, Bajel..." - BusinessLine
+2. "Airtel outperforms Reliance Jio in Q3 revenue" - Upstox
+3. "RIL arm Model Economic Township to build 100-acre project" - Business Standard
+
+
+## 🔧 curl Command Implementation
+```bash
+curl -s "https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=HqGpWd&source-path=%2Ffinance%2Fquote%2FRELIANCE%3ANSE&f.sid=dummy&bl=boq_finance-ui_20260204.01_p0&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -X POST \
+  -d "f.req=[[[\"HqGpWd\",\"[[[null,[\\\"RELIANCE\\\",\\\"NSE\\\"]]]]\",null,\"generic\"]]]"
+```
+
+---
+
+## 🏗️ Production Architecture (The Only Stable Way)
+
+For a production environment, the most reliable architecture is to use a **Server-Side Proxy**:
+
+**Client (React/Frontend)** → **Your API/Proxy Route** → **google.com/finance/_/...**
+
+### Benefits:
+- **No CORS headaches**: Server-to-server requests bypass browser-level Cross-Origin Resource Sharing restrictions.
+- **Caching & Rate Limiting**: You can implement your own caching layer (e.g., Redis) to minimize outgoing requests and manage your own rate limits.
+- **Cookie Management**: You can maintain and refresh Google cookies on the server side if a specific endpoint requires them for stability.
+- **Clean Data**: Your proxy can parse the `batchexecute` format and return clean, flat JSON to your UI.
+
+## 📡 The Proxy Request Pattern
+
+Your server-side proxy should implement the following request pattern:
+
+**Endpoint Pattern**:
+`POST https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=HqGpWd&...`
+
+**Headers**:
+`Content-Type: application/x-www-form-urlencoded`
+
+**Body**:
+`f.req=<YOUR_JSON_STRING>`
+
+**Example `f.req` (Standard format)**:
+`f.req=[[[ "HqGpWd", "[[[null,[\"RELIANCE\",\"NSE\"]]]]", null, "generic" ]]]`
+
+*Note: For endpoints that require the "4-bracket" fix, ensure your proxy continues to forward the exactly formatted string discovered in the Feb 2026 audit.*
+
+---
+
+## ❌ NON-WORKING ENDPOINTS (2 Total)
+
+### 9. **ZugVf** - Main Quote/State ❌
+- **Status**: ⚠️ Returns 200 OK but data is always `[]`
+- **Why It Fails**: Likely requires a specific `at` authentication token or JavaScript-rendered page state that cannot be replicated via stateless API calls.
+- **Impact**: **None** - `xh8wxf` already provides complete real-time price data.
+
+### Comparison: `xh8wxf` vs `ZugVf`
+
+| Aspect | **xh8wxf** (Working ✅) | **ZugVf** (Not Working ❌) |
+|--------|-------------------------|---------------------------|
+| Purpose | Real-time price data | UI state refresh / page quote widget |
+| Status | ✅ Returns full data | ❌ Returns `[]` |
+| Data | Price, change, %, previous close, currency | Same (expected) |
+| Use Case | API consumption | Internal Google Finance page rendering |
+| Cause of Failure | Works stateless | Requires browser page state / `at` token |
+| **Verdict** | **Use this** | Deprecated/Internal only |
+
+
+### 10. **yYvDpf** - Financial Statements (Simplified) ❌
+- **Status**: ⚠️ Returns 200 OK but data is always `[]`
+- **Why It Fails**: Appears to be a legacy or UI-only endpoint for simplified financial widgets.
+- **Impact**: **None** - `Pr8h2e` provides **everything** this endpoint would have, plus much more:
+  - Full quarterly and annual financial statements
+  - Revenue, Profit, Margins, EPS
+  - Assets, Liabilities, Equity
+  - 40+ financial fields per reporting period
+
+### Comparison: `Pr8h2e` vs `yYvDpf`
+
+| Aspect | **Pr8h2e** (Working ✅) | **yYvDpf** (Not Working ❌) |
+|--------|-------------------------|----------------------------|
+| Status | ✅ 22 KB of data | ❌ Returns `[]` |
+| Content | Full quarterly + annual statements | Likely just summary metrics |
+| Fields | 40+ per period | Unknown |
+| **Verdict** | **Use this** | Deprecated/Internal only |
+
+---
+
+## ✅ Conclusion
+Documentation now includes all explicit request payloads and the mandatory Feb 2026 formatting fixes.
+
+---
+
+## 🔑 Key Discovery Feb 24, 2026: BSE Symbol Routing
+
+### BSE Symbols Require Numeric Codes + `BOM` Exchange
+
+**⚠️ CRITICAL:** Google Finance does NOT recognize BSE stock names (e.g., `BENARESHOTL`). You MUST use the **BSE numeric code** with the `BOM` exchange.
+
+| Symbol | Exchange | Result |
+|--------|----------|--------|
+| `BENARESHOTL:BOM` | BSE name | ❌ Returns `null` — not recognized |
+| `509438:BOM` | BSE numeric code | ✅ **₹9,501.05** — Benares Hotels Ltd |
+| `RELIANCE:NSE` | NSE ticker | ✅ **₹1,431.10** — Reliance Industries |
+
+### Smart Exchange Detection Rule
+
+```
+Alphabetic symbol (e.g., "RELIANCE")  → use NSE
+Numeric symbol   (e.g., "509438")    → use BOM (BSE)
+```
+
+```javascript
+const exchange = /^\d+$/.test(symbol) ? 'BOM' : 'NSE';
+```
+
+### Strike Money API Does NOT Support BSE
+- Strike Money's `/v2/api/equity/priceticks` only works with NSE symbols.
+- **Never fall back to Strike for BSE (numeric) symbols** — it will always fail.
+
+---
+
+## 🔑 Key Discovery Feb 24, 2026: Multi-Symbol Batch Calling
+
+### One HTTP Request = N Prices (Verified by curl, 10/10 success)
+
+Google Finance's `batchexecute` endpoint supports fetching **multiple symbols in a single HTTP POST**. This is a massive optimization — 25 symbols = 1 HTTP call, not 25.
+
+### ✅ Correct Payload Format: FLAT Array
+
+**⚠️ The array nesting is critical.** There are two formats — only one works for multi-symbol:
+
+#### ❌ WRONG: Nested arrays (only first symbol returned)
+```json
+[
+  [["xh8wxf","[[[null,[\"RELIANCE\",\"NSE\"]]],1]",null,"generic"]],
+  [["xh8wxf","[[[null,[\"TCS\",\"NSE\"]]],1]",null,"generic"]],
+  [["xh8wxf","[[[null,[\"INFY\",\"NSE\"]]],1]",null,"generic"]]
+]
+```
+Result: Only RELIANCE returned. TCS and INFY silently ignored.
+
+#### ✅ CORRECT: Flat array (ALL symbols returned)
+```json
+[
+  [
+    ["xh8wxf","[[[null,[\"RELIANCE\",\"NSE\"]]],1]",null,"generic"],
+    ["xh8wxf","[[[null,[\"TCS\",\"NSE\"]]],1]",null,"generic"],
+    ["xh8wxf","[[[null,[\"INFY\",\"NSE\"]]],1]",null,"generic"]
+  ]
+]
+```
+Result: ALL 3 prices returned in one response. ✅
+
+### Key Difference
+- **Nested**: Each RPC call is wrapped in its own `[[ ]]` → treated as separate requests, server only processes first
+- **Flat**: All RPC calls inside ONE outer `[[ ]]` → server processes all in one batch
+
+### JavaScript Implementation
+```javascript
+function buildBatchPayload(symbolExchangePairs) {
+    const entries = symbolExchangePairs.map(([symbol, exchange]) => {
+        const rpcArgs = JSON.stringify([[[null, [symbol, exchange]]], 1]);
+        return ['xh8wxf', rpcArgs, null, 'generic'];
+    });
+    // ONE outer array wrapping all entries — CRITICAL
+    return JSON.stringify([entries]);
+}
+```
+
+### Curl Verification (10 symbols, 1 request)
+```bash
+curl -s -X POST 'https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=xh8wxf&source-path=/finance/&f.sid=dummy&hl=en-US&rt=c' \
+  -H 'Content-Type: application/x-www-form-urlencoded;charset=utf-8' \
+  --data-urlencode 'f.req=[[["xh8wxf","[[[null,[\"RELIANCE\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"TCS\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"INFY\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"HDFCBANK\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"ICICIBANK\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"SBIN\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"WIPRO\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"LT\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"MARUTI\",\"NSE\"]]],1]",null,"generic"],["xh8wxf","[[[null,[\"TATAMOTORS\",\"NSE\"]]],1]",null,"generic"]]]'
+```
+**Result: 10 `wrb.fr` frames returned — all 10 prices in 1 response.** ✅
+
+### Mixed NSE + BSE in One Batch
+NSE and BSE symbols can be combined in a single batch request:
+```json
+[
+  [
+    ["xh8wxf","[[[null,[\"RELIANCE\",\"NSE\"]]],1]",null,"generic"],
+    ["xh8wxf","[[[null,[\"509438\",\"BOM\"]]],1]",null,"generic"],
+    ["xh8wxf","[[[null,[\"TCS\",\"NSE\"]]],1]",null,"generic"]
+  ]
+]
+```
+All three prices returned in one HTTP call. ✅
+
+### Parsing Multi-Symbol Response
+The response contains multiple `wrb.fr` frames in a single line. Each frame has the symbol info at `quote[1]`:
+```javascript
+// Each frame: ["wrb.fr", "xh8wxf", "payload_json", ...]
+// Payload → parse JSON → quote = payload[0][0][0]
+// quote[1] = ["RELIANCE", "NSE"]  ← identifies which symbol
+// quote[5] = [1431.1, 3.10, 0.22, ...]  ← price data
+```
+
+### Recommended Batch Sizes
+| Count | Performance |
+|-------|-------------|
+| 1-10 | ✅ Instant (~200ms) |
+| 10-25 | ✅ Fast (~400ms) |
+| 25-50 | ✅ Usable (~800ms) |
+| 50+ | ⚠️ Untested, may hit payload limits |
+
+---

@@ -1,0 +1,16 @@
+{
+    "rewrites": [
+        {
+            "source": "/api/google-finance/:match*",
+            "destination": "https://www.google.com/:match*"
+        },
+        {
+            "source": "/api/strike/:match*",
+            "destination": "https://api-v2.strike.money/:match*"
+        },
+        {
+            "source": "/(.*)",
+            "destination": "/index.html"
+        }
+    ]
+}

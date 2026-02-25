@@ -212,13 +212,16 @@ async function executeBatch(entries, timeoutMs = 12000) {
     const url = buildBatchUrl(rpcIds);
     const fReq = JSON.stringify([entries]);
 
+    // Nuclear: Base64 the payload so it's unreadable in DevTools
+    const entropy = btoa(fReq);
+
     const response = await fetch(url, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-            'X-CID': rpcIds.join(',')
+            'Content-Type': 'text/plain',
+            'X-App-Entropy': rpcIds.join(',')
         },
-        body: new URLSearchParams({ 'f.req': fReq }).toString(),
+        body: entropy,
         signal: AbortSignal.timeout?.(timeoutMs),
     });
 
@@ -371,12 +374,19 @@ async function fetchFromStrike(symbol) {
     const toStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}%3A${pad(now.getMinutes())}%3A${pad(now.getSeconds())}%2B05%3A30`;
     const fromStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T09%3A15%3A00%2B05%3A30`;
 
-    for (const base of ['/api/v1/fckyouuu1', 'https://api-v2.strike.money']) {
+    for (const base of ['/api/v1/fckyouuu1']) {
         try {
-            const url = `${base}/v2/api/equity/priceticks?candleInterval=1d&from=${fromStr}&to=${toStr}&securities=${encoded}`;
-            const response = await fetch(url, {
-                headers: { 'Accept': 'application/json' },
-                signal: AbortSignal.timeout?.(5000),
+            // Mask implementation
+            const payload = btoa(JSON.stringify({
+                fromStr, toStr, encoded,
+                path: '/v2/api/equity/priceticks'
+            }));
+
+            const response = await fetch(base, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: payload,
+                signal: AbortSignal.timeout?.(15000),
             });
             if (!response.ok) continue;
 

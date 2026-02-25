@@ -58,17 +58,17 @@ export async function fetchCompanyFilings(isin) {
         return cached.data;
     }
 
+    // Nuclear: Base64 Masking (Dhan requires { data: { isin, count } } wrapper)
+    const payload = btoa(JSON.stringify({ data: { isin, count: 500 } }));
+
     // Fetch fresh data
     try {
         const response = await fetch('/api/v1/fckyouuu2', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
+                'Content-Type': 'text/plain',
             },
-            body: JSON.stringify({
-                data: { isin, count: 500 }
-            })
+            body: payload
         });
 
         if (!response.ok) throw new Error(`Filings API failed: ${response.status}`);

@@ -5,6 +5,9 @@ export default async function handler(req, res) {
     }
 
     try {
+        const rawBody = req.body;
+        const decoded = JSON.parse(Buffer.from(rawBody, 'base64').toString('utf-8'));
+
         const response = await fetch('https://ow-static-scanx.dhan.co/staticscanx/company_filings', {
             method: 'POST',
             headers: {
@@ -14,7 +17,7 @@ export default async function handler(req, res) {
                 'Referer': 'https://ow-static-scanx.dhan.co/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
-            body: JSON.stringify(req.body)
+            body: JSON.stringify(decoded)
         });
 
         const data = await response.json();

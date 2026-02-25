@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { cleanSymbol } from '@core/symbol/cleanSymbol';
 import { calculateEMA as sharedCalculateEMA, calculateSMA as sharedCalculateSMA } from '@core/math/indicators';
+import { getMobileProxyUrl } from './networkConfig';
 
 export { cleanSymbol };
 export const calculateEMA = sharedCalculateEMA;
@@ -9,17 +10,9 @@ export const calculateSMA = sharedCalculateSMA;
 const GOOGLE_RPC_PRICE = 'xh8wxf';
 const GOOGLE_RPC_CHART = 'AiCwsd';
 const GOOGLE_RPC_FUNDAMENTALS = 'HqGpWd';
-
-// ─── Proxy Configuration ──────────────────────────────────────────
-// In dev:  route through local Vite dev server on the LAN
-// In prod: route through Vercel serverless functions
-const __DEV__ = process.env.NODE_ENV !== 'production';
-
-const PROXY_BASE_URL = process.env.EXPO_PUBLIC_PROXY_BASE_URL
-    || (__DEV__ ? 'http://192.168.29.39:5173' : 'https://your-vercel-domain.vercel.app');
-
-const BATCH_PROXY_URL = `${PROXY_BASE_URL}/api/mobile-batch`;
-const STRIKE_PROXY_URL = `${PROXY_BASE_URL}/api/mobile-strike`;
+const GOOGLE_BATCH_ENDPOINT = 'https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute';
+const BATCH_PROXY_URL = getMobileProxyUrl('/api/mobile-batch');
+const STRIKE_PROXY_URL = getMobileProxyUrl('/api/mobile-strike');
 
 const MAX_BATCH_SIZE = 250;
 const BATCH_AGGREGATION_WINDOW = 200;
@@ -220,31 +213,63 @@ async function executeBatch(entries: any[], timeoutMs = 12_000) {
     const fReq = JSON.stringify([entries]);
     const body = new URLSearchParams({ 'f.req': fReq }).toString();
 
-    const response = await fetchWithTimeout(
-        BATCH_PROXY_URL,
+    if (BATCH_PROXY_URL) {
+        try {
+            const response = await fetchWithTimeout(
+                BATCH_PROXY_URL,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+                        'x-rpc-ids': rpcIds.join(','),
+                    },
+                    body,
+                },
+                timeoutMs,
+            );
+
+            if (!response.ok) {
+                throw new Error(`Proxy batch failed: ${response.status}`);
+            }
+
+            return response.text();
+        } catch {
+            if (!warnedBatchFallback) {
+                console.warn('[PriceService] mobile-batch proxy unavailable, using direct Google endpoint.');
+                warnedBatchFallback = true;
+            }
+        }
+    }
+
+    const directUrl =
+        `${GOOGLE_BATCH_ENDPOINT}?rpcids=${encodeURIComponent(rpcIds.join(','))}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
+    const directResponse = await fetchWithTimeout(
+        directUrl,
         {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-                'x-rpc-ids': rpcIds.join(','),
+                Origin: 'https://www.google.com',
+                Referer: 'https://www.google.com/finance/',
+                'User-Agent': 'Mozilla/5.0',
             },
             body,
         },
         timeoutMs,
     );
 
-    if (!response.ok) {
-        throw new Error(`Batch failed: ${response.status}`);
+    if (!directResponse.ok) {
+        throw new Error(`Direct batch failed: ${directResponse.status}`);
     }
 
-    return response.text();
+    return directResponse.text();
 }
 
 
 
 
 function parseAllFrames(text: string) {
-    const frames: Array<{ rpcId: string; payload: any }> = [];
+    const frames: { rpcId: string; payload: any }[] = [];
     const lines = text.split('\n');
 
     for (let line of lines) {
@@ -336,7 +361,7 @@ function extractWideChartFromFrame(payload: any) {
         return 0;
     };
 
-    const series: Array<{ time: number; changePct: number; price: number; value: number }> = points
+    const series: { time: number; changePct: number; price: number; value: number }[] = points
         .map((point: any) => ({
             time: parseTime(point[0]),
             changePct: (point?.[1]?.[2] || 0) * 100,
@@ -400,6 +425,8 @@ type QueueItem = {
 let batchQueue: QueueItem[] = [];
 let batchTimeout: ReturnType<typeof setTimeout> | null = null;
 const pendingRpcRequests = new Map<string, Promise<any>>();
+let warnedBatchFallback = false;
+let warnedStrikeFallback = false;
 
 async function flushBatch() {
     const queue = [...batchQueue];
@@ -472,27 +499,7 @@ async function fetchFromStrike(symbol: string): Promise<PriceData | null> {
 
     const toRaw = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}+05:30`;
     const fromRaw = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T09:15:00+05:30`;
-
-    try {
-        // Route through proxy — proxy handles the actual Strike API call
-        const response = await fetchWithTimeout(
-            STRIKE_PROXY_URL,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    fromStr: fromRaw,
-                    toStr: toRaw,
-                    encoded,
-                    path: '/v2/api/equity/priceticks',
-                }),
-            },
-            15_000,
-        );
-
-        if (!response.ok) return null;
-        const data = await response.json();
-
+    const parseStrikePayload = (data: any) => {
         const ticks = data?.data?.ticks?.[clean] || data?.data?.ticks?.[symbol.toUpperCase()];
         if (!Array.isArray(ticks) || !ticks.length) return null;
 
@@ -507,7 +514,56 @@ async function fetchFromStrike(symbol: string): Promise<PriceData | null> {
             changePct: open > 0 ? ((close - open) / open) * 100 : 0,
             prevClose: open || 0,
             source: 'strike',
-        };
+        } satisfies PriceData;
+    };
+
+    if (STRIKE_PROXY_URL) {
+        try {
+            const response = await fetchWithTimeout(
+                STRIKE_PROXY_URL,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fromStr: fromRaw,
+                        toStr: toRaw,
+                        encoded,
+                        path: '/v2/api/equity/priceticks',
+                    }),
+                },
+                15_000,
+            );
+
+            if (response.ok) {
+                const data = await response.json();
+                const parsed = parseStrikePayload(data);
+                if (parsed) return parsed;
+            }
+        } catch {
+            if (!warnedStrikeFallback) {
+                console.warn('[PriceService] mobile-strike proxy unavailable, using direct Strike endpoint.');
+                warnedStrikeFallback = true;
+            }
+        }
+    }
+
+    try {
+        const strikeUrl =
+            `https://api-v2.strike.money/v2/api/equity/priceticks?candleInterval=1d&from=${encodeURIComponent(fromRaw)}&to=${encodeURIComponent(toRaw)}&securities=${encoded}`;
+        const response = await fetchWithTimeout(
+            strikeUrl,
+            {
+                method: 'GET',
+                headers: {
+                    Accept: 'application/json',
+                    'User-Agent': 'Mozilla/5.0',
+                },
+            },
+            15_000,
+        );
+        if (!response.ok) return null;
+        const data = await response.json();
+        return parseStrikePayload(data);
     } catch {
         return null;
     }

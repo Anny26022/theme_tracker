@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
 import { BaseNode } from './BaseNode';
-import { useTheme } from '../contexts/ThemeContext';
 import { WatchlistCopyButton } from './WatchlistCopyButton';
 
 interface SectorNodeProps {
@@ -14,8 +13,6 @@ interface SectorNodeProps {
 }
 
 export const SectorNode = ({ name, count, onClick, onCopy, index, colorObj }: SectorNodeProps) => {
-    const { colors } = useTheme();
-
     return (
         <BaseNode
             label={`Node_0${index + 1}`}

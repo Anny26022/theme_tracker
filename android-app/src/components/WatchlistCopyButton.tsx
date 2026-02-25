@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, View, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { Copy, Check } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 

@@ -176,7 +176,7 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
                     {/* Results Overlay */}
                     {showResults && matchingCompanies.length > 0 && (
                         <View style={currentStyles.searchResults}>
-                            <ScrollView keyboardShouldPersistTaps="always" style={{ flex: 1 }}>
+                            <ScrollView keyboardShouldPersistTaps="always" style={{ flex: 1 }} contentInsetAdjustmentBehavior="automatic">
                                 {matchingCompanies.map((c) => (
                                     <Pressable
                                         key={`${c.symbol}-${c.sector}-${c.industry}`}
@@ -206,6 +206,7 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
             {/* Industry Grid */}
             <FlatList
                 data={filteredIndustries}
+                contentInsetAdjustmentBehavior="automatic"
                 keyExtractor={(item) => `${item.sector}-${item.name}`}
                 numColumns={2}
                 columnWrapperStyle={currentStyles.row}

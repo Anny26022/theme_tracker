@@ -79,6 +79,7 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
 
             <FlatList
                 data={filteredIndustries}
+                contentInsetAdjustmentBehavior="automatic"
                 keyExtractor={(item) => item}
                 numColumns={2}
                 columnWrapperStyle={currentStyles.row}

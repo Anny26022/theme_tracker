@@ -1,9 +1,7 @@
 import React from 'react';
-import { View, StyleSheet, Dimensions } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import Svg, { Rect, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../contexts/ThemeContext';
-
-const { width, height } = Dimensions.get('window');
 
 export const BackgroundAmbience = () => {
     const { colors, theme } = useTheme();

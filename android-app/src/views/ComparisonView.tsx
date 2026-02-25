@@ -175,7 +175,7 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
                     <Text style={currentStyles.subtitle}>CROSS-VECTOR PERFORMANCE ANALYSIS</Text>
                 </View>
 
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.intervalBar}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.intervalBar} contentInsetAdjustmentBehavior="automatic">
                     {INTERVALS.map(tf => (
                         <Pressable
                             key={tf}
@@ -195,7 +195,7 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
             </View>
 
             <View style={currentStyles.selectionArea}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.selectedList}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.selectedList} contentInsetAdjustmentBehavior="automatic">
                     {selectedSymbols.map((item, idx) => (
                         <Pressable
                             key={item.id}
@@ -255,7 +255,7 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
 
                         {searchQuery.length > 0 && searchResults.length > 0 && (
                             <View style={currentStyles.searchResults}>
-                                <ScrollView keyboardShouldPersistTaps="always">
+                                <ScrollView keyboardShouldPersistTaps="always" contentInsetAdjustmentBehavior="automatic">
                                     {searchResults.map(res => (
                                         <Pressable
                                             key={res.clean + res.type}

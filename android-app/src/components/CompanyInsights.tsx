@@ -6,8 +6,8 @@ import {
     StyleSheet,
     Pressable,
     ScrollView,
-    Dimensions,
-    ActivityIndicator
+    ActivityIndicator,
+    useWindowDimensions,
 } from 'react-native';
 import { X, Activity, FileText, Newspaper, PieChart, TrendingUp, Landmark, BarChart3, Award } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
@@ -15,8 +15,6 @@ import { useLivePrice } from '../contexts/PriceContext';
 import { useFundamentals } from '../hooks/useFundamentals';
 import { useFilings } from '../hooks/useFilings';
 import { getIsin } from '../services/isinService';
-
-const { width, height } = Dimensions.get('window');
 
 function formatIndianNumber(n: any): string {
     if (n == null || isNaN(n)) return '—';
@@ -55,6 +53,7 @@ const Metric = ({ label, value, subValue, icon, colors, currentStyles }: any) =>
 
 export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsightsProps) => {
     const { colors, theme } = useTheme();
+    const { height: screenHeight } = useWindowDimensions();
     const [activeTab, setActiveTab] = useState('SNAPSHOT');
     const isDark = theme === 'dark';
 
@@ -91,7 +90,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
     ];
 
     if (!isOpen) return null;
-    const currentStyles = styles(colors, isDark);
+    const currentStyles = styles(colors, isDark, screenHeight);
 
     const changeColor = (changePct ?? 0) >= 0 ? '#22c55e' : '#ef4444';
 
@@ -304,7 +303,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
     );
 };
 
-const styles = (colors: any, isDark: boolean) => StyleSheet.create({
+const styles = (colors: any, isDark: boolean, screenHeight: number) => StyleSheet.create({
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.6)',
@@ -314,7 +313,7 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         flex: 1,
     },
     content: {
-        height: height * 0.9,
+        height: screenHeight * 0.9,
         backgroundColor: colors.bgMain,
         borderTopLeftRadius: 16,
         borderTopRightRadius: 16,

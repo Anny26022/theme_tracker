@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { useTheme } from '../contexts/ThemeContext';
 
-interface TrackerRowProps {
+type TrackerRowProps = {
     name: string;
     perf: number | null;
     onClick: () => void;
@@ -9,9 +10,7 @@ interface TrackerRowProps {
     leaders?: any[];
     laggards?: any[];
     breadth?: any;
-}
-
-import { useTheme } from '../contexts/ThemeContext';
+};
 
 export const TrackerRow = ({ name, perf, onClick, loading, leaders, laggards, breadth }: TrackerRowProps) => {
     const { colors, isDark } = useTheme();

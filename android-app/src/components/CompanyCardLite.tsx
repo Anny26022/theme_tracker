@@ -1,23 +1,23 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { Image } from 'expo-image';
 import { ArrowUpRight, MoreHorizontal } from 'lucide-react-native';
 import { useLivePrice } from '../contexts/PriceContext';
+import { useTheme } from '../contexts/ThemeContext';
 
-interface CompanyCardLiteProps {
+type CompanyCardLiteProps = {
     item: {
         symbol: string;
         name: string;
     };
     index: number;
     onClick: () => void;
-}
-
-import { useTheme } from '../contexts/ThemeContext';
+};
 
 export const CompanyCardLite = ({ item, index, onClick }: CompanyCardLiteProps) => {
     const { colors } = useTheme();
     const [imgError, setImgError] = React.useState(false);
-    const { price, change, changePct, loading } = useLivePrice(item.symbol);
+    const { price, changePct, loading } = useLivePrice(item.symbol);
     const currentStyles = styles(colors);
 
     const isPositive = (changePct ?? 0) >= 0;
@@ -31,7 +31,7 @@ export const CompanyCardLite = ({ item, index, onClick }: CompanyCardLiteProps) 
                         <Image
                             source={{ uri: `https://images.dhan.co/symbol/${item.symbol}.png` }}
                             style={currentStyles.logo}
-                            resizeMode="contain"
+                            contentFit="contain"
                             onError={() => setImgError(true)}
                         />
                     ) : (
@@ -170,4 +170,3 @@ const styles = (colors: any) => StyleSheet.create({
         gap: 8,
     },
 });
-

@@ -1,10 +1,7 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Dimensions, Pressable } from 'react-native';
-import Svg, { Path, Line, Circle, Defs, LinearGradient, Stop, G } from 'react-native-svg';
-import Animated, { useAnimatedProps, withTiming, useSharedValue, interpolate } from 'react-native-reanimated';
+import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
+import Svg, { Path, Line, Circle, G } from 'react-native-svg';
 import { useTheme } from '../contexts/ThemeContext';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const COLORS = [
     '#3b82f6', // blue
     '#f97316', // orange
@@ -43,12 +40,11 @@ function findClosestIndex(points: any[], targetX: number) {
     return low;
 }
 
-const AnimatedPath = Animated.createAnimatedComponent(Path);
-
 export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, height = 300 }: ComparisonChartProps) => {
-    const { colors, isDark } = useTheme();
+    const { colors } = useTheme();
+    const { width } = useWindowDimensions();
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-    const chartWidth = SCREEN_WIDTH - 32; // Container margin
+    const chartWidth = width - 32; // Container margin
 
     // 1. Process series
     const seriesList = useMemo(() => {

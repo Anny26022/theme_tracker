@@ -4,12 +4,9 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMobileProxyUrl } from './networkConfig';
 
-const PROXY_BASE =
-    process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
-    (__DEV__ ? 'http://192.168.29.39:5173' : 'https://your-vercel-domain.vercel.app');
-
-const SCANX_PROXY_URL = `${PROXY_BASE}/api/mobile-scanx`;
+const SCANX_PROXY_URL = getMobileProxyUrl('/api/mobile-scanx');
 
 const FILINGS_CACHE_KEY = 'tt_filings_cache:v1';
 const FILINGS_CACHE_TTL = 3600_000 * 4; // 4 hours
@@ -42,7 +39,7 @@ async function saveCache() {
             .slice(0, 30);
         filingsCache = new Map(entries);
         await AsyncStorage.setItem(FILINGS_CACHE_KEY, JSON.stringify(entries));
-    } catch (e) {
+    } catch {
         // Storage full — ignore
     }
 }
@@ -61,13 +58,40 @@ export async function fetchCompanyFilings(isin: string): Promise<any[]> {
     }
 
     try {
-        const response = await fetch(SCANX_PROXY_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ data: { isin, count: 500 } }),
-        });
+        const payload = { data: { isin, count: 500 } };
+        const requestDirect = () =>
+            fetch('https://ow-static-scanx.dhan.co/staticscanx/company_filings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    Origin: 'https://ow-static-scanx.dhan.co',
+                    Referer: 'https://ow-static-scanx.dhan.co/',
+                    'User-Agent': 'Mozilla/5.0',
+                },
+                body: JSON.stringify(payload),
+            });
+        let response: Response;
+
+        if (SCANX_PROXY_URL) {
+            try {
+                response = await fetch(SCANX_PROXY_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    response = await requestDirect();
+                }
+            } catch {
+                response = await requestDirect();
+            }
+        } else {
+            response = await requestDirect();
+        }
 
         if (!response.ok) throw new Error(`Filings API failed: ${response.status}`);
 

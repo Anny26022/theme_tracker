@@ -1,16 +1,15 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { TrackerRow } from '../components/TrackerRow';
 import { useUnifiedTracker } from '../hooks/useUnifiedTracker';
 import { useMarketData } from '../hooks/useMarketData';
 import { ViewWrapper } from '../components/ViewWrapper';
+import { useTheme } from '../contexts/ThemeContext';
 
-interface TrackerViewProps {
+type TrackerViewProps = {
     onSectorClick: (sector: string) => void;
     onIndustryClick: (sector: string, industry: string) => void;
-}
-
-import { useTheme } from '../contexts/ThemeContext';
+};
 
 export const TrackerView = ({ onSectorClick, onIndustryClick }: TrackerViewProps) => {
     const { colors } = useTheme();
@@ -52,6 +51,13 @@ export const TrackerView = ({ onSectorClick, onIndustryClick }: TrackerViewProps
 
     const isGlobalLoading = sectorLoading || industryLoading;
     const currentStyles = styles(colors);
+    const columnData = useMemo(
+        () => [
+            { key: 'sectors', title: 'SECTOR RANKINGS' },
+            { key: 'industries', title: 'INDUSTRY ALPHA' },
+        ],
+        []
+    );
 
     return (
         <ViewWrapper style={currentStyles.container}>
@@ -62,53 +68,54 @@ export const TrackerView = ({ onSectorClick, onIndustryClick }: TrackerViewProps
                 </Text>
             </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={currentStyles.columnsContainer}>
-                    {/* SECTORS COLUMN */}
-                    <View style={currentStyles.column}>
-                        <View style={currentStyles.columnHeader}>
-                            <View style={currentStyles.columnIndicator} />
-                            <Text style={currentStyles.columnTitle}>SECTOR RANKINGS</Text>
+            <FlatList
+                horizontal
+                data={columnData}
+                contentInsetAdjustmentBehavior="automatic"
+                keyExtractor={(item) => item.key}
+                showsHorizontalScrollIndicator={false}
+                renderItem={({ item }) => {
+                    const isSectorColumn = item.key === 'sectors';
+                    return (
+                        <View style={currentStyles.column}>
+                            <View style={currentStyles.columnHeader}>
+                                <View style={currentStyles.columnIndicator} />
+                                <Text style={currentStyles.columnTitle}>{item.title}</Text>
+                            </View>
+                            <FlatList
+                                data={isSectorColumn ? sortedSectors : sortedIndustries}
+                                contentInsetAdjustmentBehavior="automatic"
+                                keyExtractor={(row: any) => (isSectorColumn ? row : row.name)}
+                                renderItem={({ item: row }: any) =>
+                                    isSectorColumn ? (
+                                        <TrackerRow
+                                            name={row}
+                                            perf={sectorData[row]?.avgPerf ?? null}
+                                            leaders={sectorData[row]?.leaders}
+                                            laggards={sectorData[row]?.laggards}
+                                            breadth={sectorData[row]?.breadth}
+                                            onClick={() => onSectorClick(row)}
+                                            loading={isGlobalLoading && !sectorData[row]}
+                                        />
+                                    ) : (
+                                        <TrackerRow
+                                            name={row.name}
+                                            perf={industryData[row.name]?.avgPerf ?? null}
+                                            leaders={industryData[row.name]?.leaders}
+                                            laggards={industryData[row.name]?.laggards}
+                                            breadth={industryData[row.name]?.breadth}
+                                            onClick={() => onIndustryClick(row.sector, row.name)}
+                                            loading={isGlobalLoading && !industryData[row.name]}
+                                        />
+                                    )
+                                }
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={currentStyles.columnListContent}
+                            />
                         </View>
-                        <ScrollView showsVerticalScrollIndicator={false}>
-                            {sortedSectors.map(sector => (
-                                <TrackerRow
-                                    key={sector}
-                                    name={sector}
-                                    perf={sectorData[sector]?.avgPerf ?? null}
-                                    leaders={sectorData[sector]?.leaders}
-                                    laggards={sectorData[sector]?.laggards}
-                                    breadth={sectorData[sector]?.breadth}
-                                    onClick={() => onSectorClick(sector)}
-                                    loading={isGlobalLoading && !sectorData[sector]}
-                                />
-                            ))}
-                        </ScrollView>
-                    </View>
-
-                    {/* INDUSTRIES COLUMN */}
-                    <View style={currentStyles.column}>
-                        <View style={currentStyles.columnHeader}>
-                            <View style={currentStyles.columnIndicator} />
-                            <Text style={currentStyles.columnTitle}>INDUSTRY ALPHA</Text>
-                        </View>
-                        <ScrollView showsVerticalScrollIndicator={false}>
-                            {sortedIndustries.map(ind => (
-                                <TrackerRow
-                                    key={ind.name}
-                                    name={ind.name}
-                                    perf={industryData[ind.name]?.avgPerf ?? null}
-                                    leaders={industryData[ind.name]?.leaders}
-                                    laggards={industryData[ind.name]?.laggards}
-                                    breadth={industryData[ind.name]?.breadth}
-                                    onClick={() => onIndustryClick(ind.sector, ind.name)}
-                                    loading={isGlobalLoading && !industryData[ind.name]}
-                                />
-                            ))}
-                        </ScrollView>
-                    </View>
-                </View>
-            </ScrollView>
+                    );
+                }}
+            />
         </ViewWrapper>
     );
 };
@@ -136,12 +143,12 @@ const styles = (colors: any) => StyleSheet.create({
         letterSpacing: 2,
         marginTop: 4,
     },
-    columnsContainer: {
-        flexDirection: 'row',
-    },
     column: {
         width: 320,
         paddingHorizontal: 4,
+    },
+    columnListContent: {
+        paddingBottom: 24,
     },
     columnHeader: {
         flexDirection: 'row',

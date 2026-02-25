@@ -9,7 +9,7 @@ interface NavbarProps {
 }
 
 export const Navbar = ({ view, navigate }: NavbarProps) => {
-    const { isDark, toggleTheme, colors, theme } = useTheme();
+    const { isDark, toggleTheme, colors } = useTheme();
     const [isMenuOpen, setIsMenuOpen] = React.useState(false);
     const menuAnim = React.useRef(new Animated.Value(0)).current;
 

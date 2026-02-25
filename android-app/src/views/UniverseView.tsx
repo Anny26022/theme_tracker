@@ -107,6 +107,7 @@ export const UniverseView = ({ onSectorClick }: { onSectorClick: (sector: string
 
             <FlatList
                 data={filteredSectors}
+                contentInsetAdjustmentBehavior="automatic"
                 keyExtractor={(item) => item}
                 numColumns={2}
                 columnWrapperStyle={currentStyles.row}

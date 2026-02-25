@@ -1,20 +1,13 @@
 /**
  * Live Price Service — Maximally Batched
- * 
- * VERIFIED by curl:
- *   - xh8wxf (price) + AiCwsd (chart) can be MIXED in ONE batchexecute call
- *   - 30 symbols in 0.69s ✅
- *   - Flat array format: [[call1, call2, ...]] — critical
- *
- * Call reduction:
- *   Before: 1,144 HTTP requests per tracker interval switch
- *   After:  ~10 HTTP requests (286 sectors / 30 per batch)
  */
 
-const GOOGLE_RPC_PRICE = 'xh8wxf';
-const GOOGLE_RPC_CHART = 'AiCwsd';
-const GOOGLE_RPC_FUNDAMENTALS = 'HqGpWd';
-const GOOGLE_BATCH_PATH = '/api/v1/fuckyouuuu';
+import { EP_GOOGLE, EP_STRIKE, RPC_PRICE, RPC_CHART, RPC_FUNDA, HDR_ENTROPY, CT_PLAIN } from '../lib/stealth';
+
+const GOOGLE_RPC_PRICE = RPC_PRICE;
+const GOOGLE_RPC_CHART = RPC_CHART;
+const GOOGLE_RPC_FUNDAMENTALS = RPC_FUNDA;
+const GOOGLE_BATCH_PATH = EP_GOOGLE;
 const MAX_BATCH_SIZE = 250; // Massively batched for maximum efficiency
 const BATCH_AGGREGATION_WINDOW = 200; // 200ms to collect more requests into one call
 const IS_DEV = import.meta.env?.DEV;
@@ -218,8 +211,8 @@ async function executeBatch(entries, timeoutMs = 12000) {
     const response = await fetch(url, {
         method: 'POST',
         headers: {
-            'Content-Type': 'text/plain',
-            'X-App-Entropy': rpcIds.join(',')
+            [HDR_ENTROPY]: rpcIds.join(','),
+            'Content-Type': CT_PLAIN
         },
         body: entropy,
         signal: AbortSignal.timeout?.(timeoutMs),
@@ -233,10 +226,7 @@ async function executeBatch(entries, timeoutMs = 12000) {
  * Parse all wrb.fr frames from a batchexecute response.
  * Returns array of { rpcId, payload } in sequential order.
  *
- * Google batchexecute format (verified from raw response):
- *   Line: number (byte-length prefix)
- *   Line: [["wrb.fr","xh8wxf","{...}",null,null,null,"generic"], ["wrb.fr",...], ...]
- *   Frames are FLAT arrays, NOT indexed envelopes.
+ * Parses raw batchexecute response into individual frames.
  */
 function parseAllFrames(text) {
     const frames = [];
@@ -311,7 +301,7 @@ function extractChartFromFrame(payload) {
 }
 
 /**
- * Extract FULL time-series from AiCwsd frame.
+ * Extract FULL time-series from chart frame.
  */
 function extractWideChartFromFrame(payload) {
     const root = payload?.[0]?.[0];
@@ -374,9 +364,8 @@ async function fetchFromStrike(symbol) {
     const toStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}%3A${pad(now.getMinutes())}%3A${pad(now.getSeconds())}%2B05%3A30`;
     const fromStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T09%3A15%3A00%2B05%3A30`;
 
-    for (const base of ['/api/v1/fckyouuu1']) {
+    for (const base of [EP_STRIKE]) {
         try {
-            // Mask implementation
             const payload = btoa(JSON.stringify({
                 fromStr, toStr, encoded,
                 path: '/v2/api/equity/priceticks'
@@ -384,7 +373,7 @@ async function fetchFromStrike(symbol) {
 
             const response = await fetch(base, {
                 method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
+                headers: { 'Content-Type': CT_PLAIN },
                 body: payload,
                 signal: AbortSignal.timeout?.(15000),
             });
@@ -700,7 +689,7 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
     return results;
 }
 
-// ─── Fundamentals Extraction (HqGpWd) ──────────────────────────────
+// ─── Fundamentals Extraction ────────────────────────────────────────
 
 function extractFundaFromFrame(payload) {
     const root = payload?.[0]?.[0];

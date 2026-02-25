@@ -1,7 +1,34 @@
 import { defineConfig } from 'vite'
+import obfuscatorPlugin from 'rollup-plugin-obfuscator'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+    optimizeDeps: {
+        entries: ['index.html'],
+    },
+    build: {
+        rollupOptions: {
+            plugins: [
+                obfuscatorPlugin({
+                    options: {
+                        compact: true,
+                        controlFlowFlattening: true,
+                        controlFlowFlatteningThreshold: 0.5,
+                        deadCodeInjection: true,
+                        deadCodeInjectionThreshold: 0.2,
+                        identifierNamesGenerator: 'hexadecimal',
+                        renameGlobals: false,
+                        selfDefending: false,
+                        stringArray: true,
+                        stringArrayEncoding: ['rc4'],
+                        stringArrayThreshold: 0.8,
+                        transformObjectKeys: true,
+                        unicodeEscapeSequence: false,
+                    },
+                }),
+            ],
+        },
+    },
     // Nuclear Stealth Middleware: Decodes Base64 bodies before they hit the proxy
     plugins: [
         {

@@ -3,6 +3,8 @@
  * Filings are historical data and don't change frequently, so they can be cached heavily.
  */
 
+import { EP_SCANX, CT_PLAIN } from '../lib/stealth';
+
 const FILINGS_CACHE_KEY = 'tt_filings_cache:v1';
 const FILINGS_CACHE_TTL = 3600_000 * 4; // 4 hours
 const MAX_PERSISTED_FILINGS = 50; // Reduced to fit within 5MB sessionStorage limit (~70KB per entry)
@@ -63,10 +65,10 @@ export async function fetchCompanyFilings(isin) {
 
     // Fetch fresh data
     try {
-        const response = await fetch('/api/v1/fckyouuu2', {
+        const response = await fetch(EP_SCANX, {
             method: 'POST',
             headers: {
-                'Content-Type': 'text/plain',
+                'Content-Type': CT_PLAIN,
             },
             body: payload
         });

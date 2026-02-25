@@ -4,12 +4,16 @@
     ],
     "rewrites": [
         {
-            "source": "/api/google-finance/:match*",
-            "destination": "https://www.google.com/:match*"
+            "source": "/api/v1/fuckyouuuu",
+            "destination": "https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=AiCwsd,xh8wxf,HqGpWd&source-path=/finance/&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c"
         },
         {
-            "source": "/api/strike/:match*",
+            "source": "/api/v1/fckyouuu1/:match*",
             "destination": "https://api-v2.strike.money/:match*"
+        },
+        {
+            "source": "/api/v1/fckyouuu2/:match*",
+            "destination": "https://ow-static-scanx.dhan.co/staticscanx/company_filings/:match*"
         },
         {
             "source": "/(.*)",

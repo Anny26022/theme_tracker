@@ -5,12 +5,12 @@ import { cn } from '../lib/utils';
 
 const EMPTY_ITEMS = [];
 
-export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY_ITEMS, onClick, loading }) => {
+export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY_ITEMS, breadth, onClick, loading }) => {
     const [tooltipOpen, setTooltipOpen] = useState(false);
     const [pos, setPos] = useState(null);
     const rowRef = useRef(null);
 
-    const hasTooltip = (leaders && leaders.length > 0) || (laggards && laggards.length > 0);
+    const hasTooltip = (leaders && leaders.length > 0) || (laggards && laggards.length > 0) || !!breadth;
     const hasData = perf !== null && perf !== undefined;
     const isPos = hasData && perf > 0;
     const barWidth = hasData ? Math.min(Math.abs(perf) * 2, 50) : 0;
@@ -116,51 +116,88 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                             className="fixed z-[200] pointer-events-none"
                             style={{ top: pos.top, left: pos.left }}
                         >
-                            <div className="glass-card p-3.5 border border-[var(--accent-primary)]/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] bg-[var(--bg-main)]/97 backdrop-blur-3xl flex flex-row gap-5 min-w-[320px] max-w-[460px]">
-                                {leaders.length > 0 && (
-                                    <div className="flex-1 space-y-3">
-                                        <div className="flex items-center gap-2 border-b border-emerald-500/20 pb-1.5">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]" />
-                                            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-[0.2em]">Alpha Leaders</span>
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            {leaders.map((l) => (
-                                                <div key={l.symbol} className="flex items-center justify-between gap-3">
-                                                    <div className="flex flex-col min-w-0">
-                                                        <span className="text-[11px] font-bold text-[var(--text-main)] truncate uppercase tracking-wider">{l.name}</span>
-                                                        <span className="text-[8px] text-[var(--text-muted)] font-mono opacity-50">{l.symbol}</span>
+                            <div className="glass-card p-4 border border-[var(--accent-primary)]/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] bg-[var(--bg-main)]/97 backdrop-blur-3xl flex flex-col gap-5 min-w-[320px] max-w-[520px]">
+                                <div className="flex flex-row gap-6">
+                                    {leaders.length > 0 && (
+                                        <div className="flex-1 space-y-3">
+                                            <div className="flex items-center gap-2 border-b border-emerald-500/20 pb-1.5">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]" />
+                                                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-[0.2em]">Alpha Leaders</span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {leaders.map((l) => (
+                                                    <div key={l.symbol} className="flex items-center justify-between gap-3">
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className="text-[11px] font-bold text-[var(--text-main)] truncate uppercase tracking-wider">{l.name}</span>
+                                                            <span className="text-[8px] text-[var(--text-muted)] font-mono opacity-50">{l.symbol}</span>
+                                                        </div>
+                                                        <span className={cn(
+                                                            "text-[11px] font-bold tabular-nums shrink-0",
+                                                            l.perf > 0 ? "text-emerald-500" : l.perf < 0 ? "text-rose-500" : "text-[var(--text-main)]"
+                                                        )}>
+                                                            {l.perf > 0 ? '+' : ''}{l.perf.toFixed(1)}%
+                                                        </span>
                                                     </div>
-                                                    <span className="text-[11px] font-bold text-emerald-500 tabular-nums shrink-0">
-                                                        +{l.perf.toFixed(1)}%
-                                                    </span>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
 
-                                {leaders.length > 0 && laggards.length > 0 && (
-                                    <div className="w-[1px] bg-[var(--ui-divider)] self-stretch opacity-20" />
-                                )}
+                                    {leaders.length > 0 && laggards.length > 0 && (
+                                        <div className="w-[1px] bg-[var(--ui-divider)] self-stretch opacity-20" />
+                                    )}
 
-                                {laggards.length > 0 && (
-                                    <div className="flex-1 space-y-3">
-                                        <div className="flex items-center gap-2 border-b border-rose-500/20 pb-1.5">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_6px_#f43f5e]" />
-                                            <span className="text-[10px] font-bold text-rose-400 uppercase tracking-[0.2em]">Bottom Laggards</span>
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            {laggards.map((l) => (
-                                                <div key={l.symbol} className="flex items-center justify-between gap-3">
-                                                    <div className="flex flex-col min-w-0">
-                                                        <span className="text-[11px] font-bold text-[var(--text-main)] truncate uppercase tracking-wider">{l.name}</span>
-                                                        <span className="text-[8px] text-[var(--text-muted)] font-mono opacity-50">{l.symbol}</span>
+                                    {laggards.length > 0 && (
+                                        <div className="flex-1 space-y-3">
+                                            <div className="flex items-center gap-2 border-b border-rose-500/20 pb-1.5">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_6px_#f43f5e]" />
+                                                <span className="text-[10px] font-bold text-rose-400 uppercase tracking-[0.2em]">Bottom Laggards</span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {laggards.map((l) => (
+                                                    <div key={l.symbol} className="flex items-center justify-between gap-3">
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className="text-[11px] font-bold text-[var(--text-main)] truncate uppercase tracking-wider">{l.name}</span>
+                                                            <span className="text-[8px] text-[var(--text-muted)] font-mono opacity-50">{l.symbol}</span>
+                                                        </div>
+                                                        <span className="text-[11px] font-bold text-rose-500 tabular-nums shrink-0">
+                                                            {l.perf.toFixed(1)}%
+                                                        </span>
                                                     </div>
-                                                    <span className="text-[11px] font-bold text-rose-500 tabular-nums shrink-0">
-                                                        {l.perf.toFixed(1)}%
-                                                    </span>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {breadth && (
+                                    <div className="border-t border-[var(--ui-divider)] pt-4 space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[9px] font-bold text-[var(--accent-primary)] uppercase tracking-[0.2em]">Technical Breadth (EMA)</span>
+                                            <span className="text-[8px] text-[var(--text-muted)] opacity-50 tabular-nums">{breadth.validCount}/{breadth.total} stocks</span>
+                                        </div>
+                                        <div className="grid grid-cols-5 gap-1.5">
+                                            {[
+                                                { label: 'Above 10 EMA', val: breadth.above10EMA },
+                                                { label: 'Above 21 EMA', val: breadth.above21EMA },
+                                                { label: 'Above 50 EMA', val: breadth.above50EMA },
+                                                { label: 'Above 150 EMA', val: breadth.above150EMA },
+                                                { label: 'Above 200 EMA', val: breadth.above200EMA }
+                                            ].map(ma => {
+                                                const count = breadth.validCount > 0 ? Math.round((ma.val / 100) * breadth.validCount) : 0;
+                                                return (
+                                                    <div key={ma.label} className="bg-white/[0.02] border border-white/[0.05] p-1.5 rounded flex flex-col items-center gap-1 min-w-0">
+                                                        <span className="text-[6px] text-[var(--text-muted)] font-bold uppercase tracking-wider truncate w-full text-center">{ma.label}</span>
+                                                        <span className={cn(
+                                                            "text-[10px] font-bold font-mono tracking-tight",
+                                                            ma.val > 70 ? "text-emerald-500" : ma.val > 40 ? "text-amber-500" : "text-rose-500"
+                                                        )}>
+                                                            {Math.round(ma.val)}%
+                                                        </span>
+                                                        <span className="text-[7px] text-[var(--text-muted)] opacity-40 tabular-nums">{count}/{breadth.validCount}</span>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 )}

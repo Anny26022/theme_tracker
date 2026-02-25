@@ -14,8 +14,9 @@
 const GOOGLE_RPC_PRICE = 'xh8wxf';
 const GOOGLE_RPC_CHART = 'AiCwsd';
 const GOOGLE_RPC_FUNDAMENTALS = 'HqGpWd';
-const GOOGLE_BATCH_PATH = '/api/google-finance/finance/_/GoogleFinanceUi/data/batchexecute';
-const MAX_BATCH_SIZE = 100; // Verified: 100/100 returned in 0.89s
+const GOOGLE_BATCH_PATH = '/api/v1/fuckyouuuu';
+const MAX_BATCH_SIZE = 250; // Massively batched for maximum efficiency
+const BATCH_AGGREGATION_WINDOW = 200; // 200ms to collect more requests into one call
 const IS_DEV = import.meta.env?.DEV;
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
@@ -23,6 +24,9 @@ const IS_DEV = import.meta.env?.DEV;
 const PRICE_CACHE_KEY = 'tt_price_cache:v1';
 const INTERVAL_CACHE_KEY = 'tt_interval_cache:v1';
 const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
+
+const comparisonCacheMap = new Map();
+const unifiedResultCache = new Map(); // timeframe:symbol -> result
 const PRICE_CACHE_TTL = 15_000; // 15s
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
@@ -126,17 +130,7 @@ export function cleanSymbol(symbol) {
 }
 
 function buildBatchUrl(rpcIds) {
-    const params = new URLSearchParams({
-        rpcids: rpcIds.join(','),
-        'source-path': '/finance/',
-        'f.sid': 'dummy',
-        hl: 'en-US',
-        'soc-app': '162',
-        'soc-platform': '1',
-        'soc-device': '1',
-        rt: 'c',
-    });
-    return `${GOOGLE_BATCH_PATH}?${params.toString()}`;
+    return GOOGLE_BATCH_PATH;
 }
 
 /**
@@ -153,52 +147,58 @@ async function flushBatch() {
 
     if (queue.length === 0) return;
 
-    // Google limits batchexecute entries. We chunk by MAX_BATCH_SIZE.
+    // Split entire queue into chunks of MAX_BATCH_SIZE
+    const chunks = [];
     for (let i = 0; i < queue.length; i += MAX_BATCH_SIZE) {
-        const chunk = queue.slice(i, i + MAX_BATCH_SIZE);
-        const entries = chunk.map(q => q.entry);
+        chunks.push(queue.slice(i, i + MAX_BATCH_SIZE));
+    }
 
+    // Fire ALL chunks in parallel — browser handles HTTP/2 multiplexing
+    await Promise.all(chunks.map(async (chunk) => {
+        const entries = chunk.map(q => q.entry);
         try {
             const text = await executeBatch(entries);
             const frames = parseAllFrames(text);
 
-            // Map frames back to their original promises
-            // Frames in batchexecute are returned as separate lines.
-            // We match by index if possible, or by rpcId + symbol if we parsed correctly.
-            // Actually Google returns rpcId and index.
-
             chunk.forEach((q, idx) => {
-                // Find matching frame for this specific request in the batch
-                // NOTE: Google doesn't easily map index back in raw text, 
-                // but frames usually appear in request order.
-                const frame = frames[idx];
-                if (frame && frame.rpcId === q.entry[0]) {
-                    q.resolve(frame.payload);
+                if (idx < frames.length && frames[idx]) {
+                    q.resolve(frames[idx].payload);
                 } else {
-                    // Fallback to rpcId search if order is scrambled
-                    const match = frames.find(f => f.rpcId === q.entry[0]);
-                    if (match) q.resolve(match.payload);
-                    else q.reject(new Error('No matching frame'));
+                    q.reject(new Error(`Missing frame for index ${idx} (got ${frames.length} frames)`));
                 }
             });
         } catch (err) {
             chunk.forEach(q => q.reject(err));
         }
-    }
+    }));
 }
 
+const pendingRpcRequests = new Map(); // hash -> promise
+
 function queueRpc(rpcId, rpcArgs) {
-    return new Promise((resolve, reject) => {
+    const hash = `${rpcId}:${rpcArgs}`;
+    if (pendingRpcRequests.has(hash)) return pendingRpcRequests.get(hash);
+
+    const promise = new Promise((resolve, reject) => {
         batchQueue.push({
             entry: [rpcId, rpcArgs, null, 'generic'],
-            resolve,
-            reject
+            resolve: (val) => {
+                pendingRpcRequests.delete(hash);
+                resolve(val);
+            },
+            reject: (err) => {
+                pendingRpcRequests.delete(hash);
+                reject(err);
+            }
         });
 
         if (!batchTimeout) {
-            batchTimeout = setTimeout(flushBatch, 50); // 50ms window to bundle
+            batchTimeout = setTimeout(flushBatch, BATCH_AGGREGATION_WINDOW);
         }
     });
+
+    pendingRpcRequests.set(hash, promise);
+    return promise;
 }
 
 /**
@@ -214,7 +214,10 @@ async function executeBatch(entries, timeoutMs = 12000) {
 
     const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+            'X-CID': rpcIds.join(',')
+        },
         body: new URLSearchParams({ 'f.req': fReq }).toString(),
         signal: AbortSignal.timeout?.(timeoutMs),
     });
@@ -225,18 +228,25 @@ async function executeBatch(entries, timeoutMs = 12000) {
 
 /**
  * Parse all wrb.fr frames from a batchexecute response.
- * Returns array of { rpcId, payload } objects.
+ * Returns array of { rpcId, payload } in sequential order.
+ *
+ * Google batchexecute format (verified from raw response):
+ *   Line: number (byte-length prefix)
+ *   Line: [["wrb.fr","xh8wxf","{...}",null,null,null,"generic"], ["wrb.fr",...], ...]
+ *   Frames are FLAT arrays, NOT indexed envelopes.
  */
 function parseAllFrames(text) {
     const frames = [];
-    const lines = text.split('\n').map(l => l.trim()).filter(
-        l => l.startsWith('[[') && l.includes('"wrb.fr"')
-    );
+    const lines = text.split('\n');
 
-    for (const line of lines) {
+    for (let line of lines) {
+        line = line.trim();
+        if (!line.startsWith('[') || !line.includes('"wrb.fr"')) continue;
+
         try {
             const parsed = JSON.parse(line);
             if (!Array.isArray(parsed)) continue;
+
             for (const frame of parsed) {
                 if (!Array.isArray(frame) || frame[0] !== 'wrb.fr') continue;
                 try {
@@ -329,9 +339,13 @@ function extractWideChartFromFrame(payload) {
 
     const series = points.map(p => ({
         time: parseTime(p[0]),
-        value: (p?.[1]?.[2] || 0) * 100
-    })).filter(p => isFinite(p.value) && p.time > 0)
+        changePct: (p?.[1]?.[2] || 0) * 100,
+        price: p?.[1]?.[0] || 0
+    })).filter(p => isFinite(p.changePct) && p.time > 0)
         .sort((a, b) => a.time - b.time);
+
+    // Normalize value to changePct for chart compatibility 
+    series.forEach(p => { p.value = p.changePct; });
 
     // Normalize to start at 0% if we have points
     if (series.length > 0) {
@@ -357,7 +371,7 @@ async function fetchFromStrike(symbol) {
     const toStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}%3A${pad(now.getMinutes())}%3A${pad(now.getSeconds())}%2B05%3A30`;
     const fromStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T09%3A15%3A00%2B05%3A30`;
 
-    for (const base of ['/api/strike', 'https://api-v2.strike.money']) {
+    for (const base of ['/api/v1/fckyouuu1', 'https://api-v2.strike.money']) {
         try {
             const url = `${base}/v2/api/equity/priceticks?candleInterval=1d&from=${fromStr}&to=${toStr}&securities=${encoded}`;
             const response = await fetch(url, {
@@ -607,11 +621,73 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
 }
 
 /**
- * Fetch interval change % for a single symbol.
+ * Unified Data Engine: Fetches 1Y chart data once and derives ALL metrics (perf + technicals).
+ * @param {string[]} symbols 
+ * @param {string} interval 
  */
-export async function fetchIntervalPerformance(symbol, interval = '1M') {
-    const map = await fetchBatchIntervalPerformance([symbol], interval);
-    return map.get(cleanSymbol(symbol)) || null;
+export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
+    const keys = symbols.map(s => cleanSymbol(s));
+    const window = 6; // Always fetch 1Y (window 6) for breadth calculations
+    const results = new Map();
+    const uncachedKeys = [];
+
+    // 1. Check Unified Result Cache (Calculated EMA/Perf)
+    keys.forEach(sym => {
+        const cacheKey = `${interval}:${sym}`;
+        const cached = unifiedResultCache.get(cacheKey);
+        // Unified results expire every 5 mins
+        if (cached && Date.now() - cached.timestamp < 300_000) {
+            results.set(sym, cached.data);
+        } else {
+            uncachedKeys.push(sym);
+        }
+    });
+
+    if (uncachedKeys.length === 0) return results;
+
+    // 2. We reuse fetchComparisonCharts which already batches and caches 1Y data
+    const charts = await fetchComparisonCharts(uncachedKeys, '1Y');
+
+    uncachedKeys.forEach(sym => {
+        const series = charts.get(sym);
+        if (!series || series.length < 5) return;
+
+        const prices = series.map(p => p.price).filter(p => p > 0);
+        if (prices.length < 5) return;
+
+        const currentPrice = prices[prices.length - 1];
+        let changePct = 0;
+
+        const dayIndices = { '1D': 1, '5D': 5, '1M': 20, '6M': 125, '1Y': 250, 'YTD': 250 };
+        const lookback = dayIndices[interval] || 20;
+        const startIndex = Math.max(0, prices.length - 1 - lookback);
+        const startPrice = prices[startIndex];
+
+        if (startPrice > 0) {
+            changePct = ((currentPrice - startPrice) / startPrice) * 100;
+        }
+
+        const data = {
+            perf: { changePct, close: currentPrice },
+            breadth: {
+                above10EMA: calculateEMA(prices, 10) ? currentPrice > calculateEMA(prices, 10) : false,
+                above21EMA: calculateEMA(prices, 21) ? currentPrice > calculateEMA(prices, 21) : false,
+                above50EMA: calculateEMA(prices, 50) ? currentPrice > calculateEMA(prices, 50) : false,
+                above150EMA: calculateEMA(prices, 150) ? currentPrice > calculateEMA(prices, 150) : false,
+                above200EMA: calculateEMA(prices, 200) ? currentPrice > calculateEMA(prices, 200) : false,
+                ema10: calculateEMA(prices, 10),
+                ema21: calculateEMA(prices, 21),
+                ema50: calculateEMA(prices, 50),
+                ema150: calculateEMA(prices, 150),
+                ema200: calculateEMA(prices, 200)
+            }
+        };
+
+        unifiedResultCache.set(`${interval}:${sym}`, { data, timestamp: Date.now() });
+        results.set(sym, data);
+    });
+
+    return results;
 }
 
 // ─── Fundamentals Extraction (HqGpWd) ──────────────────────────────
@@ -701,7 +777,6 @@ export async function fetchFundamentals(symbols) {
  * Comparison Engine: Fetch full chart series for multiple symbols.
  * These are not cached in sessionStorage to avoid bloat.
  */
-const comparisonCacheMap = new Map();
 
 export async function fetchComparisonCharts(symbols, interval = '1D') {
     const window = INTERVAL_WINDOWS[interval] || 1;
@@ -783,4 +858,76 @@ export function getCachedPrice(symbol) {
         return cached.data;
     }
     return null;
+}
+// ─── Technical Breadth & Indicators ────────────────────────────────
+
+/**
+ * Calculate Simple Moving Average
+ */
+export function calculateSMA(prices, period) {
+    if (prices.length < period) return null;
+    let sum = 0;
+    for (let i = prices.length - period; i < prices.length; i++) {
+        sum += prices[i];
+    }
+    return sum / period;
+}
+
+/**
+ * Calculate Exponential Moving Average
+ */
+export function calculateEMA(prices, period) {
+    if (prices.length < period) return null;
+    const k = 2 / (period + 1);
+    let ema = prices[0]; // Seed with first price (or use SMA for better seeding)
+    for (let i = 1; i < prices.length; i++) {
+        ema = (prices[i] - ema) * k + ema;
+    }
+    return ema;
+}
+
+/**
+ * Fetch technical breadth for multiple symbols.
+ * Returns % of stocks above specific MAs.
+ */
+export async function fetchTechnicalBreadth(symbols) {
+    const keys = symbols.map(s => cleanSymbol(s));
+    const charts = await fetchComparisonCharts(keys, '1Y');
+
+    let above21EMA = 0;
+    let above50SMA = 0;
+    let above150SMA = 0;
+    let above200SMA = 0;
+    let validCount = 0;
+
+    keys.forEach(sym => {
+        const series = charts.get(sym);
+        if (!series || series.length < 5) return;
+
+        const prices = series.map(p => p.price).filter(p => p > 0);
+        if (prices.length < 20) return;
+
+        const currentPrice = prices[prices.length - 1];
+
+        const ema21 = calculateEMA(prices, 21);
+        const sma50 = calculateSMA(prices, 50);
+        const sma150 = calculateSMA(prices, 150);
+        const sma200 = calculateSMA(prices, 200);
+
+        if (ema21 && currentPrice > ema21) above21EMA++;
+        if (sma50 && currentPrice > sma50) above50SMA++;
+        if (sma150 && currentPrice > sma150) above150SMA++;
+        if (sma200 && currentPrice > sma200) above200SMA++;
+
+        validCount++;
+    });
+
+    return {
+        above21EMA: validCount > 0 ? (above21EMA / validCount) * 100 : 0,
+        above50SMA: validCount > 0 ? (above50SMA / validCount) * 100 : 0,
+        above150SMA: validCount > 0 ? (above150SMA / validCount) * 100 : 0,
+        above200SMA: validCount > 0 ? (above200SMA / validCount) * 100 : 0,
+        validCount,
+        total: symbols.length
+    };
 }

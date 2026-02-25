@@ -60,7 +60,7 @@ export async function fetchCompanyFilings(isin) {
 
     // Fetch fresh data
     try {
-        const response = await fetch('/api/scanx', {
+        const response = await fetch('/api/v1/fckyouuu2', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

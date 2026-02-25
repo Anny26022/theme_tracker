@@ -1,20 +1,13 @@
 import { fetchComparisonCharts } from '../services/priceService';
 import { useAsync } from './useAsync';
+import { buildComparisonMap } from '../../packages/core/src/comparison/buildComparisonMap';
 
 /**
  * Hook to manage comparison data state and fetching.
  */
 export function useComparisonData(symbols, interval) {
     const fetchFunc = async () => {
-        if (!symbols || symbols.length === 0) return new Map();
-
-        const charts = await fetchComparisonCharts(symbols, interval);
-        const finalResults = new Map();
-        symbols.forEach(s => {
-            if (charts.has(s)) finalResults.set(s, charts.get(s));
-        });
-
-        return finalResults;
+        return buildComparisonMap(symbols, interval, fetchComparisonCharts);
     };
 
     const { data: dataMap, loading, error, execute } = useAsync(fetchFunc, [symbols, interval]);

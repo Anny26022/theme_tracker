@@ -4,6 +4,7 @@
  */
 
 import { ISIN_MAP } from './isin_data';
+import { cleanSymbol } from '../../packages/core/src/symbol/cleanSymbol';
 
 // Basic mapping for major stocks (Example set)
 const STATIC_MAPPING = {
@@ -26,7 +27,5 @@ const FULL_MAPPING = { ...ISIN_MAP, ...STATIC_MAPPING };
  */
 export function getIsin(symbol) {
     if (!symbol) return null;
-    const cleanSymbols = symbol.toUpperCase().replace(/\.(NS|BO)$/, '');
-    return FULL_MAPPING[cleanSymbols] || null;
+    return FULL_MAPPING[cleanSymbol(symbol)] || null;
 }
-

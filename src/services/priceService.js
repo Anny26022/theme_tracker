@@ -3,6 +3,8 @@
  */
 
 import { EP_GOOGLE, EP_STRIKE, RPC_PRICE, RPC_CHART, RPC_FUNDA, HDR_ENTROPY, CT_PLAIN, seal } from '../lib/stealth';
+import { cleanSymbol as sharedCleanSymbol } from '../../packages/core/src/symbol/cleanSymbol';
+import { calculateEMA as sharedCalculateEMA, calculateSMA as sharedCalculateSMA } from '../../packages/core/src/math/indicators';
 
 const GOOGLE_RPC_PRICE = RPC_PRICE;
 const GOOGLE_RPC_CHART = RPC_CHART;
@@ -110,17 +112,7 @@ function getExchange(symbol) {
     return /^\d+$/.test(symbol) ? 'BOM' : 'NSE';
 }
 
-/**
- * Normalize symbols for caching.
- * Example: RELIANCE:NSE -> RELIANCE, 542802.BO -> 542802
- */
-export function cleanSymbol(symbol) {
-    if (!symbol) return '';
-    return symbol.trim().toUpperCase()
-        .replace(/\.(NS|BO)$/i, '')
-        .replace(/:(NSE|BOM)$/i, '')
-        .replace(/-EQ$/i, '');
-}
+export const cleanSymbol = sharedCleanSymbol;
 
 function buildBatchUrl(rpcIds) {
     return GOOGLE_BATCH_PATH;
@@ -863,27 +855,12 @@ export function getCachedPrice(symbol) {
 /**
  * Calculate Simple Moving Average
  */
-export function calculateSMA(prices, period) {
-    if (prices.length < period) return null;
-    let sum = 0;
-    for (let i = prices.length - period; i < prices.length; i++) {
-        sum += prices[i];
-    }
-    return sum / period;
-}
+export const calculateSMA = sharedCalculateSMA;
 
 /**
  * Calculate Exponential Moving Average
  */
-export function calculateEMA(prices, period) {
-    if (prices.length < period) return null;
-    const k = 2 / (period + 1);
-    let ema = prices[0]; // Seed with first price (or use SMA for better seeding)
-    for (let i = 1; i < prices.length; i++) {
-        ema = (prices[i] - ema) * k + ema;
-    }
-    return ema;
-}
+export const calculateEMA = sharedCalculateEMA;
 
 /**
  * Fetch technical breadth for multiple symbols.

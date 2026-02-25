@@ -16,6 +16,18 @@
             "destination": "/api/scanx"
         },
         {
+            "source": "/api/mobile-batch",
+            "destination": "/api/mobile-batch"
+        },
+        {
+            "source": "/api/mobile-strike",
+            "destination": "/api/mobile-strike"
+        },
+        {
+            "source": "/api/mobile-scanx",
+            "destination": "/api/mobile-scanx"
+        },
+        {
             "source": "/(.*)",
             "destination": "/index.html"
         }

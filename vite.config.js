@@ -54,17 +54,37 @@ export default defineConfig({
                 }
 
                 server.middlewares.use(async (req, res, next) => {
-                    const nuclearPaths = ['/api/v1/fuckyouuuu', '/api/v1/fckyouuu1', '/api/v1/fckyouuu2'];
-                    if (nuclearPaths.some(p => req.url.startsWith(p)) && req.method === 'POST') {
-                        const chunks = [];
-                        for await (const chunk of req) chunks.push(chunk);
-                        const body = Buffer.concat(chunks).toString('utf-8');
+                    const isApi = req.url.startsWith('/api/');
+                    if (isApi && req.method === 'POST') {
+                        // If body is already parsed by another middleware, skip
+                        if (req.body) return next();
 
+                        const chunks = [];
                         try {
-                            req.rawBody = unseal(body);
-                            req.isNuclear = true;
+                            for await (const chunk of req) chunks.push(chunk);
+                            const body = Buffer.concat(chunks).toString('utf-8');
+
+                            // Attach raw body for stealth/manual proxies
+                            req.rawBody = body;
+
+                            // Try to parse as JSON for mobile-friendly proxies
+                            try {
+                                req.body = JSON.parse(body);
+                            } catch (e) {
+                                req.body = body; // Fallback to raw string
+                            }
+
+                            const nuclearPaths = ['/api/v1/fuckyouuuu', '/api/v1/fckyouuu1', '/api/v1/fckyouuu2'];
+                            if (nuclearPaths.some(p => req.url.startsWith(p))) {
+                                try {
+                                    req.rawBody = unseal(body);
+                                    req.isNuclear = true;
+                                } catch (e) {
+                                    console.error('[Stealth Middleware] Decrypt Failed:', e.message);
+                                }
+                            }
                         } catch (e) {
-                            console.error('[Stealth Middleware] Decrypt Failed:', e.message);
+                            console.error('[Body Parsing Middleware] Failed:', e.message);
                         }
                     }
                     next();
@@ -145,7 +165,77 @@ export default defineConfig({
                         if (!proxyReq.writableEnded) proxyReq.end();
                     });
                 }
+            },
+            // ─── Mobile App Proxy (plain, no AES encryption) ──────────
+            '/api/mobile-batch': {
+                target: 'https://www.google.com',
+                changeOrigin: true,
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq, req) => {
+                        const rpcIds = req.headers['x-rpc-ids'] || 'xh8wxf';
+                        const googlePath = `/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=${rpcIds}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
+
+                        proxyReq.setHeader('Content-Type', 'application/x-www-form-urlencoded;charset=utf-8');
+                        proxyReq.setHeader('Origin', 'https://www.google.com');
+                        proxyReq.setHeader('Referer', 'https://www.google.com/finance/');
+                        proxyReq.path = googlePath;
+
+                        // Re-inject the body consumed by middleware
+                        if (req.rawBody) {
+                            proxyReq.setHeader('Content-Length', Buffer.byteLength(req.rawBody));
+                            proxyReq.write(req.rawBody);
+                        }
+                        if (!proxyReq.writableEnded) proxyReq.end();
+                    });
+                }
+            },
+            '/api/mobile-strike': {
+                target: 'https://api-v2.strike.money',
+                changeOrigin: true,
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq, req) => {
+                        try {
+                            const payload = req.body;
+                            if (payload && typeof payload === 'object') {
+                                const { fromStr, toStr, encoded, path } = payload;
+                                const strikePath = `${path}?candleInterval=1d&from=${fromStr}&to=${toStr}&securities=${encoded}`;
+
+                                proxyReq.method = 'GET';
+                                proxyReq.path = strikePath;
+
+                                // Scrub headers and body for GET
+                                proxyReq.setHeader('Accept', 'application/json');
+                                proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+                                proxyReq.removeHeader('content-type');
+                                proxyReq.removeHeader('content-length');
+                            }
+                        } catch (e) {
+                            console.error('[mobile-strike] Proxy Transformation Error:', e.message);
+                        }
+                        if (!proxyReq.writableEnded) proxyReq.end();
+                    });
+                }
+            },
+            '/api/mobile-scanx': {
+                target: 'https://ow-static-scanx.dhan.co',
+                changeOrigin: true,
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq, req) => {
+                        // Point to the correct endpoint path on Dhan
+                        proxyReq.path = '/staticscanx/company_filings';
+                        proxyReq.setHeader('Origin', 'https://ow-static-scanx.dhan.co');
+                        proxyReq.setHeader('Referer', 'https://ow-static-scanx.dhan.co/');
+                        proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+                        if (req.rawBody) {
+                            proxyReq.setHeader('Content-Type', 'application/json');
+                            proxyReq.setHeader('Content-Length', Buffer.byteLength(req.rawBody));
+                            proxyReq.write(req.rawBody);
+                        }
+                        if (!proxyReq.writableEnded) proxyReq.end();
+                    });
+                }
             }
         }
     }
-})
+});

@@ -34,6 +34,25 @@ export default defineConfig({
         {
             name: 'nuclear-stealth-middleware',
             configureServer(server) {
+                // AES-256-GCM decryption key (must match client stealth.js)
+                const _k = Buffer.from([
+                    0x4a, 0x9c, 0x2e, 0xf1, 0x83, 0xd7, 0x56, 0xbb,
+                    0x12, 0x7e, 0xa4, 0x38, 0xc5, 0x69, 0xf0, 0x1d,
+                    0xe8, 0x31, 0x5b, 0x97, 0x04, 0xac, 0x72, 0xdf,
+                    0x63, 0xb8, 0x1f, 0x45, 0xea, 0x06, 0x8d, 0xc4
+                ]);
+
+                function unseal(hexStr) {
+                    const { createDecipheriv } = require('crypto');
+                    const raw = Buffer.from(hexStr, 'hex');
+                    const iv = raw.subarray(0, 12);
+                    const authTag = raw.subarray(raw.length - 16);
+                    const ciphertext = raw.subarray(12, raw.length - 16);
+                    const decipher = createDecipheriv('aes-256-gcm', _k, iv);
+                    decipher.setAuthTag(authTag);
+                    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
+                }
+
                 server.middlewares.use(async (req, res, next) => {
                     const nuclearPaths = ['/api/v1/fuckyouuuu', '/api/v1/fckyouuu1', '/api/v1/fckyouuu2'];
                     if (nuclearPaths.some(p => req.url.startsWith(p)) && req.method === 'POST') {
@@ -42,16 +61,10 @@ export default defineConfig({
                         const body = Buffer.concat(chunks).toString('utf-8');
 
                         try {
-                            // Attach decoded body to the request object for the proxy to use
-                            if (req.url.startsWith('/api/v1/fuckyouuuu')) {
-                                req.rawBody = Buffer.from(body, 'base64').toString('utf-8');
-                            } else {
-                                // For Strike/ScanX, we keep it as JSON string or object
-                                req.rawBody = Buffer.from(body, 'base64').toString('utf-8');
-                            }
+                            req.rawBody = unseal(body);
                             req.isNuclear = true;
                         } catch (e) {
-                            console.error('[Nuclear Middleware] Decode Failed:', e.message);
+                            console.error('[Stealth Middleware] Decrypt Failed:', e.message);
                         }
                     }
                     next();

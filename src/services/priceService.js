@@ -2,7 +2,7 @@
  * Live Price Service — Maximally Batched
  */
 
-import { EP_GOOGLE, EP_STRIKE, RPC_PRICE, RPC_CHART, RPC_FUNDA, HDR_ENTROPY, CT_PLAIN } from '../lib/stealth';
+import { EP_GOOGLE, EP_STRIKE, RPC_PRICE, RPC_CHART, RPC_FUNDA, HDR_ENTROPY, CT_PLAIN, seal } from '../lib/stealth';
 
 const GOOGLE_RPC_PRICE = RPC_PRICE;
 const GOOGLE_RPC_CHART = RPC_CHART;
@@ -205,8 +205,8 @@ async function executeBatch(entries, timeoutMs = 12000) {
     const url = buildBatchUrl(rpcIds);
     const fReq = JSON.stringify([entries]);
 
-    // Nuclear: Base64 the payload so it's unreadable in DevTools
-    const entropy = btoa(fReq);
+    // AES-256-GCM encrypt — completely unreadable in DevTools
+    const entropy = await seal(fReq);
 
     const response = await fetch(url, {
         method: 'POST',
@@ -366,7 +366,7 @@ async function fetchFromStrike(symbol) {
 
     for (const base of [EP_STRIKE]) {
         try {
-            const payload = btoa(JSON.stringify({
+            const payload = await seal(JSON.stringify({
                 fromStr, toStr, encoded,
                 path: '/v2/api/equity/priceticks'
             }));

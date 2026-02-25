@@ -1,3 +1,5 @@
+import { unseal } from './_unseal.js';
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         res.setHeader('Allow', 'POST');
@@ -5,8 +7,7 @@ export default async function handler(req, res) {
     }
 
     try {
-        const rawBody = req.body;
-        const decoded = JSON.parse(Buffer.from(rawBody, 'base64').toString('utf-8'));
+        const decoded = JSON.parse(unseal(req.body));
 
         const response = await fetch('https://ow-static-scanx.dhan.co/staticscanx/company_filings', {
             method: 'POST',

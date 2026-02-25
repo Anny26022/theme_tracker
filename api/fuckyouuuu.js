@@ -1,10 +1,10 @@
+import { unseal } from './_unseal.js';
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
 
     try {
-        // Nuclear Decode: The payload is Base64 encoded in the body
-        const rawBody = req.body;
-        const decoded = Buffer.from(rawBody, 'base64').toString('utf-8');
+        const decoded = unseal(req.body);
         const cid = req.headers['x-app-entropy'] || 'xh8wxf';
 
         const googleUrl = `https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=${cid}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
@@ -20,8 +20,6 @@ export default async function handler(req, res) {
         });
 
         const text = await response.text();
-
-        // Return raw text (Google Finance uses a custom frame format)
         return res.status(200).send(text);
     } catch (error) {
         return res.status(500).json({ error: 'System Error' });

@@ -3,7 +3,7 @@
  * Filings are historical data and don't change frequently, so they can be cached heavily.
  */
 
-import { EP_SCANX, CT_PLAIN } from '../lib/stealth';
+import { EP_SCANX, CT_PLAIN, seal } from '../lib/stealth';
 
 const FILINGS_CACHE_KEY = 'tt_filings_cache:v1';
 const FILINGS_CACHE_TTL = 3600_000 * 4; // 4 hours
@@ -60,8 +60,8 @@ export async function fetchCompanyFilings(isin) {
         return cached.data;
     }
 
-    // Nuclear: Base64 Masking (Dhan requires { data: { isin, count } } wrapper)
-    const payload = btoa(JSON.stringify({ data: { isin, count: 500 } }));
+    // AES-256-GCM encrypted payload
+    const payload = await seal(JSON.stringify({ data: { isin, count: 500 } }));
 
     // Fetch fresh data
     try {

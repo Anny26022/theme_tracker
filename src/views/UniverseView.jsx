@@ -67,7 +67,7 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
 
     return (
         <ViewWrapper id="universe">
-            <div className="space-y-12">
+            <div className="space-y-8 md:space-y-12">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)] pb-6">
                     <div className="space-y-1">
                         <div className="flex items-center gap-4 mb-3">
@@ -83,18 +83,18 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
                             Market Architecture Overview
                         </p>
                     </div>
-                    <div className="relative group">
+                    <div className="relative group w-full md:w-64">
                         <input
                             type="text"
                             placeholder="Find Sectors, Stocks or Symbols..."
                             value={filter}
                             onChange={(e) => setFilter(e.target.value)}
-                            className="glass-card py-2 px-4 text-[9px] uppercase tracking-widest font-bold focus:outline-none focus:border-[var(--accent-primary)] transition-all min-w-[240px] bg-transparent text-[var(--text-main)]"
+                            className="glass-card py-2 px-4 text-[9px] uppercase tracking-widest font-bold focus:outline-none focus:border-[var(--accent-primary)] transition-all w-full bg-transparent text-[var(--text-main)]"
                         />
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
                     {filteredSectors.map((s, i) => {
                         const colorClass = colors[i % colors.length];
                         return (

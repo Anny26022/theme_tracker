@@ -24,7 +24,7 @@ export const BaseNode = ({
             whileHover={{ scale: 1.01 }}
             onClick={onClick}
             className={cn(
-                "cv-auto p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
+                "gpu-accel cv-auto p-4 md:p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
                 accentClass?.split(' ').find(c => c.startsWith('border-')) || "border-[var(--ui-divider)]",
                 className
             )}

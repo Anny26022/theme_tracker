@@ -113,7 +113,7 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                     </p>
                 </div>
 
-                <div className="relative group min-w-[320px]">
+                <div className="relative group w-full md:w-80">
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--accent-primary)] opacity-40 group-focus-within:opacity-100 transition-opacity">
                         <Search className="w-3.5 h-3.5" />
                     </div>
@@ -133,7 +133,7 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
 
                     {/* Quick Results Dropdown */}
                     {showResults && matchingCompanies.length > 0 && (
-                        <div className="absolute top-[calc(100%+8px)] left-0 right-0 glass-card bg-[#0a0c10]/95 backdrop-blur-xl border-[var(--ui-divider)] z-50 overflow-hidden">
+                        <div className="absolute top-[calc(100%+8px)] left-0 right-0 glass-card bg-[var(--bg-main)]/95 backdrop-blur-xl border-[var(--ui-divider)] z-50 overflow-hidden">
                             <div className="max-h-[320px] overflow-y-auto custom-scrollbar">
                                 {matchingCompanies.map((c) => (
                                     <button
@@ -166,7 +166,7 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-12">
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4 pb-12">
                 {filteredIndustries.map((ind, i) => (
                     <IndustryNode
                         key={`${ind.sector}-${ind.name}`}

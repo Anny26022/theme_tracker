@@ -93,7 +93,7 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                     transform: tooltipPlacement.side === 'right' ? 'translateY(-50%)' : 'translate(-100%, -50%)'
                 }}
             >
-                <div className="relative glass-card p-4 border border-[var(--accent-primary)]/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)] bg-[var(--bg-main)]/95 backdrop-blur-2xl flex gap-6 min-w-[320px]">
+                <div className="relative glass-card p-4 border border-[var(--accent-primary)]/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)] bg-[var(--bg-main)]/95 backdrop-blur-2xl flex flex-col sm:flex-row gap-4 sm:gap-6 min-w-[280px] sm:min-w-[320px] max-w-[90vw]">
                     {leaders.length > 0 && (
                         <div className="flex-1 space-y-3">
                             <div className="flex items-center gap-2 border-b border-emerald-500/20 pb-1.5">
@@ -103,7 +103,7 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                             <div className="space-y-1.5">
                                 {leaders.map((l) => (
                                     <div key={l.symbol} className="flex items-center justify-between gap-4">
-                                        <div className="flex flex-col min-w-0 max-w-[100px]">
+                                        <div className="flex flex-col min-w-0 max-w-[100px] sm:max-w-none">
                                             <span className="text-[8px] font-bold text-[var(--text-main)] truncate uppercase tracking-wider">{l.name}</span>
                                             <span className="text-[6px] text-[var(--text-muted)] font-mono">{l.symbol}</span>
                                         </div>
@@ -117,11 +117,11 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                     )}
 
                     {leaders.length > 0 && laggards.length > 0 && (
-                        <div className="w-[1px] bg-[var(--ui-divider)] self-stretch" />
+                        <div className="hidden sm:block w-[1px] bg-[var(--ui-divider)] self-stretch" />
                     )}
 
                     {laggards.length > 0 && (
-                        <div className="flex-1 space-y-3">
+                        <div className="flex-1 space-y-3 border-t border-[var(--ui-divider)] pt-4 sm:border-t-0 sm:pt-0">
                             <div className="flex items-center gap-2 border-b border-rose-500/20 pb-1.5">
                                 <div className="w-1 h-2.5 bg-rose-500 rounded-full" />
                                 <span className="text-[8px] font-bold text-rose-400 uppercase tracking-[0.2em]">Bottom Laggards (6)</span>
@@ -129,7 +129,7 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                             <div className="space-y-1.5">
                                 {laggards.map((l) => (
                                     <div key={l.symbol} className="flex items-center justify-between gap-4">
-                                        <div className="flex flex-col min-w-0 max-w-[100px]">
+                                        <div className="flex flex-col min-w-0 max-w-[100px] sm:max-w-none">
                                             <span className="text-[8px] font-bold text-[var(--text-main)] truncate uppercase tracking-wider">{l.name}</span>
                                             <span className="text-[6px] text-[var(--text-muted)] font-mono">{l.symbol}</span>
                                         </div>
@@ -143,9 +143,9 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                     )}
 
                     {tooltipPlacement.side === 'right' ? (
-                        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-[var(--bg-main)] border-l border-t border-[var(--ui-divider)]/30 rotate-[-45deg]" />
+                        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-[var(--bg-main)] border-l border-t border-[var(--ui-divider)]/30 rotate-[-45deg] hidden sm:block" />
                     ) : (
-                        <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-[var(--bg-main)] border-r border-b border-[var(--ui-divider)]/30 rotate-[-45deg]" />
+                        <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-[var(--bg-main)] border-r border-b border-[var(--ui-divider)]/30 rotate-[-45deg] hidden sm:block" />
                     )}
                 </div>
             </div>,
@@ -158,9 +158,9 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
             <button
                 type="button"
                 onClick={onClick}
-                className="group/row w-full text-left bg-transparent border-0 flex items-center justify-between py-2.5 border-b border-[var(--ui-divider)] transition-all px-2 cursor-pointer hover:bg-[var(--glass-border)] relative"
+                className="group/row w-full text-left bg-transparent border-0 flex items-center justify-between py-2.5 border-b border-[var(--ui-divider)] transition-all px-1.5 md:px-2 cursor-pointer hover:bg-[var(--glass-border)] relative"
             >
-                <div className="w-5/12 min-w-0 relative">
+                <div className="w-1/3 md:w-5/12 min-w-0 relative">
                     <div
                         className="flex items-center gap-4 min-w-0"
                         onMouseEnter={handleTooltipEnter}
@@ -176,7 +176,7 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                     </div>
                 </div>
 
-                <div className="flex-1 px-8 relative h-4 flex items-center">
+                <div className="flex-1 px-4 md:px-8 relative h-4 flex items-center">
                     <div className="absolute left-1/2 w-[1px] h-3 bg-[var(--ui-muted)]/30 -translate-x-1/2" />
                     <div className="w-full h-[4px] bg-[var(--ui-divider)] rounded-full overflow-hidden relative">
                         {loading ? (
@@ -187,7 +187,7 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                                 animate={{ width: `${barWidth}%` }}
                                 transition={{ duration: 0.6 }}
                                 className={cn(
-                                    "h-full rounded-full absolute",
+                                    "h-full rounded-full absolute will-change-transform",
                                     isPos ? "left-1/2 bg-[var(--accent-primary)]/40 group-hover/row:bg-[var(--accent-primary)]/60" : "right-1/2 bg-rose-500/40 group-hover/row:bg-rose-500/60"
                                 )}
                             />

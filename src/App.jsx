@@ -60,7 +60,7 @@ const App = () => {
     if (loading) {
         return (
             <LazyMotion features={domAnimation}>
-                <div className="min-h-screen flex flex-col items-center justify-center bg-[#050508]">
+                <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--bg-main)]">
                     <m.div
                         animate={{ rotate: 360 }}
                         transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
@@ -75,7 +75,7 @@ const App = () => {
     if (error) {
         return (
             <LazyMotion features={domAnimation}>
-                <div className="min-h-screen flex flex-col items-center justify-center bg-[#050508]">
+                <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--bg-main)]">
                     <div className="p-8 glass-card border-rose-500/20 text-center space-y-4">
                         <h2 className="text-rose-500 text-xs font-bold uppercase tracking-[0.2em]">Data Sync Failure</h2>
                         <p className="text-white/40 text-[10px] uppercase tracking-widest">{error}</p>
@@ -102,7 +102,7 @@ const App = () => {
                         navigate={navigate}
                     />
 
-                    <main className="pt-32 pb-20 px-8 max-w-7xl mx-auto relative z-10">
+                    <main className="pt-24 md:pt-32 pb-20 px-4 md:px-8 max-w-7xl mx-auto relative z-10">
                         <AnimatePresence mode="wait">
                             {view === VIEWS.UNIVERSE && (
                                 <UniverseView

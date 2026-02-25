@@ -51,7 +51,7 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 border border-[var(--ui-divider)] bg-[var(--bg-main)]/50 rounded-md px-3 py-1.5 focus-within:border-[var(--accent-primary)] transition-all min-w-[200px]">
+                <div className="flex items-center gap-2 border border-[var(--ui-divider)] bg-[var(--bg-main)]/50 rounded-md px-3 py-1.5 focus-within:border-[var(--accent-primary)] transition-all w-full md:w-64">
                     <Search className="w-3 h-3 text-[var(--ui-muted)]" />
                     <input
                         type="text"
@@ -63,7 +63,7 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pb-12">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 pb-12">
                 {filteredIndustries.map((ind, i) => (
                     <IndustryNode
                         key={ind}

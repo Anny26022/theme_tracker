@@ -6,6 +6,7 @@ export default defineConfig({
         entries: ['index.html'],
     },
     server: {
+        host: true,
         proxy: {
             // Google Finance batchexecute proxy (bypasses CORS)
             '/api/google-finance': {

@@ -13,7 +13,7 @@ export const ViewWrapper = ({ children, className = "", id = "view" }) => {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 10 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
-            className={`space-y-12 ${className}`}
+            className={`gpu-accel space-y-12 ${className}`}
         >
             {children}
         </m.div>

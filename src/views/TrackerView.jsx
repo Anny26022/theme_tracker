@@ -52,7 +52,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
 
     return (
         <ViewWrapper id="tracker">
-            <div className="flex items-center justify-between border-b border-[var(--ui-divider)] pb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)] pb-6">
                 <div className="space-y-1">
                     <h2 className="text-xl font-light tracking-[0.5em] uppercase opacity-90 mb-3 text-glow-gold">
                         Performance Tracker
@@ -61,14 +61,14 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         {sectorLoading || industryLoading ? 'Loading live data...' : 'Real-time Sector & Industry Momentum'}
                     </p>
                 </div>
-                <div className="flex gap-3 text-[8px] font-bold text-[var(--text-muted)] uppercase tracking-widest flex-wrap justify-end">
+                <div className="flex gap-2 text-[8px] font-bold text-[var(--text-muted)] uppercase tracking-widest flex-wrap md:justify-end bg-[var(--nav-bg)]/50 p-1 rounded-lg border border-[var(--ui-divider)] overflow-x-auto no-scrollbar">
                     {INTERVALS.map(tf => (
                         <button
                             type="button"
                             key={tf}
                             onClick={() => setTimeframe(tf)}
-                            className={`cursor-pointer transition-all uppercase px-1.5 py-0.5 rounded ${timeframe === tf
-                                ? "text-[var(--accent-primary)] bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20"
+                            className={`cursor-pointer transition-all uppercase px-2 py-1 rounded flex-shrink-0 ${timeframe === tf
+                                ? "text-[var(--accent-primary)] bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 shadow-[0_0_10px_rgba(197,160,89,0.1)]"
                                 : "hover:text-[var(--text-main)]"
                                 }`}
                         >
@@ -98,11 +98,11 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                     </m.div>
                 )}
 
-                <div className={`grid grid-cols-1 lg:grid-cols-2 gap-12 transition-opacity duration-300 ${(sectorLoading || industryLoading) ? 'opacity-30' : 'opacity-100'}`}>
+                <div className={`grid grid-cols-2 gap-4 md:gap-12 transition-opacity duration-300 ${(sectorLoading || industryLoading) ? 'opacity-30' : 'opacity-100'}`}>
                     <div className="space-y-8">
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
-                            <div className="w-1 h-3 bg-[var(--accent-primary)]" />
-                            <h2 className="text-[10px] font-bold tracking-[0.4em] uppercase opacity-40">Sector Rankings</h2>
+                            <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
+                            <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">Sector Rankings</h2>
                             <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{timeframe}</span>
                                 <button
@@ -120,6 +120,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                     data={sortedSectors}
                                     computeItemKey={(_, sector) => sector}
                                     increaseViewportBy={300}
+                                    className="gpu-accel"
                                     itemContent={(_, sector) => (
                                         <TrackerRow
                                             name={sector}
@@ -137,8 +138,8 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
 
                     <div className="space-y-8">
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
-                            <div className="w-1 h-3 bg-[var(--accent-primary)]" />
-                            <h2 className="text-[10px] font-bold tracking-[0.4em] uppercase opacity-40">Industry Alpha</h2>
+                            <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
+                            <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">Industry Alpha</h2>
                             <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{timeframe}</span>
                                 <button
@@ -156,6 +157,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                     data={sortedIndustries}
                                     computeItemKey={(_, ind) => ind.name}
                                     increaseViewportBy={300}
+                                    className="gpu-accel"
                                     itemContent={(_, ind) => (
                                         <TrackerRow
                                             name={ind.name.toLowerCase()}

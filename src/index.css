@@ -63,6 +63,26 @@ body {
     transition: background-color 220ms ease, border-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
 }
 
+@media (max-width: 768px) {
+    .glass-card {
+        backdrop-filter: none !important;
+        /* Use a semi-opaque version of the theme background for performance */
+        background: var(--bg-main) !important;
+        opacity: 0.98;
+    }
+}
+
+.gpu-accel {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
+    will-change: transform, opacity;
+}
+
+.will-change-transform {
+    will-change: transform;
+}
+
 .glass-button {
     background-color: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -94,6 +114,12 @@ body {
     text-shadow: 0 0 20px rgba(234, 179, 8, 0.5);
 }
 
+:root[data-theme='light'] .text-glow-blue,
+:root[data-theme='light'] .text-glow-gold {
+    text-shadow: none;
+    /* Glows look like dirty smudges on light backgrounds */
+}
+
 .hairline {
     height: 1px;
     background-image: linear-gradient(to right, transparent, rgba(59, 130, 246, 0.2), transparent);
@@ -120,5 +146,14 @@ body {
 *::-webkit-scrollbar {
     width: 0;
     height: 0;
+    display: none;
+}
+
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
     display: none;
 }

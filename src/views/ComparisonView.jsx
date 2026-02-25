@@ -153,12 +153,12 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                     <p className="text-[9px] font-bold tracking-[0.3em] text-[var(--accent-primary)] uppercase">Cross-vector performance analysis</p>
                 </div>
 
-                <div className="flex bg-[var(--nav-bg)] rounded-lg p-1 border border-[var(--ui-divider)]">
+                <div className="flex bg-[var(--nav-bg)] rounded-lg p-1 border border-[var(--ui-divider)] overflow-x-auto no-scrollbar">
                     {INTERVALS.map(tf => (
                         <button
                             key={tf}
                             onClick={() => setTimeframe(tf)}
-                            className={`px-3 py-1 text-[8px] font-bold tracking-widest uppercase transition-all rounded ${timeframe === tf
+                            className={`px-3 py-1 text-[8px] font-bold tracking-widest uppercase transition-all rounded flex-shrink-0 ${timeframe === tf
                                 ? "bg-[var(--accent-primary)] text-black"
                                 : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
                                 }`}
@@ -184,8 +184,8 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                                 style={{ borderColor: COLORS[idx % COLORS.length] + '44' }}
                                 onClick={() => item.type === 'STOCK' && onOpenInsights?.({ symbol: item.id, name: item.name })}
                             >
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
-                                <div className="flex flex-col">
+                                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                                <div className="flex flex-col min-w-0">
                                     <span className="text-[9px] font-bold tracking-widest max-w-[80px] truncate leading-tight">
                                         {item.type === 'STOCK' ? item.name : item.id}
                                     </span>
@@ -198,7 +198,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                                         e.stopPropagation();
                                         toggleSymbol({ symbol: item.id });
                                     }}
-                                    className="hover:text-rose-500 transition-colors ml-1"
+                                    className="hover:text-rose-500 transition-colors ml-1 flex-shrink-0"
                                 >
                                     <X className="w-3 h-3" />
                                 </button>
@@ -222,7 +222,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                     ))}
                 </div>
 
-                <div className="relative">
+                <div className="relative flex-grow md:flex-grow-0">
                     <div className="flex items-center gap-2 px-4 py-1.5 glass-card border-dashed border-[var(--ui-divider)] rounded-full hover:border-[var(--accent-primary)] transition-all">
                         <Search className="w-3 h-3 text-[var(--text-muted)]" />
                         <input
@@ -230,7 +230,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                             placeholder="COMPARE SYMBOL..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="bg-transparent border-none outline-none text-[9px] font-bold tracking-widest w-32 uppercase placeholder:text-[var(--ui-muted)]"
+                            className="bg-transparent border-none outline-none text-[9px] font-bold tracking-widest w-full md:w-32 uppercase placeholder:text-[var(--ui-muted)]"
                         />
                     </div>
 
@@ -269,7 +269,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
             </div>
 
             {/* Chart Area */}
-            <div className="glass-card p-10 relative">
+            <div className="glass-card p-4 md:p-10 relative">
                 {loading && (
                     <div className="absolute inset-0 bg-[var(--bg-main)]/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
                         <Activity className="w-6 h-6 text-[var(--accent-primary)] animate-pulse" />

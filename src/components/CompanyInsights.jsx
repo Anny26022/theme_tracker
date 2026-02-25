@@ -95,29 +95,29 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                         className="fixed right-0 top-0 h-full w-full max-w-xl bg-[var(--bg-main)] border-l border-[var(--ui-divider)] z-[101] flex flex-col overflow-hidden shadow-2xl shadow-black"
                     >
                         {/* Header */}
-                        <div className="sticky top-0 bg-[var(--bg-main)]/80 backdrop-blur-md z-10 px-8 py-6 border-b border-[var(--ui-divider)] flex items-center justify-between">
-                            <div className="space-y-1">
+                        <div className="sticky top-0 bg-[var(--bg-main)]/80 backdrop-blur-md z-10 px-4 md:px-8 py-6 border-b border-[var(--ui-divider)] flex items-center justify-between">
+                            <div className="space-y-1 min-w-0">
                                 <div className="flex items-center gap-3">
                                     <h2 className="text-sm font-bold tracking-[0.2em] text-[var(--accent-primary)] uppercase">Intel Suite</h2>
                                     <div className="px-2 py-0.5 rounded bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 flex items-center gap-2">
                                         <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-widest">{symbol}</span>
-                                        {isin && <span className="text-[7px] text-[var(--accent-primary)]/40 font-mono tracking-tighter">{isin}</span>}
+                                        {isin && <span className="text-[7px] text-[var(--accent-primary)]/40 font-mono tracking-tighter hidden sm:inline">{isin}</span>}
                                     </div>
                                 </div>
-                                <h3 className="text-xl font-light tracking-wide text-[var(--text-main)] truncate max-w-[320px]">{name}</h3>
+                                <h3 className="text-lg md:text-xl font-light tracking-wide text-[var(--text-main)] truncate max-w-full">{name}</h3>
                             </div>
-                            <button onClick={onClose} className="p-2 hover:bg-[var(--glass-border)] rounded-full transition-colors text-[var(--text-muted)]">
+                            <button onClick={onClose} className="p-2 hover:bg-[var(--glass-border)] rounded-full transition-colors text-[var(--text-muted)] shrink-0">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
                         {/* Tabs */}
-                        <div className="flex px-8 border-b border-[var(--ui-divider)] bg-[var(--bg-main)]/50">
+                        <div className="flex px-4 md:px-8 border-b border-[var(--ui-divider)] bg-[var(--bg-main)]/50 overflow-x-auto no-scrollbar">
                             {tabs.map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex items-center gap-2 px-6 py-4 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all relative ${activeTab === tab.id ? 'text-[var(--accent-primary)] border-[var(--accent-primary)]' : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)]'
+                                    className={`flex items-center gap-2 px-4 md:px-6 py-4 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all relative shrink-0 ${activeTab === tab.id ? 'text-[var(--accent-primary)] border-[var(--accent-primary)]' : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)]'
                                         }`}
                                 >
                                     {tab.icon}
@@ -130,7 +130,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                         </div>
 
                         {/* Content Area */}
-                        <div className="flex-1 overflow-y-auto no-scrollbar p-8">
+                        <div className="flex-1 overflow-y-auto no-scrollbar p-4 md:p-8">
                             <AnimatePresence mode="wait">
                                 {activeTab === 'SNAPSHOT' && (
                                     <m.div
@@ -155,13 +155,13 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                             </div>
 
                                             {fundaLoading ? (
-                                                <div className="grid grid-cols-2 gap-8">
+                                                <div className="grid grid-cols-2 gap-4 md:gap-8">
                                                     {SNAPSHOT_SKELETON_KEYS.map((skeletonKey) => (
                                                         <div key={skeletonKey} className="h-16 bg-[var(--ui-divider)]/5 rounded animate-pulse" />
                                                     ))}
                                                 </div>
                                             ) : funda ? (
-                                                <div className="grid grid-cols-2 gap-x-12 gap-y-10">
+                                                <div className="grid grid-cols-2 gap-x-4 md:gap-x-12 gap-y-8 md:gap-y-10">
                                                     <Metric label="Market Cap" value={formatIndianNumber(funda.marketCap)} subValue="INR" icon={<PieChart className="w-3 h-3" />} />
                                                     <Metric label="P/E Ratio" value={funda.peRatio ? funda.peRatio.toFixed(2) : "—"} subValue="Multiple" icon={<TrendingUp className="w-3 h-3" />} />
                                                     <Metric label="Div. Yield" value={formatPercent(funda.yield)} subValue="Yield" icon={<Landmark className="w-3 h-3" />} />
@@ -212,13 +212,13 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                         ) : (
                                             <>
                                                 {/* Year Selector UI */}
-                                                <div className="flex justify-end mb-8">
-                                                    <div className="flex bg-[var(--ui-divider)]/10 p-1 rounded-xl border border-[var(--ui-divider)]/20">
+                                                <div className="flex md:justify-end mb-8 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
+                                                    <div className="flex bg-[var(--ui-divider)]/10 p-1 rounded-xl border border-[var(--ui-divider)]/20 shrink-0">
                                                         {[2026, 2025, 2024, 2023, 2022, 2021].map(year => (
                                                             <button
                                                                 key={year}
                                                                 onClick={() => setSelectedYear(year)}
-                                                                className={`px-4 py-1.5 rounded-lg text-[9px] font-bold transition-all ${selectedYear === year
+                                                                className={`px-3 md:px-4 py-1.5 rounded-lg text-[9px] font-bold transition-all ${selectedYear === year
                                                                     ? 'bg-white text-black shadow-lg'
                                                                     : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
                                                                     }`}

@@ -26,7 +26,7 @@ export default defineConfig({
             },
             // Dhan ScanX API proxy
             '/api/scanx': {
-                target: 'https://ow-static-scanx.dhan.co',
+                target: 'https://ow-static-scanx.dhan.co/staticscanx/company_filings',
                 changeOrigin: true,
                 rewrite: (path) => path.replace(/^\/api\/scanx/, ''),
             },

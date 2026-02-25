@@ -8,7 +8,7 @@ export function useFilings(isin) {
     const fetchFunc = async () => {
         if (!isin) return null;
 
-        const response = await fetch('/api/scanx/staticscanx/company_filings', {
+        const response = await fetch('/api/scanx', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -1,7 +1,28 @@
 import React, { useState, useMemo } from 'react';
 import { ArrowLeft, Search } from 'lucide-react';
+import { VirtuosoGrid } from 'react-virtuoso';
 import { CompanyCardLite } from '../components/CompanyCardLite';
 import { ViewWrapper } from '../components/ViewWrapper';
+
+const IndustryGridComponents = {
+    List: React.forwardRef(({ style, children, ...props }, ref) => (
+        <div
+            ref={ref}
+            {...props}
+            style={style}
+            className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 pb-12"
+        >
+            {children}
+        </div>
+    )),
+    Item: ({ children, ...props }) => (
+        <div {...props} className="w-full">
+            {children}
+        </div>
+    )
+};
+
+IndustryGridComponents.List.displayName = 'IndustryGridList';
 
 export const IndustryView = ({ sector, industry, companies, onBack, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
@@ -47,22 +68,26 @@ export const IndustryView = ({ sector, industry, companies, onBack, onOpenInsigh
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 pb-12">
-                {filteredCompanies.map((c, i) => (
-                    <CompanyCardLite
-                        key={c.symbol}
-                        item={c}
-                        index={i}
-                        onClick={() => onOpenInsights(c)}
-                    />
-                ))}
-
-                {filteredCompanies.length === 0 && (
-                    <div className="col-span-full py-24 text-center glass-card border-dashed">
-                        <p className="text-[10px] uppercase tracking-[0.4em] text-[var(--text-muted)]">No matches found for "{filter}"</p>
-                    </div>
-                )}
-            </div>
+            {filteredCompanies.length > 0 ? (
+                <VirtuosoGrid
+                    useWindowScroll
+                    data={filteredCompanies}
+                    components={IndustryGridComponents}
+                    computeItemKey={(_, company) => company.symbol}
+                    increaseViewportBy={{ top: 400, bottom: 800 }}
+                    itemContent={(i, company) => (
+                        <CompanyCardLite
+                            item={company}
+                            index={i}
+                            onClick={() => onOpenInsights(company)}
+                        />
+                    )}
+                />
+            ) : (
+                <div className="py-24 text-center glass-card border-dashed">
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-[var(--text-muted)]">No matches found for "{filter}"</p>
+                </div>
+            )}
         </ViewWrapper>
     );
 };

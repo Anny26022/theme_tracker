@@ -1,4 +1,7 @@
 {
+    "regions": [
+        "bom1"
+    ],
     "rewrites": [
         {
             "source": "/api/google-finance/:match*",
@@ -7,10 +10,6 @@
         {
             "source": "/api/strike/:match*",
             "destination": "https://api-v2.strike.money/:match*"
-        },
-        {
-            "source": "/api/scanx/:match*",
-            "destination": "https://ow-static-scanx.dhan.co/:match*"
         },
         {
             "source": "/(.*)",

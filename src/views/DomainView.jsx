@@ -1,9 +1,30 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Search, ArrowUpRight } from 'lucide-react';
+import { VirtuosoGrid } from 'react-virtuoso';
 import { IndustryNode } from '../components/IndustryNode';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
 import { ViewWrapper } from '../components/ViewWrapper';
+
+const DomainGridComponents = {
+    List: React.forwardRef(({ style, children, ...props }, ref) => (
+        <div
+            ref={ref}
+            {...props}
+            style={style}
+            className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4 pb-12"
+        >
+            {children}
+        </div>
+    )),
+    Item: ({ children, ...props }) => (
+        <div {...props} className="w-full">
+            {children}
+        </div>
+    )
+};
+
+DomainGridComponents.List.displayName = 'DomainGridList';
 
 export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
@@ -166,24 +187,28 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4 pb-12">
-                {filteredIndustries.map((ind, i) => (
-                    <IndustryNode
-                        key={`${ind.sector}-${ind.name}`}
-                        name={ind.name}
-                        count={ind.count}
-                        onClick={() => onIndustryClick(ind.sector, ind.name)}
-                        onCopy={() => handleCopyIndustry(ind)}
-                        index={i}
-                    />
-                ))}
-
-                {filteredIndustries.length === 0 && (
-                    <div className="col-span-full py-24 text-center glass-card border-dashed">
-                        <p className="text-[10px] uppercase tracking-[0.4em] text-[var(--text-muted)]">No matches found for "{filter}"</p>
-                    </div>
-                )}
-            </div>
+            {filteredIndustries.length > 0 ? (
+                <VirtuosoGrid
+                    useWindowScroll
+                    data={filteredIndustries}
+                    components={DomainGridComponents}
+                    computeItemKey={(_, ind) => `${ind.sector}-${ind.name}`}
+                    increaseViewportBy={{ top: 400, bottom: 800 }}
+                    itemContent={(i, ind) => (
+                        <IndustryNode
+                            name={ind.name}
+                            count={ind.count}
+                            onClick={() => onIndustryClick(ind.sector, ind.name)}
+                            onCopy={() => handleCopyIndustry(ind)}
+                            index={i}
+                        />
+                    )}
+                />
+            ) : (
+                <div className="py-24 text-center glass-card border-dashed">
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-[var(--text-muted)]">No matches found for "{filter}"</p>
+                </div>
+            )}
         </ViewWrapper>
     );
 };

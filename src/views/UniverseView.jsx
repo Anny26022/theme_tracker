@@ -1,8 +1,29 @@
 import React, { useState, useMemo } from 'react';
+import { VirtuosoGrid } from 'react-virtuoso';
 import { SectorNode } from '../components/SectorNode';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
 import { ViewWrapper } from '../components/ViewWrapper';
+
+const UniverseGridComponents = {
+    List: React.forwardRef(({ style, children, ...props }, ref) => (
+        <div
+            ref={ref}
+            {...props}
+            style={style}
+            className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4"
+        >
+            {children}
+        </div>
+    )),
+    Item: ({ children, ...props }) => (
+        <div {...props} className="w-full">
+            {children}
+        </div>
+    )
+};
+
+UniverseGridComponents.List.displayName = 'UniverseGridList';
 
 export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, timeframe, setTimeframe, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
@@ -94,27 +115,32 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
-                    {filteredSectors.map((s, i) => {
-                        const colorClass = colors[i % colors.length];
-                        return (
-                            <SectorNode
-                                key={s}
-                                name={s}
-                                count={Object.keys(hierarchy[s]).length}
-                                onClick={() => onSectorClick(s)}
-                                onCopy={() => handleCopySector(s)}
-                                index={i}
-                                accentClass={colorClass}
-                            />
-                        );
-                    })}
-                    {filteredSectors.length === 0 && (
-                        <div className="col-span-full py-12 text-center">
-                            <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--text-muted)]">No sectors found</span>
-                        </div>
-                    )}
-                </div>
+                {filteredSectors.length > 0 ? (
+                    <VirtuosoGrid
+                        useWindowScroll
+                        data={filteredSectors}
+                        components={UniverseGridComponents}
+                        computeItemKey={(_, sectorName) => sectorName}
+                        increaseViewportBy={{ top: 400, bottom: 800 }}
+                        itemContent={(i, sectorName) => {
+                            const colorClass = colors[i % colors.length];
+                            return (
+                                <SectorNode
+                                    name={sectorName}
+                                    count={Object.keys(hierarchy[sectorName]).length}
+                                    onClick={() => onSectorClick(sectorName)}
+                                    onCopy={() => handleCopySector(sectorName)}
+                                    index={i}
+                                    accentClass={colorClass}
+                                />
+                            );
+                        }}
+                    />
+                ) : (
+                    <div className="py-12 text-center">
+                        <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--text-muted)]">No sectors found</span>
+                    </div>
+                )}
             </div>
         </ViewWrapper>
     );

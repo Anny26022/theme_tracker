@@ -16,7 +16,7 @@ export const WatchlistCopyButton = ({
     const handleCopy = (e) => {
         if (e) e.stopPropagation();
 
-        const success = onCopy();
+        const success = typeof onCopy === 'function' ? onCopy() : false;
         if (success !== false) {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);

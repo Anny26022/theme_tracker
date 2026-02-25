@@ -9,6 +9,10 @@
             "destination": "https://api-v2.strike.money/:match*"
         },
         {
+            "source": "/api/scanx/:match*",
+            "destination": "https://ow-static-scanx.dhan.co/:match*"
+        },
+        {
             "source": "/(.*)",
             "destination": "/index.html"
         }

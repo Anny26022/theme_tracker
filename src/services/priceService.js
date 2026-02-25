@@ -16,36 +16,60 @@ const GOOGLE_RPC_CHART = 'AiCwsd';
 const GOOGLE_RPC_FUNDAMENTALS = 'HqGpWd';
 const GOOGLE_BATCH_PATH = '/api/google-finance/finance/_/GoogleFinanceUi/data/batchexecute';
 const MAX_BATCH_SIZE = 100; // Verified: 100/100 returned in 0.89s
+const IS_DEV = import.meta.env?.DEV;
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
 
-const PRICE_CACHE_KEY = 'tt_price_cache';
-const INTERVAL_CACHE_KEY = 'tt_interval_cache';
-const FUNDA_CACHE_KEY = 'tt_funda_cache';
+const PRICE_CACHE_KEY = 'tt_price_cache:v1';
+const INTERVAL_CACHE_KEY = 'tt_interval_cache:v1';
+const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
 const PRICE_CACHE_TTL = 15_000; // 15s
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
+const MAX_PERSISTED_PRICE_ENTRIES = 1200;
+const MAX_PERSISTED_INTERVAL_ENTRIES = 6000;
+const MAX_PERSISTED_FUNDA_ENTRIES = 1500;
+
+function pruneCacheEntries(cache, maxEntries) {
+    if (cache.size <= maxEntries) return cache;
+    const sortedEntries = [...cache.entries()].sort((a, b) => {
+        const aTs = a?.[1]?.timestamp || 0;
+        const bTs = b?.[1]?.timestamp || 0;
+        return bTs - aTs;
+    }).slice(0, maxEntries);
+
+    cache.clear();
+    sortedEntries.forEach(([key, value]) => cache.set(key, value));
+    return cache;
+}
 
 // Hydrate from sessionStorage on load
-function loadCache(storageKey) {
+function loadCache(storageKey, maxEntries) {
     try {
         const raw = sessionStorage.getItem(storageKey);
-        if (raw) return new Map(JSON.parse(raw));
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return new Map();
+            return pruneCacheEntries(new Map(parsed), maxEntries);
+        }
     } catch { /* ignore corrupt data */ }
     return new Map();
 }
 
-function saveCache(cache, storageKey) {
+function saveCache(cache, storageKey, maxEntries) {
     try {
+        pruneCacheEntries(cache, maxEntries);
         sessionStorage.setItem(storageKey, JSON.stringify([...cache]));
     } catch { /* storage full — ignore */ }
 }
 
-const priceCache = loadCache(PRICE_CACHE_KEY);
-const intervalCache = loadCache(INTERVAL_CACHE_KEY);
-const fundaCache = loadCache(FUNDA_CACHE_KEY);
+const priceCache = loadCache(PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
+const intervalCache = loadCache(INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES);
+const fundaCache = loadCache(FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES);
 
 // Debug: log hydration on module load
-console.debug(`[PriceCache] Hydrated from sessionStorage — prices: ${priceCache.size}, intervals: ${intervalCache.size}, funda: ${fundaCache.size}`);
+if (IS_DEV) {
+    console.debug(`[PriceCache] Hydrated from sessionStorage — prices: ${priceCache.size}, intervals: ${intervalCache.size}, funda: ${fundaCache.size}`);
+}
 
 // Debounced save to avoid thrashing sessionStorage
 let priceSaveTimer = null;
@@ -54,17 +78,17 @@ let fundaSaveTimer = null;
 
 function schedulePriceSave() {
     if (priceSaveTimer) clearTimeout(priceSaveTimer);
-    priceSaveTimer = setTimeout(() => saveCache(priceCache, PRICE_CACHE_KEY), 500);
+    priceSaveTimer = setTimeout(() => saveCache(priceCache, PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES), 500);
 }
 
 function scheduleIntervalSave() {
     if (intervalSaveTimer) clearTimeout(intervalSaveTimer);
-    intervalSaveTimer = setTimeout(() => saveCache(intervalCache, INTERVAL_CACHE_KEY), 500);
+    intervalSaveTimer = setTimeout(() => saveCache(intervalCache, INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES), 500);
 }
 
 function scheduleFundaSave() {
     if (fundaSaveTimer) clearTimeout(fundaSaveTimer);
-    fundaSaveTimer = setTimeout(() => saveCache(fundaCache, FUNDA_CACHE_KEY), 500);
+    fundaSaveTimer = setTimeout(() => saveCache(fundaCache, FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES), 500);
 }
 
 export const INTERVAL_WINDOWS = {
@@ -386,7 +410,9 @@ export async function fetchLivePrices(symbols) {
         }
     }
 
-    console.debug(`[PriceCache] PRICES — ✅ ${results.size} cache hits, ❌ ${uncached.length} cache misses`, uncached.length ? uncached.slice(0, 5).join(', ') + (uncached.length > 5 ? '...' : '') : '');
+    if (IS_DEV) {
+        console.debug(`[PriceCache] PRICES — ✅ ${results.size} cache hits, ❌ ${uncached.length} cache misses`, uncached.length ? uncached.slice(0, 5).join(', ') + (uncached.length > 5 ? '...' : '') : '');
+    }
 
     if (uncached.length === 0) return results;
 
@@ -519,7 +545,9 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
             return;
         }
 
-        console.debug(`[PriceService] Consolidating Interval ${interval} — Batching ${allUncached.length} symbols`);
+        if (IS_DEV) {
+            console.debug(`[PriceService] Consolidating Interval ${interval} — Batching ${allUncached.length} symbols`);
+        }
 
         // Larger batch size for performance charts (small payload)
         const CHUNK_SIZE = 250;
@@ -724,6 +752,9 @@ export function clearPriceCache() {
     priceCache.clear();
     intervalCache.clear();
     fundaCache.clear();
+    sessionStorage.removeItem(PRICE_CACHE_KEY);
+    sessionStorage.removeItem(INTERVAL_CACHE_KEY);
+    sessionStorage.removeItem(FUNDA_CACHE_KEY);
 }
 
 /**

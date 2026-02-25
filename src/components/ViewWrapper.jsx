@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 
 /**
  * Standardized transition wrapper for all main views.
@@ -7,7 +7,7 @@ import { motion } from 'framer-motion';
  */
 export const ViewWrapper = ({ children, className = "", id = "view" }) => {
     return (
-        <motion.div
+        <m.div
             key={id}
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -16,6 +16,6 @@ export const ViewWrapper = ({ children, className = "", id = "view" }) => {
             className={`space-y-12 ${className}`}
         >
             {children}
-        </motion.div>
+        </m.div>
     );
 };

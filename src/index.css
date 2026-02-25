@@ -31,6 +31,12 @@
     --ui-muted: rgba(0, 0, 0, 0.3);
 }
 
+:root.theme-switching *,
+:root.theme-switching *::before,
+:root.theme-switching *::after {
+    transition: none !important;
+}
+
 body {
     margin: 0;
     min-width: 320px;
@@ -54,14 +60,14 @@ body {
     backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
     border-radius: 4px;
-    transition: all 0.5s ease;
+    transition: background-color 220ms ease, border-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
 }
 
 .glass-button {
     background-color: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 1px;
-    transition: all 0.5s ease;
+    transition: background-color 220ms ease, border-color 220ms ease, color 220ms ease;
     text-transform: uppercase;
     letter-spacing: 0.2em;
     font-weight: 300;
@@ -100,20 +106,19 @@ body {
     background-image: linear-gradient(to bottom right, #ffffff, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.4));
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-    width: 8px;
+.cv-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 220px;
 }
 
-::-webkit-scrollbar-track {
-    background: transparent;
+/* Hide all native scrollbars while preserving scroll behavior */
+* {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
-::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
+*::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
 }

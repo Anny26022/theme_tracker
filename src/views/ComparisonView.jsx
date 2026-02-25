@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, m } from 'framer-motion';
 import { X, Search, Plus, TrendingUp, BarChart3, Activity } from 'lucide-react';
 import { ComparisonChart, COLORS } from '../components/ComparisonChart';
 import { useComparisonData } from '../hooks/useComparisonData';
@@ -7,6 +7,9 @@ import { cleanSymbol } from '../services/priceService';
 import { ViewWrapper } from '../components/ViewWrapper';
 
 const INTERVALS = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
+const MAX_CHART_SYMBOLS = 60;
+const COMPARISON_STORAGE_KEY = 'tt_comparison_symbols:v2';
+const LEGACY_COMPARISON_STORAGE_KEY = 'tt_comparison_symbols_v2';
 
 /**
  * Premium Symbol Comparison View
@@ -14,11 +17,18 @@ const INTERVALS = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsights }) => {
     // Selection Persistence: Load from localStorage or use defaults
     const [selectedSymbols, setSelectedSymbols] = useState(() => {
-        const saved = localStorage.getItem('tt_comparison_symbols_v2');
-        return saved ? JSON.parse(saved) : [
-            { id: 'RELIANCE', type: 'STOCK' },
-            { id: 'HDFCBANK', type: 'STOCK' }
-        ];
+        try {
+            const saved = localStorage.getItem(COMPARISON_STORAGE_KEY) || localStorage.getItem(LEGACY_COMPARISON_STORAGE_KEY);
+            return saved ? JSON.parse(saved) : [
+                { id: 'RELIANCE', type: 'STOCK' },
+                { id: 'HDFCBANK', type: 'STOCK' }
+            ];
+        } catch {
+            return [
+                { id: 'RELIANCE', type: 'STOCK' },
+                { id: 'HDFCBANK', type: 'STOCK' }
+            ];
+        }
     });
 
     const [searchQuery, setSearchQuery] = useState('');
@@ -26,7 +36,12 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
 
     // Save selection whenever it changes
     React.useEffect(() => {
-        localStorage.setItem('tt_comparison_symbols_v2', JSON.stringify(selectedSymbols));
+        try {
+            localStorage.setItem(COMPARISON_STORAGE_KEY, JSON.stringify(selectedSymbols));
+            localStorage.removeItem(LEGACY_COMPARISON_STORAGE_KEY);
+        } catch {
+            // Ignore storage errors (private mode/quota/disabled storage)
+        }
     }, [selectedSymbols]);
 
     // Flatten all companies and industries for search
@@ -87,16 +102,9 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
         return [...industryResults, ...stockMatches].slice(0, 10);
     }, [allCompanies, allIndustries, searchQuery]);
 
-    const normalizedSymbols = useMemo(() => selectedSymbols.map(s => {
-        if (s.type === 'INDUSTRY') {
-            return { id: s.id, type: 'INDUSTRY', members: allIndustries.get(s.id) || [] };
-        }
-        return s.id;
-    }), [selectedSymbols, allIndustries]);
-
     const isNumeric = (s) => /^\d+$/.test(s);
 
-    const chartSymbols = useMemo(() => {
+    const { chartSymbols, totalChartSymbols } = useMemo(() => {
         const unique = new Set();
         selectedSymbols.forEach(s => {
             if (s.type === 'INDUSTRY') {
@@ -111,10 +119,15 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                 unique.add(s.id);
             }
         });
-        return Array.from(unique);
+
+        const all = Array.from(unique);
+        return {
+            totalChartSymbols: all.length,
+            chartSymbols: all.slice(0, MAX_CHART_SYMBOLS)
+        };
     }, [selectedSymbols, allIndustries, exchangePreference]);
 
-    const { data: chartData, loading } = useComparisonData(normalizedSymbols, timeframe);
+    const { data: chartData, loading } = useComparisonData(chartSymbols, timeframe);
 
     const toggleSymbol = (item) => {
         const isSelected = selectedSymbols.find(s => s.id === item.symbol);
@@ -161,7 +174,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                 <AnimatePresence mode="popLayout">
                     {selectedSymbols.map((item, idx) => {
                         return (
-                            <motion.div
+                            <m.div
                                 key={item.id}
                                 layout
                                 initial={{ opacity: 0, scale: 0.8 }}
@@ -189,7 +202,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                                 >
                                     <X className="w-3 h-3" />
                                 </button>
-                            </motion.div>
+                            </m.div>
                         );
                     })}
                 </AnimatePresence>
@@ -224,17 +237,18 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                     {/* Search Results Dropdown */}
                     <AnimatePresence>
                         {searchResults.length > 0 && (
-                            <motion.div
+                            <m.div
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 10 }}
                                 className="absolute top-full left-0 mt-2 w-64 glass-card border border-[var(--ui-divider)] z-50 p-2 shadow-2xl overflow-hidden"
                             >
                                 {searchResults.map(res => (
-                                    <div
+                                    <button
+                                        type="button"
                                         key={res.symbol + res.type}
                                         onClick={() => toggleSymbol(res)}
-                                        className="flex items-center justify-between p-2 hover:bg-[var(--accent-primary)]/10 rounded cursor-pointer group"
+                                        className="w-full flex items-center justify-between p-2 hover:bg-[var(--accent-primary)]/10 rounded cursor-pointer group text-left"
                                     >
                                         <div className="flex flex-col">
                                             <div className="flex items-center gap-2">
@@ -246,9 +260,9 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                                             <span className="text-[7px] text-[var(--text-muted)] uppercase tracking-tighter truncate max-w-[150px]">{res.name}</span>
                                         </div>
                                         <Plus className="w-3 h-3 text-[var(--text-muted)] group-hover:text-[var(--accent-primary)]" />
-                                    </div>
+                                    </button>
                                 ))}
-                            </motion.div>
+                            </m.div>
                         )}
                     </AnimatePresence>
                 </div>
@@ -259,6 +273,11 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                 {loading && (
                     <div className="absolute inset-0 bg-[var(--bg-main)]/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
                         <Activity className="w-6 h-6 text-[var(--accent-primary)] animate-pulse" />
+                    </div>
+                )}
+                {totalChartSymbols > MAX_CHART_SYMBOLS && (
+                    <div className="absolute top-3 right-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
+                        Showing {MAX_CHART_SYMBOLS} / {totalChartSymbols}
                     </div>
                 )}
                 <ComparisonChart

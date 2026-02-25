@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from 'react';
-import { motion } from 'framer-motion';
 import { SectorNode } from '../components/SectorNode';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
@@ -16,24 +15,31 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
         'border-cyan-500/20 text-cyan-400'
     ];
 
+    const sectorSearchIndex = useMemo(() => {
+        const index = new Map();
+        sectors.forEach((sectorName) => {
+            const sectorData = hierarchy[sectorName] || {};
+            let text = sectorName.toLowerCase();
+
+            Object.values(sectorData).forEach(companies => {
+                companies.forEach(c => {
+                    const companyName = c.name ? c.name.toLowerCase() : '';
+                    const companySymbol = c.symbol ? c.symbol.toLowerCase() : '';
+                    text += `|${companyName}|${companySymbol}`;
+                });
+            });
+
+            index.set(sectorName, text);
+        });
+        return index;
+    }, [sectors, hierarchy]);
+
     const filteredSectors = useMemo(() => {
         if (!filter) return sectors;
         const search = filter.toLowerCase();
 
-        return sectors.filter(s => {
-            // 1. Check sector name
-            if (s.toLowerCase().includes(search)) return true;
-
-            // 2. Check all industries and companies in this sector
-            const sectorData = hierarchy[s] || {};
-            return Object.values(sectorData).some(companies =>
-                companies.some(c =>
-                    c.name.toLowerCase().includes(search) ||
-                    c.symbol.toLowerCase().includes(search)
-                )
-            );
-        });
-    }, [sectors, filter, hierarchy]);
+        return sectors.filter(s => sectorSearchIndex.get(s)?.includes(search));
+    }, [sectors, filter, sectorSearchIndex]);
 
     const handleCopyAll = () => {
         let allData = [];
@@ -44,6 +50,17 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
             });
         });
         const text = formatTVWatchlist(allData);
+        if (text) navigator.clipboard.writeText(text);
+        return !!text;
+    };
+
+    const handleCopySector = (sectorName) => {
+        const sectorData = hierarchy[sectorName] || {};
+        const grouped = Object.entries(sectorData).map(([industryName, companies]) => ({
+            label: industryName,
+            companies
+        }));
+        const text = formatTVWatchlist(grouped);
         if (text) navigator.clipboard.writeText(text);
         return !!text;
     };

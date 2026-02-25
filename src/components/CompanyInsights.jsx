@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, m } from 'framer-motion';
 import { X, TrendingUp, Award, Landmark, BarChart3, PieChart, Activity, FileText, Newspaper, HelpCircle, ExternalLink } from 'lucide-react';
 import { useFundamentals } from '../hooks/useFundamentals';
 import { useFilings } from '../hooks/useFilings';
@@ -7,6 +7,9 @@ import { useLivePrice } from '../context/PriceContext';
 import { getIsin } from '../services/isinService';
 import { AnimatedPrice, AnimatedChange } from './AnimatedPrice';
 import { formatIndianNumber, formatPercent, formatFilingDate } from '../lib/intlUtils';
+
+const SNAPSHOT_SKELETON_KEYS = ['snapshot-1', 'snapshot-2', 'snapshot-3', 'snapshot-4', 'snapshot-5', 'snapshot-6'];
+const FILINGS_SKELETON_KEYS = ['filings-1', 'filings-2', 'filings-3', 'filings-4'];
 
 /**
  * Isolated Price Consumer to prevent panel-wide rerenders on every tick.
@@ -76,7 +79,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
         <AnimatePresence>
             {isOpen && (
                 <>
-                    <motion.div
+                    <m.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
@@ -84,7 +87,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                         className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
                     />
 
-                    <motion.div
+                    <m.div
                         initial={{ x: '100%' }}
                         animate={{ x: 0 }}
                         exit={{ x: '100%' }}
@@ -120,7 +123,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                     {tab.icon}
                                     {tab.label}
                                     {activeTab === tab.id && (
-                                        <motion.div layoutId="activeTabGlow" className="absolute inset-0 bg-[var(--accent-primary)]/5 z-0" />
+                                        <m.div layoutId="activeTabGlow" className="absolute inset-0 bg-[var(--accent-primary)]/5 z-0" />
                                     )}
                                 </button>
                             ))}
@@ -130,7 +133,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                         <div className="flex-1 overflow-y-auto no-scrollbar p-8">
                             <AnimatePresence mode="wait">
                                 {activeTab === 'SNAPSHOT' && (
-                                    <motion.div
+                                    <m.div
                                         key="snapshot"
                                         initial={{ opacity: 0, y: 10 }}
                                         animate={{ opacity: 1, y: 0 }}
@@ -153,8 +156,8 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
 
                                             {fundaLoading ? (
                                                 <div className="grid grid-cols-2 gap-8">
-                                                    {[...Array(6)].map((_, i) => (
-                                                        <div key={i} className="h-16 bg-[var(--ui-divider)]/5 rounded animate-pulse" />
+                                                    {SNAPSHOT_SKELETON_KEYS.map((skeletonKey) => (
+                                                        <div key={skeletonKey} className="h-16 bg-[var(--ui-divider)]/5 rounded animate-pulse" />
                                                     ))}
                                                 </div>
                                             ) : funda ? (
@@ -184,11 +187,11 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                                 </p>
                                             </div>
                                         )}
-                                    </motion.div>
+                                    </m.div>
                                 )}
 
                                 {activeTab === 'FILINGS' && (
-                                    <motion.div
+                                    <m.div
                                         key="filings"
                                         initial={{ opacity: 0, x: 20 }}
                                         animate={{ opacity: 1, x: 0 }}
@@ -202,8 +205,8 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                             </div>
                                         ) : filingsLoading ? (
                                             <div className="space-y-8">
-                                                {[...Array(4)].map((_, i) => (
-                                                    <div key={i} className="h-20 bg-[var(--ui-divider)]/5 rounded animate-pulse" />
+                                                {FILINGS_SKELETON_KEYS.map((skeletonKey) => (
+                                                    <div key={skeletonKey} className="h-20 bg-[var(--ui-divider)]/5 rounded animate-pulse" />
                                                 ))}
                                             </div>
                                         ) : (
@@ -235,8 +238,8 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                                                 <div className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-[var(--bg-main)] border-2 border-[var(--accent-primary)] shadow-[0_0_8px_var(--accent-primary)] z-10" />
                                                                 <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-[var(--text-main)]">{month}</span>
                                                                 <div className="grid grid-cols-1 gap-2">
-                                                                    {items.map((item, idx) => (
-                                                                        <a key={idx} href={item.file_url || item.pdfUrl || item.url || '#'} target="_blank" rel="noopener noreferrer" className="glass-card p-4 flex items-center justify-between group hover:border-[var(--accent-primary)] transition-all">
+                                                                    {items.map((item) => (
+                                                                        <a key={item.file_url || item.pdfUrl || item.url || `${item.caption || item.title || item.subject || 'filing'}-${item.news_date || item.date || item.filingDate || item.fillingDate || 'unknown'}`} href={item.file_url || item.pdfUrl || item.url || '#'} target="_blank" rel="noopener noreferrer" className="glass-card p-4 flex items-center justify-between group hover:border-[var(--accent-primary)] transition-all">
                                                                             <div className="flex items-center gap-4">
                                                                                 <div className="p-3 rounded bg-[var(--ui-divider)]/5 group-hover:bg-[var(--accent-primary)]/10 transition-colors">
                                                                                     <FileText className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent-primary)]" />
@@ -265,11 +268,11 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                             </>
                                         )}
 
-                                    </motion.div>
+                                    </m.div>
                                 )}
 
                                 {activeTab === 'NEWS' && (
-                                    <motion.div
+                                    <m.div
                                         key="news"
                                         initial={{ opacity: 0, scale: 0.98 }}
                                         animate={{ opacity: 1, scale: 1 }}
@@ -283,11 +286,11 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }) => {
                                             <span className="text-[10px] uppercase font-bold tracking-[0.5em] text-[var(--accent-primary)]">Wire Feed Offline</span>
                                             <p className="text-[8px] text-[var(--text-muted)] uppercase tracking-widest opacity-60">Connecting to high-frequency news nodes...</p>
                                         </div>
-                                    </motion.div>
+                                    </m.div>
                                 )}
                             </AnimatePresence>
                         </div>
-                    </motion.div>
+                    </m.div>
                 </>
             )}
         </AnimatePresence>

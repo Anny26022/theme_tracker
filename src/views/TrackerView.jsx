@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { m } from 'framer-motion';
+import { ArrowUp, ArrowDown } from 'lucide-react';
 import { TrackerRow } from '../components/TrackerRow';
 import { useIntervalPerformance } from '../hooks/useIntervalPerformance';
 import { ViewWrapper } from '../components/ViewWrapper';
+import { Virtuoso } from 'react-virtuoso';
 
 const INTERVALS = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 
@@ -62,7 +63,8 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                 </div>
                 <div className="flex gap-3 text-[8px] font-bold text-[var(--text-muted)] uppercase tracking-widest flex-wrap justify-end">
                     {INTERVALS.map(tf => (
-                        <span
+                        <button
+                            type="button"
                             key={tf}
                             onClick={() => setTimeframe(tf)}
                             className={`cursor-pointer transition-all uppercase px-1.5 py-0.5 rounded ${timeframe === tf
@@ -71,7 +73,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                 }`}
                         >
                             {tf}
-                        </span>
+                        </button>
                     ))}
                 </div>
             </div>
@@ -79,13 +81,13 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
             <div className="relative">
                 {/* Loading overlay on interval switch */}
                 {(sectorLoading || industryLoading) && (
-                    <motion.div
+                    <m.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--bg-main)]/60 backdrop-blur-[2px] rounded-lg"
                     >
-                        <motion.div
+                        <m.div
                             animate={{ rotate: 360 }}
                             transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                             className="w-8 h-8 border-2 border-[var(--ui-divider)] border-t-[var(--accent-primary)] rounded-full"
@@ -93,7 +95,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         <span className="text-[8px] font-bold tracking-[0.3em] uppercase text-[var(--text-muted)]">
                             Loading {timeframe} data
                         </span>
-                    </motion.div>
+                    </m.div>
                 )}
 
                 <div className={`grid grid-cols-1 lg:grid-cols-2 gap-12 transition-opacity duration-300 ${(sectorLoading || industryLoading) ? 'opacity-30' : 'opacity-100'}`}>
@@ -113,17 +115,23 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                             </div>
                         </div>
                         <div className="space-y-0">
-                            {sortedSectors.map((sector) => (
-                                <TrackerRow
-                                    key={sector}
-                                    name={sector}
-                                    perf={sectorPerf[sector]?.avg ?? null}
-                                    leaders={sectorPerf[sector]?.leaders}
-                                    laggards={sectorPerf[sector]?.laggards}
-                                    onClick={() => onSectorClick(sector)}
-                                    loading={sectorLoading && sectorPerf[sector] === undefined}
+                            <div className="h-[min(70vh,720px)]">
+                                <Virtuoso
+                                    data={sortedSectors}
+                                    computeItemKey={(_, sector) => sector}
+                                    increaseViewportBy={300}
+                                    itemContent={(_, sector) => (
+                                        <TrackerRow
+                                            name={sector}
+                                            perf={sectorPerf[sector]?.avg ?? null}
+                                            leaders={sectorPerf[sector]?.leaders}
+                                            laggards={sectorPerf[sector]?.laggards}
+                                            onClick={() => onSectorClick(sector)}
+                                            loading={sectorLoading && sectorPerf[sector] === undefined}
+                                        />
+                                    )}
                                 />
-                            ))}
+                            </div>
                         </div>
                     </div>
 
@@ -143,17 +151,23 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                             </div>
                         </div>
                         <div className="space-y-0">
-                            {sortedIndustries.map((ind) => (
-                                <TrackerRow
-                                    key={ind.name}
-                                    name={ind.name.toLowerCase()}
-                                    perf={industryPerf[ind.name]?.avg ?? null}
-                                    leaders={industryPerf[ind.name]?.leaders}
-                                    laggards={industryPerf[ind.name]?.laggards}
-                                    onClick={() => onIndustryClick(ind.sector, ind.name)}
-                                    loading={industryLoading && industryPerf[ind.name] === undefined}
+                            <div className="h-[min(70vh,720px)]">
+                                <Virtuoso
+                                    data={sortedIndustries}
+                                    computeItemKey={(_, ind) => ind.name}
+                                    increaseViewportBy={300}
+                                    itemContent={(_, ind) => (
+                                        <TrackerRow
+                                            name={ind.name.toLowerCase()}
+                                            perf={industryPerf[ind.name]?.avg ?? null}
+                                            leaders={industryPerf[ind.name]?.leaders}
+                                            laggards={industryPerf[ind.name]?.laggards}
+                                            onClick={() => onIndustryClick(ind.sector, ind.name)}
+                                            loading={industryLoading && industryPerf[ind.name] === undefined}
+                                        />
+                                    )}
                                 />
-                            ))}
+                            </div>
                         </div>
                     </div>
                 </div>

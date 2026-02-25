@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 
 const COLORS = [
     '#3b82f6', // blue
@@ -100,7 +100,11 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
         });
     }, [seriesList, getX, getY]);
 
-    const gridY = [minY, (minY + maxY) / 2, maxY];
+    const gridY = useMemo(() => ([
+        { id: 'min', value: minY },
+        { id: 'mid', value: (minY + maxY) / 2 },
+        { id: 'max', value: maxY }
+    ]), [minY, maxY]);
 
     const formatTime = (ts) => {
         const d = new Date(ts);
@@ -190,9 +194,9 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
 
             {/* Price Y-Axis */}
             <div className="absolute left-0 top-0 h-full flex flex-col justify-between pointer-events-none z-10 py-2">
-                {gridY.slice().reverse().map((val, i) => (
-                    <span key={i} className="text-[8px] font-mono text-[var(--text-muted)] translate-x-[-110%] bg-[var(--bg-main)]/50 px-1">
-                        {val > 0 ? '+' : ''}{val.toFixed(1)}%
+                {gridY.slice().reverse().map((entry) => (
+                    <span key={`y-axis-${entry.id}`} className="text-[8px] font-mono text-[var(--text-muted)] translate-x-[-110%] bg-[var(--bg-main)]/50 px-1">
+                        {entry.value > 0 ? '+' : ''}{entry.value.toFixed(1)}%
                     </span>
                 ))}
             </div>
@@ -223,8 +227,8 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
 
                 {/* Base Grid Lines */}
                 <line x1="0" y1={getY(0)} x2={width} y2={getY(0)} stroke="var(--ui-divider)" strokeWidth="1" strokeDasharray="6 6" opacity="0.3" />
-                {gridY.map((val, i) => (
-                    <line key={i} x1="0" y1={getY(val)} x2={width} y2={getY(val)} stroke="var(--ui-divider)" strokeWidth="0.5" opacity="0.05" />
+                {gridY.map((entry) => (
+                    <line key={`grid-line-${entry.id}`} x1="0" y1={getY(entry.value)} x2={width} y2={getY(entry.value)} stroke="var(--ui-divider)" strokeWidth="0.5" opacity="0.05" />
                 ))}
 
                 {/* Highly Optimized Path Rendering */}
@@ -234,7 +238,7 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
 
                     return (
                         <g key={s.symbol}>
-                            <motion.path
+                            <m.path
                                 initial={{ pathLength: 0, opacity: 0 }}
                                 animate={{ pathLength: 1, opacity: 1 }}
                                 transition={{ duration: 1.2, delay: idx * 0.08, ease: "easeInOut" }}
@@ -271,9 +275,9 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
 
             {/* X-Axis Real-Time Labels */}
             <div className="absolute bottom-0 left-0 w-full flex justify-between translate-y-full pt-4 px-2 opacity-50">
-                {timeLabels.map((t, i) => (
+                {timeLabels.map((t) => (
                     <div
-                        key={i}
+                        key={`x-label-${t.pos}`}
                         className="flex flex-col items-center"
                         style={{
                             position: 'absolute',

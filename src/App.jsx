@@ -1,8 +1,7 @@
 import React, { useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, LazyMotion, domAnimation, m } from 'framer-motion';
 
 // Hooks
-import { useTheme } from './hooks/useTheme';
 import { useUrlState, VIEWS } from './hooks/useUrlState';
 import { useMarketData } from './hooks/useMarketData';
 
@@ -20,14 +19,18 @@ import { SectorView } from './views/SectorView';
 import { IndustryView } from './views/IndustryView';
 import { TrackerView } from './views/TrackerView';
 import { ComparisonView } from './views/ComparisonView';
-import { CompanyInsights } from './components/CompanyInsights';
+
+const CompanyInsights = React.lazy(() => import('./components/CompanyInsights').then((m) => ({ default: m.CompanyInsights })));
 
 const App = () => {
     // 1. Data & State Management (Hooks)
-    const { theme, toggleTheme } = useTheme();
     const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
     const { hierarchy, sectors, loading, error } = useMarketData();
     const [insightsCompany, setInsightsCompany] = React.useState(null);
+    const handleDomainIndustryClick = React.useCallback(
+        (s, ind) => navigate(VIEWS.INDUSTRY, s, ind, 'domain'),
+        [navigate]
+    );
 
     // 2. Derived State
     const currentIndustries = useMemo(() => {
@@ -56,121 +59,126 @@ const App = () => {
     // 4. Loading & Error States
     if (loading) {
         return (
-            <div className="min-h-screen flex flex-col items-center justify-center bg-[#050508]">
-                <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    className="w-12 h-12 border-2 border-white/5 border-t-[#c5a059] rounded-full mb-4"
-                />
-                <span className="text-white/20 text-[10px] font-bold tracking-[0.2em] uppercase">Initializing Universe</span>
-            </div>
+            <LazyMotion features={domAnimation}>
+                <div className="min-h-screen flex flex-col items-center justify-center bg-[#050508]">
+                    <m.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="w-12 h-12 border-2 border-white/5 border-t-[#c5a059] rounded-full mb-4"
+                    />
+                    <span className="text-white/20 text-[10px] font-bold tracking-[0.2em] uppercase">Initializing Universe</span>
+                </div>
+            </LazyMotion>
         );
     }
 
     if (error) {
         return (
-            <div className="min-h-screen flex flex-col items-center justify-center bg-[#050508]">
-                <div className="p-8 glass-card border-rose-500/20 text-center space-y-4">
-                    <h2 className="text-rose-500 text-xs font-bold uppercase tracking-[0.2em]">Data Sync Failure</h2>
-                    <p className="text-white/40 text-[10px] uppercase tracking-widest">{error}</p>
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="px-6 py-2 glass-card text-[10px] font-bold uppercase tracking-widest hover:border-[var(--accent-primary)] transition-all"
-                    >
-                        Retry Connection
-                    </button>
+            <LazyMotion features={domAnimation}>
+                <div className="min-h-screen flex flex-col items-center justify-center bg-[#050508]">
+                    <div className="p-8 glass-card border-rose-500/20 text-center space-y-4">
+                        <h2 className="text-rose-500 text-xs font-bold uppercase tracking-[0.2em]">Data Sync Failure</h2>
+                        <p className="text-white/40 text-[10px] uppercase tracking-widest">{error}</p>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="px-6 py-2 glass-card text-[10px] font-bold uppercase tracking-widest hover:border-[var(--accent-primary)] transition-all"
+                        >
+                            Retry Connection
+                        </button>
+                    </div>
                 </div>
-            </div>
+            </LazyMotion>
         );
     }
 
     // 4. Main Render
     return (
-        <PriceProvider>
-            <div className="min-h-screen selection:bg-[#c5a059]/30 overflow-x-hidden bg-[var(--bg-main)] text-[var(--text-main)] transition-colors duration-400">
-                <BackgroundAmbience />
-                <Navbar
-                    view={view}
-                    navigate={navigate}
-                    theme={theme}
-                    toggleTheme={toggleTheme}
-                    sectors={sectors}
-                    currentSector={sector}
-                />
+        <LazyMotion features={domAnimation}>
+            <PriceProvider>
+                <div className="min-h-screen selection:bg-[#c5a059]/30 overflow-x-hidden bg-[var(--bg-main)] text-[var(--text-main)] transition-colors duration-400">
+                    <BackgroundAmbience />
+                    <Navbar
+                        view={view}
+                        navigate={navigate}
+                    />
 
-                <main className="pt-32 pb-20 px-8 max-w-7xl mx-auto relative z-10">
-                    <AnimatePresence mode="wait">
-                        {view === VIEWS.UNIVERSE && (
-                            <UniverseView
-                                sectors={sectors}
-                                hierarchy={hierarchy}
-                                onSectorClick={(s) => navigate(VIEWS.SECTOR, s, null)}
-                                onIndustryClick={(s, ind) => navigate(VIEWS.INDUSTRY, s, ind)}
-                                timeframe={timeframe}
-                                setTimeframe={setTimeframe}
-                                onOpenInsights={setInsightsCompany}
-                            />
-                        )}
+                    <main className="pt-32 pb-20 px-8 max-w-7xl mx-auto relative z-10">
+                        <AnimatePresence mode="wait">
+                            {view === VIEWS.UNIVERSE && (
+                                <UniverseView
+                                    sectors={sectors}
+                                    hierarchy={hierarchy}
+                                    onSectorClick={(s) => navigate(VIEWS.SECTOR, s, null)}
+                                    onIndustryClick={(s, ind) => navigate(VIEWS.INDUSTRY, s, ind)}
+                                    timeframe={timeframe}
+                                    setTimeframe={setTimeframe}
+                                    onOpenInsights={setInsightsCompany}
+                                />
+                            )}
 
-                        {view === VIEWS.DOMAIN && (
-                            <DomainView
-                                sectors={sectors}
-                                hierarchy={hierarchy}
-                                onIndustryClick={(s, ind) => navigate(VIEWS.INDUSTRY, s, ind, 'domain')}
-                            />
-                        )}
+                            {view === VIEWS.DOMAIN && (
+                                <DomainView
+                                    sectors={sectors}
+                                    hierarchy={hierarchy}
+                                    onIndustryClick={handleDomainIndustryClick}
+                                    onOpenInsights={setInsightsCompany}
+                                />
+                            )}
 
-                        {view === VIEWS.SECTOR && (
-                            <SectorView
-                                sector={sector}
-                                industries={currentIndustries}
-                                hierarchy={hierarchy}
-                                onBack={() => navigate(from === 'tracker' ? VIEWS.TRACKER : VIEWS.DOMAIN, null, null)}
-                                onIndustryClick={(ind) => navigate(VIEWS.INDUSTRY, sector, ind)}
-                            />
-                        )}
+                            {view === VIEWS.SECTOR && (
+                                <SectorView
+                                    sector={sector}
+                                    industries={currentIndustries}
+                                    hierarchy={hierarchy}
+                                    onBack={() => navigate(from === 'tracker' ? VIEWS.TRACKER : VIEWS.DOMAIN, null, null)}
+                                    onIndustryClick={(ind) => navigate(VIEWS.INDUSTRY, sector, ind)}
+                                />
+                            )}
 
-                        {view === VIEWS.INDUSTRY && (
-                            <IndustryView
-                                sector={sector}
-                                industry={industry}
-                                companies={currentCompanies}
-                                onBack={() => navigate(from === 'tracker' ? VIEWS.TRACKER : VIEWS.DOMAIN, null, null)}
-                                onOpenInsights={setInsightsCompany}
-                            />
-                        )}
+                            {view === VIEWS.INDUSTRY && (
+                                <IndustryView
+                                    sector={sector}
+                                    industry={industry}
+                                    companies={currentCompanies}
+                                    onBack={() => navigate(from === 'tracker' ? VIEWS.TRACKER : VIEWS.DOMAIN, null, null)}
+                                    onOpenInsights={setInsightsCompany}
+                                />
+                            )}
 
-                        {view === VIEWS.TRACKER && (
-                            <TrackerView
-                                sectors={sectors}
-                                hierarchy={hierarchy}
-                                onSectorClick={(s) => navigate(VIEWS.SECTOR, s, null, 'tracker')}
-                                onIndustryClick={(s, ind) => navigate(VIEWS.INDUSTRY, s, ind, 'tracker')}
-                                timeframe={timeframe}
-                                setTimeframe={setTimeframe}
-                                onOpenInsights={setInsightsCompany}
-                            />
-                        )}
+                            {view === VIEWS.TRACKER && (
+                                <TrackerView
+                                    sectors={sectors}
+                                    hierarchy={hierarchy}
+                                    onSectorClick={(s) => navigate(VIEWS.SECTOR, s, null, 'tracker')}
+                                    onIndustryClick={(s, ind) => navigate(VIEWS.INDUSTRY, s, ind, 'tracker')}
+                                    timeframe={timeframe}
+                                    setTimeframe={setTimeframe}
+                                    onOpenInsights={setInsightsCompany}
+                                />
+                            )}
 
-                        {view === VIEWS.COMPARE && (
-                            <ComparisonView
-                                hierarchy={hierarchy}
-                                timeframe={timeframe}
-                                setTimeframe={setTimeframe}
-                                onOpenInsights={setInsightsCompany}
-                            />
-                        )}
-                    </AnimatePresence>
-                </main>
+                            {view === VIEWS.COMPARE && (
+                                <ComparisonView
+                                    hierarchy={hierarchy}
+                                    timeframe={timeframe}
+                                    setTimeframe={setTimeframe}
+                                    onOpenInsights={setInsightsCompany}
+                                />
+                            )}
+                        </AnimatePresence>
+                    </main>
 
-                <CompanyInsights
-                    isOpen={!!insightsCompany}
-                    symbol={insightsCompany?.symbol}
-                    name={insightsCompany?.name}
-                    onClose={() => setInsightsCompany(null)}
-                />
-            </div>
-        </PriceProvider>
+                    <React.Suspense fallback={null}>
+                        <CompanyInsights
+                            isOpen={!!insightsCompany}
+                            symbol={insightsCompany?.symbol}
+                            name={insightsCompany?.name}
+                            onClose={() => setInsightsCompany(null)}
+                        />
+                    </React.Suspense>
+                </div>
+            </PriceProvider>
+        </LazyMotion>
     );
 };
 

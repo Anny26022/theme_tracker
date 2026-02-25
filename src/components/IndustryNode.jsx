@@ -12,13 +12,14 @@ export const IndustryNode = ({ name, count, onClick, onCopy, index }) => {
             index={index}
         >
             <div className="flex items-center justify-end mt-auto">
-                <WatchlistCopyButton
-                    onCopy={onCopy}
-                    className="opacity-0 group-hover:opacity-100"
-                    iconSize={2.5}
-                />
+                {onCopy && (
+                    <WatchlistCopyButton
+                        onCopy={onCopy}
+                        className="opacity-0 group-hover:opacity-100"
+                        iconSize={2.5}
+                    />
+                )}
             </div>
         </BaseNode>
     );
 };
-

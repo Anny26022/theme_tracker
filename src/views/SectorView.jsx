@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ArrowLeft, Search } from 'lucide-react';
 import { IndustryNode } from '../components/IndustryNode';
 import { ViewWrapper } from '../components/ViewWrapper';
+import { formatTVWatchlist } from '../lib/watchlistUtils';
 
 export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryClick }) => {
     const [filter, setFilter] = useState('');
@@ -20,6 +21,15 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
             );
         });
     }, [industries, filter, sector, hierarchy]);
+
+    const handleCopyIndustry = (industryName) => {
+        const text = formatTVWatchlist([{
+            label: industryName,
+            companies: hierarchy[sector]?.[industryName] || []
+        }]);
+        if (text) navigator.clipboard.writeText(text);
+        return !!text;
+    };
 
     return (
         <ViewWrapper id="sector">
@@ -60,6 +70,7 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
                         name={ind}
                         count={hierarchy[sector][ind].length}
                         onClick={() => onIndustryClick(ind)}
+                        onCopy={() => handleCopyIndustry(ind)}
                         index={i}
                     />
                 ))}

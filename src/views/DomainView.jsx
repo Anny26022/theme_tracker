@@ -11,9 +11,10 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
     const inputRef = useRef(null);
 
     // Flatten all industries across all sectors (deduplicated by name)
-    const allIndustries = useMemo(() => {
+    const { allIndustries, companiesIndex } = useMemo(() => {
         const seen = new Set();
         const industries = [];
+        const companies = [];
 
         sectors.forEach(s => {
             const indDict = hierarchy[s] || {};
@@ -22,51 +23,51 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                     seen.add(indName);
                     industries.push({
                         name: indName,
+                        searchName: indName.toLowerCase(),
                         sector: s,
                         count: indDict[indName].length
                     });
                 }
+
+                indDict[indName].forEach(c => {
+                    companies.push({
+                        ...c,
+                        industry: indName,
+                        sector: s,
+                        searchName: c.name ? c.name.toLowerCase() : '',
+                        searchSymbol: c.symbol ? c.symbol.toLowerCase() : '',
+                    });
+                });
             });
         });
 
-        return industries.sort((a, b) => a.name.localeCompare(b.name));
+        return {
+            allIndustries: industries.sort((a, b) => a.name.localeCompare(b.name)),
+            companiesIndex: companies
+        };
     }, [sectors, hierarchy]);
 
     const filteredIndustries = useMemo(() => {
         if (!filter) return allIndustries;
-        return allIndustries.filter(ind =>
-            ind.name.toLowerCase().includes(filter.toLowerCase())
-        );
+        const search = filter.toLowerCase();
+        return allIndustries.filter(ind => ind.searchName.includes(search));
     }, [allIndustries, filter]);
 
     const matchingCompanies = useMemo(() => {
         if (!filter || filter.length < 2) return [];
-        const results = [];
         const search = filter.toLowerCase();
 
-        sectors.forEach(s => {
-            const indDict = hierarchy[s] || {};
-            Object.entries(indDict).forEach(([indName, companies]) => {
-                companies.forEach(c => {
-                    if (c.name.toLowerCase().includes(search) ||
-                        c.symbol.toLowerCase().includes(search)) {
-                        results.push({
-                            ...c,
-                            industry: indName,
-                            sector: s
-                        });
-                    }
-                });
-            });
-        });
-        return results.slice(0, 10);
-    }, [filter, sectors, hierarchy]);
+        return companiesIndex
+            .filter(c => c.searchName.includes(search) || c.searchSymbol.includes(search))
+            .slice(0, 10)
+            .map(({ searchName, searchSymbol, ...company }) => company);
+    }, [filter, companiesIndex]);
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter' && matchingCompanies.length > 0) {
             const first = matchingCompanies[0];
             onIndustryClick(first.sector, first.industry);
-            onOpenInsights(first.symbol, first.name);
+            onOpenInsights?.({ symbol: first.symbol, name: first.name });
             setShowResults(false);
         }
         if (e.key === 'Escape') {
@@ -134,15 +135,16 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                     {showResults && matchingCompanies.length > 0 && (
                         <div className="absolute top-[calc(100%+8px)] left-0 right-0 glass-card bg-[#0a0c10]/95 backdrop-blur-xl border-[var(--ui-divider)] z-50 overflow-hidden">
                             <div className="max-h-[320px] overflow-y-auto custom-scrollbar">
-                                {matchingCompanies.map((c, i) => (
-                                    <div
-                                        key={`${c.symbol}-${i}`}
+                                {matchingCompanies.map((c) => (
+                                    <button
+                                        type="button"
+                                        key={`${c.symbol}-${c.sector}-${c.industry}`}
                                         onClick={() => {
                                             onIndustryClick(c.sector, c.industry);
-                                            onOpenInsights(c.symbol, c.name);
+                                            onOpenInsights?.({ symbol: c.symbol, name: c.name });
                                             setShowResults(false);
                                         }}
-                                        className="p-4 border-b border-[var(--ui-divider)] last:border-0 hover:bg-[var(--glass-border)] cursor-pointer transition-colors group flex items-center justify-between"
+                                        className="w-full text-left p-4 border-b border-[var(--ui-divider)] last:border-0 hover:bg-[var(--glass-border)] cursor-pointer transition-colors group flex items-center justify-between"
                                     >
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center gap-3">
@@ -156,7 +158,7 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                                             </div>
                                         </div>
                                         <ArrowUpRight className="w-3 h-3 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         </div>

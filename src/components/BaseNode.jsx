@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 import { cn } from '../lib/utils';
 
 /**
@@ -17,18 +17,14 @@ export const BaseNode = ({
     className = ""
 }) => {
     return (
-        <motion.div
+        <m.div
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.03 }}
-            whileHover={{
-                scale: 1.01,
-                backgroundColor: 'var(--glass-bg)',
-                borderColor: 'var(--accent-primary)'
-            }}
+            whileHover={{ scale: 1.01 }}
             onClick={onClick}
             className={cn(
-                "p-5 border glass-card cursor-pointer group transition-all duration-500 relative overflow-hidden flex flex-col gap-4",
+                "cv-auto p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
                 accentClass?.split(' ').find(c => c.startsWith('border-')) || "border-[var(--ui-divider)]",
                 className
             )}
@@ -49,7 +45,7 @@ export const BaseNode = ({
             {/* Title / Main Content */}
             {title && (
                 <h3 className={cn(
-                    "text-[10px] font-bold tracking-[0.2em] uppercase opacity-80 transition-all truncate leading-relaxed group-hover:text-[var(--accent-primary)]",
+                    "text-[10px] font-bold tracking-[0.2em] uppercase opacity-80 transition-colors truncate leading-relaxed group-hover:text-[var(--accent-primary)]",
                     accentClass?.includes('text-') && accentClass.split(' ').find(c => c.startsWith('text-'))
                 )}>
                     {title}
@@ -57,6 +53,6 @@ export const BaseNode = ({
             )}
 
             {children}
-        </motion.div>
+        </m.div>
     );
 };

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { fetchBatchIntervalPerformance, cleanSymbol } from '../services/priceService';
 import { useAsync } from './useAsync';
 
@@ -14,11 +14,10 @@ const REFRESH_INTERVALS = {
 };
 
 export function useIntervalPerformance(items, hierarchy, interval, type = 'sector') {
-    const fetchFunc = async () => {
-        if (!items || !items.length) return {};
-
+    const itemToSymbols = useMemo(() => {
         const itemToSymbols = new Map();
-        const allSymbols = new Set();
+
+        if (!items || items.length === 0) return itemToSymbols;
 
         for (const name of items) {
             const symbols = [];
@@ -30,6 +29,7 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
                     });
                 }
             } else {
+                // Build industry lookup once per render cycle and reuse.
                 for (const sector of Object.keys(hierarchy)) {
                     if (hierarchy[sector][name]) {
                         hierarchy[sector][name].forEach(c => symbols.push(c));
@@ -38,10 +38,20 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
                 }
             }
             itemToSymbols.set(name, symbols);
-            symbols.forEach(c => allSymbols.add(c.symbol));
         }
 
-        const symbolsArray = [...allSymbols];
+        return itemToSymbols;
+    }, [items, hierarchy, type]);
+
+    const symbolsArray = useMemo(() => {
+        const allSymbols = new Set();
+        itemToSymbols.forEach(companies => {
+            companies.forEach(c => allSymbols.add(c.symbol));
+        });
+        return [...allSymbols];
+    }, [itemToSymbols]);
+
+    const fetchFunc = async () => {
         if (symbolsArray.length === 0) return {};
 
         const results = await fetchBatchIntervalPerformance(symbolsArray, interval);
@@ -85,11 +95,11 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
         return updates;
     };
 
-    const { data: perfMap, loading, execute } = useAsync(fetchFunc, [items, hierarchy, type, interval]);
+    const { data: perfMap, loading, execute } = useAsync(fetchFunc, [symbolsArray, itemToSymbols, interval]);
     const intervalTimerRef = useRef(null);
 
     useEffect(() => {
-        if (!items || !items.length) return;
+        if (symbolsArray.length === 0) return;
 
         const refreshMs = REFRESH_INTERVALS[interval] || 10 * 60_000;
         intervalTimerRef.current = setInterval(() => {
@@ -99,8 +109,7 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
         return () => {
             if (intervalTimerRef.current) clearInterval(intervalTimerRef.current);
         };
-    }, [items, interval, execute]);
+    }, [symbolsArray, interval, execute]);
 
     return { perfMap: perfMap || {}, loading };
 }
-

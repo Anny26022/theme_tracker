@@ -6,7 +6,14 @@
     "scripts": {
         "dev": "vite --host",
         "build": "vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "mobile:start": "npm --prefix \"./android-app\" run start",
+        "mobile:android": "npm --prefix \"./android-app\" run android",
+        "mobile:ios": "npm --prefix \"./android-app\" run ios",
+        "mobile:web": "npm --prefix \"./android-app\" run web",
+        "mobile:build:android:apk": "npm --prefix \"./android-app\" run build:android:apk",
+        "mobile:build:android:aab": "npm --prefix \"./android-app\" run build:android:aab",
+        "mobile:build:ios:ipa": "npm --prefix \"./android-app\" run build:ios:ipa"
     },
     "dependencies": {
         "clsx": "^2.1.0",

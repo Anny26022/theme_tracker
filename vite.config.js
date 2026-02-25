@@ -24,6 +24,12 @@ export default defineConfig({
                 changeOrigin: true,
                 rewrite: (path) => path.replace(/^\/api\/strike/, ''),
             },
+            // Dhan ScanX API proxy
+            '/api/scanx': {
+                target: 'https://ow-static-scanx.dhan.co',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/api\/scanx/, ''),
+            },
         },
     },
 })

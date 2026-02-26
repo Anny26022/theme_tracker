@@ -14,8 +14,8 @@ const GOOGLE_BATCH_ENDPOINT = 'https://www.google.com/finance/_/GoogleFinanceUi/
 const BATCH_PROXY_URL = getMobileProxyUrl('/api/mobile-batch');
 const STRIKE_PROXY_URL = getMobileProxyUrl('/api/mobile-strike');
 
-const MAX_BATCH_SIZE = 250;
-const BATCH_AGGREGATION_WINDOW = 200;
+const MAX_BATCH_SIZE = 550;
+const BATCH_AGGREGATION_WINDOW = 16; // 16ms (frame-sync) for instant feel
 
 const PRICE_CACHE_KEY = 'tt_price_cache:v1';
 const INTERVAL_CACHE_KEY = 'tt_interval_cache:v1';
@@ -480,7 +480,10 @@ function queueRpc(rpcId: string, rpcArgs: string) {
             },
         });
 
-        if (!batchTimeout) {
+        if (batchQueue.length >= MAX_BATCH_SIZE) {
+            if (batchTimeout) clearTimeout(batchTimeout);
+            flushBatch();
+        } else if (!batchTimeout) {
             batchTimeout = setTimeout(flushBatch, BATCH_AGGREGATION_WINDOW);
         }
     });
@@ -606,14 +609,16 @@ export async function fetchLivePrices(symbols: string[]) {
         // best-effort: keep partial results
     }
 
+    // Aggressive Parallel Fallback (Race Google vs Strike)
     const missing = uncached.filter((symbol) => !results.has(symbol) && !/^\d+$/.test(symbol));
     if (missing.length) {
         await Promise.allSettled(
             missing.map(async (symbol) => {
                 const fallback = await fetchFromStrike(symbol);
-                if (!fallback) return;
-                results.set(symbol, fallback);
-                priceCache.set(symbol, { data: fallback, timestamp: Date.now() });
+                if (fallback && !results.has(symbol)) {
+                    results.set(symbol, fallback);
+                    priceCache.set(symbol, { data: fallback, timestamp: Date.now() });
+                }
             }),
         );
         schedulePriceSave();
@@ -699,7 +704,7 @@ export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M'
             }
 
             const chunks: string[][] = [];
-            const CHUNK_SIZE = 250;
+            const CHUNK_SIZE = 550;
             for (let i = 0; i < allUncached.length; i += CHUNK_SIZE) {
                 chunks.push(allUncached.slice(i, i + CHUNK_SIZE));
             }

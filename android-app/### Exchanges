@@ -1,0 +1,178 @@
+### Exchanges
+- End of day prices provided by Morningstar. Corporate actions and company metadata provided by Refinitiv.
+- Intra-day data may be provided by ICE Data Services.
+- Data for the Moscow Exchange is currently unavailable.
+- *Real-time price data represents trades which execute on the NASDAQ and NYSE exchanges. Volume information, as well as price data for trades that don’t execute on those exchanges, are consolidated and delayed by 15 minutes.
+
+### Mutual Funds
+- Mutual fund prices provided by Morningstar.
+
+### Indexes
+- End of day prices provided by Morningstar.
+- Intra-day data may be provided by ICE Data Services.
+- Data for the Moscow Exchange is currently unavailable.
+
+### Futures
+- Futures data provided by CME Group
+
+### Currencies and gold spot rates
+- Currency and cryptocurrency prices provided by Morningstar
+- Cryptocurrency metadata is provided by Coinmarketcap
+- Gold spot prices for India are provided by Ticker Data Limited
+
+### Sector Data
+- Sector and industry data is provided by S&P Capital IQ. Below are the mappings for Sector and Industry data from GICS to Google Finance naming.
+GICS
+Google Finance
+Hypermarkets and Super Centers
+Grocery Stores
+Household Durables
+Household
+Gas Utilities
+Gas
+Consumer Finance
+Payment Service Provider
+Food Products
+Food
+Technology Hardware, Storage and Peripherals
+Computers, Peripherals, and Software
+Independent Power and Renewable Electricity Producers
+Renewable Energy
+Diversified Metals and Mining
+Mining
+Health Care Equipment and Supplies
+Medical Devices
+Industrials
+Industry
+Diversified Financial Services
+Credit
+Brewers
+Brewery
+Machinery
+Machine Industry
+Consumer Staples
+Consumer
+Water Utilities
+Water
+Automobiles and Components
+Cars
+Movies and Entertainment
+Entertainment
+Hotels, Resorts and Cruise Lines
+Hotel
+Hotels, Resorts and Cruise Lines
+Resort
+Hotels, Resorts and Cruise Lines
+Cruise Line
+Textiles
+Clothing
+Education Services
+Education
+Mortgage Services
+Mortgage Loan
+Electric Utilities
+Electricity
+IT Consulting & Other Services
+Information Technology Consulting
+Paper products
+Paper
+Trading Companies and Distributors
+Trading company
+Application Software
+Computer Application
+Computer and Electronic Retail
+Consumer Electronics
+Industrial Conglomerates
+Conglomerates
+Health Care Provider and Services
+Health care provider
+Household Products
+Household Goods
+Commercial Printing
+Printing
+Fertilizers and Agricultural Chemicals
+Fertilizers
+Publishing
+Satellite television
+Oil and Gas Drilling
+Drilling
+Oil and Gas Drilling
+Oil (Petroleum)
+Home Improvement Retail
+Home Improvement
+Financials
+Financial Services
+Chemicals
+Chemical Industry
+Information Technology
+Technology
+Semiconductors and Semiconductor Equipment
+Semiconductor
+Interactive Media and Services (level 4)
+Interactive Media
+Personal Products
+Personal Care Products
+Air Freight and Logistics
+Air Cargo
+Real Estate Management and Development
+Property Management
+Interactive Home Entertainment
+Home Entertainment
+Apparel, Accessories and Luxury Goods
+Luxury Goods
+Apparel, Accessories and Luxury Goods
+Clothing
+Apparel, Accessories and Luxury Goods
+Fashion Accessory
+Homefurnishing
+Furniture
+Leisure Products
+Leisure
+Utilities
+Public Utility
+Building Products
+Building
+Multi Utilities
+Multi-utility
+Software & Services
+Software
+Automobile Components
+Auto Parts
+Consumer Discretionary
+Consumer
+Drug Retail
+Drug
+Construction Materials
+Building Material
+Technology Hardware and Equipment
+Computer hardware
+Pharmaceuticals
+Pharmaceutical Industry
+Telecommunication Services
+Telecommunications
+Distillers and Vintners
+Distillery
+Apparel
+Clothing
+Beverages
+Drink
+Commercial and Professional Services
+Business Services
+General Merchandise Stores
+General Store
+Automotive Retail
+Automotive Industry
+Consumer Durables and Apparels
+Clothing
+Passenger Airlines
+Airline
+Passenger Airlines
+Passenger Airline
+Internet Services and Infrastructure
+Internet
+Electronic Manufacturing Services
+Electronic Manufacturing
+Marine Transportation
+Maritime transport
+Technology Distributors
+Technology

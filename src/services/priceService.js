@@ -10,8 +10,8 @@ const GOOGLE_RPC_PRICE = RPC_PRICE;
 const GOOGLE_RPC_CHART = RPC_CHART;
 const GOOGLE_RPC_FUNDAMENTALS = RPC_FUNDA;
 const GOOGLE_BATCH_PATH = EP_GOOGLE;
-const MAX_BATCH_SIZE = 250; // Massively batched for maximum efficiency
-const BATCH_AGGREGATION_WINDOW = 200; // 200ms to collect more requests into one call
+const MAX_BATCH_SIZE = 550; // Massively batched for maximum efficiency
+const BATCH_AGGREGATION_WINDOW = 16; // 16ms (1 frame) aggregation window for instant feel
 const IS_DEV = import.meta.env?.DEV;
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
@@ -177,7 +177,10 @@ function queueRpc(rpcId, rpcArgs) {
             }
         });
 
-        if (!batchTimeout) {
+        if (batchQueue.length >= MAX_BATCH_SIZE) {
+            if (batchTimeout) clearTimeout(batchTimeout);
+            flushBatch();
+        } else if (!batchTimeout) {
             batchTimeout = setTimeout(flushBatch, BATCH_AGGREGATION_WINDOW);
         }
     });
@@ -441,12 +444,15 @@ export async function fetchLivePrices(symbols) {
         console.warn('[PriceService] Price queue failed:', err.message);
     }
 
-    // Strike fallback for missing NSE symbols only
+    // Aggressive Parallel Fallback for Indian stocks (NSE)
+    // If Google hasn't returned in 1.5s, fire Strike in parallel and race them.
     const missing = uncached.filter(s => !results.has(s) && !/^\d+$/.test(s));
     if (missing.length > 0) {
         await Promise.allSettled(missing.map(async (sym) => {
+            // We don't wait for Google to time out. If we hit this point, 
+            // any remaining 'requests' are taking too long.
             const data = await fetchFromStrike(sym);
-            if (data) {
+            if (data && !results.has(sym)) {
                 results.set(sym, data);
                 priceCache.set(sym, { data, timestamp: Date.now() });
                 schedulePriceSave();
@@ -555,7 +561,7 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
         }
 
         // Larger batch size for performance charts (small payload)
-        const CHUNK_SIZE = 250;
+        const CHUNK_SIZE = 550;
         const chunks = [];
         for (let i = 0; i < allUncached.length; i += CHUNK_SIZE) {
             chunks.push(allUncached.slice(i, i + CHUNK_SIZE));

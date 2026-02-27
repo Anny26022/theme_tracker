@@ -10,16 +10,21 @@ export function formatTVWatchlist(groupedData: WatchlistGroup[] = []): string {
   const text: string[] = [];
 
   groupedData.forEach(({ label, companies }) => {
-    const nseOnly = companies.filter((company) => company.exch !== "BSE" && !isNumericSymbol(company.symbol));
+    // 1. Filter Valid Symbols (and exclude purely numerical BSE symbols)
+    const valid = companies.filter((company) => company.symbol && !isNumericSymbol(company.symbol));
 
-    if (nseOnly.length > 0) {
-      text.push(`###${label}(${nseOnly.length})`);
-      nseOnly.forEach((company) => {
-        text.push(`NSE:${company.symbol}`);
+    if (valid.length > 0) {
+      // 2. Add Section Header with Count
+      const cleanLabel = label.replace(" COMPANIES", "").toUpperCase();
+      text.push(`###${cleanLabel}(${valid.length})`);
+
+      // 3. Add Symbols dynamically with appropriate exchange
+      valid.forEach((company) => {
+        const exch = company.exch === "BSE" || isNumericSymbol(company.symbol) ? "BSE" : "NSE";
+        text.push(`${exch}:${company.symbol}`);
       });
     }
   });
 
   return text.join(",");
 }
-

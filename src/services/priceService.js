@@ -22,6 +22,7 @@ const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
 
 const comparisonCacheMap = new Map();
 const unifiedResultCache = new Map(); // timeframe:symbol -> result
+const pendingUnifiedRequests = new Map();
 const PRICE_CACHE_TTL = 15_000; // 15s
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
@@ -623,68 +624,86 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
  * @param {string} interval 
  */
 export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
-    const keys = symbols.map(s => cleanSymbol(s));
-    const window = 6; // Always fetch 1Y (window 6) for breadth calculations
-    const results = new Map();
-    const uncachedKeys = [];
+    const keys = [...new Set(symbols.map(s => cleanSymbol(s)))];
+    const requestKey = `${interval}:${[...keys].sort().join(',')}`;
+    const pending = pendingUnifiedRequests.get(requestKey);
+    if (pending) return pending;
 
-    // 1. Check Unified Result Cache (Calculated EMA/Perf)
-    keys.forEach(sym => {
-        const cacheKey = `${interval}:${sym}`;
-        const cached = unifiedResultCache.get(cacheKey);
-        // Unified results expire every 5 mins
-        if (cached && Date.now() - cached.timestamp < 300_000) {
-            results.set(sym, cached.data);
-        } else {
-            uncachedKeys.push(sym);
-        }
-    });
+    const requestPromise = (async () => {
+        const results = new Map();
+        const uncachedKeys = [];
 
-    if (uncachedKeys.length === 0) return results;
-
-    // 2. We reuse fetchComparisonCharts which already batches and caches 1Y data
-    const charts = await fetchComparisonCharts(uncachedKeys, '1Y');
-
-    uncachedKeys.forEach(sym => {
-        const series = charts.get(sym);
-        if (!series || series.length < 5) return;
-
-        const prices = series.map(p => p.price).filter(p => p > 0);
-        if (prices.length < 5) return;
-
-        const currentPrice = prices[prices.length - 1];
-        let changePct = 0;
-
-        const dayIndices = { '1D': 1, '5D': 5, '1M': 20, '6M': 125, '1Y': 250, 'YTD': 250 };
-        const lookback = dayIndices[interval] || 20;
-        const startIndex = Math.max(0, prices.length - 1 - lookback);
-        const startPrice = prices[startIndex];
-
-        if (startPrice > 0) {
-            changePct = ((currentPrice - startPrice) / startPrice) * 100;
-        }
-
-        const data = {
-            perf: { changePct, close: currentPrice },
-            breadth: {
-                above10EMA: calculateEMA(prices, 10) ? currentPrice > calculateEMA(prices, 10) : false,
-                above21EMA: calculateEMA(prices, 21) ? currentPrice > calculateEMA(prices, 21) : false,
-                above50EMA: calculateEMA(prices, 50) ? currentPrice > calculateEMA(prices, 50) : false,
-                above150EMA: calculateEMA(prices, 150) ? currentPrice > calculateEMA(prices, 150) : false,
-                above200EMA: calculateEMA(prices, 200) ? currentPrice > calculateEMA(prices, 200) : false,
-                ema10: calculateEMA(prices, 10),
-                ema21: calculateEMA(prices, 21),
-                ema50: calculateEMA(prices, 50),
-                ema150: calculateEMA(prices, 150),
-                ema200: calculateEMA(prices, 200)
+        // 1. Check Unified Result Cache (Calculated EMA/Perf)
+        keys.forEach(sym => {
+            const cacheKey = `${interval}:${sym}`;
+            const cached = unifiedResultCache.get(cacheKey);
+            // Unified results expire every 5 mins
+            if (cached && Date.now() - cached.timestamp < 300_000) {
+                results.set(sym, cached.data);
+            } else {
+                uncachedKeys.push(sym);
             }
-        };
+        });
 
-        unifiedResultCache.set(`${interval}:${sym}`, { data, timestamp: Date.now() });
-        results.set(sym, data);
-    });
+        if (uncachedKeys.length === 0) return results;
 
-    return results;
+        // 2. We reuse fetchComparisonCharts which already batches and caches 1Y data
+        const charts = await fetchComparisonCharts(uncachedKeys, '1Y');
+
+        uncachedKeys.forEach(sym => {
+            const series = charts.get(sym);
+            if (!series || series.length < 5) return;
+
+            const prices = series.map(p => p.price).filter(p => p > 0);
+            if (prices.length < 5) return;
+
+            const currentPrice = prices[prices.length - 1];
+            let changePct = 0;
+
+            const dayIndices = { '1D': 1, '5D': 5, '1M': 20, '6M': 125, '1Y': 250, 'YTD': 250 };
+            const lookback = dayIndices[interval] || 20;
+            const startIndex = Math.max(0, prices.length - 1 - lookback);
+            const startPrice = prices[startIndex];
+
+            if (startPrice > 0) {
+                changePct = ((currentPrice - startPrice) / startPrice) * 100;
+            }
+
+            const ema10 = calculateEMA(prices, 10);
+            const ema21 = calculateEMA(prices, 21);
+            const ema50 = calculateEMA(prices, 50);
+            const ema150 = calculateEMA(prices, 150);
+            const ema200 = calculateEMA(prices, 200);
+
+            const data = {
+                perf: { changePct, close: currentPrice },
+                breadth: {
+                    above10EMA: ema10 !== null ? currentPrice > ema10 : false,
+                    above21EMA: ema21 !== null ? currentPrice > ema21 : false,
+                    above50EMA: ema50 !== null ? currentPrice > ema50 : false,
+                    above150EMA: ema150 !== null ? currentPrice > ema150 : false,
+                    above200EMA: ema200 !== null ? currentPrice > ema200 : false,
+                    ema10,
+                    ema21,
+                    ema50,
+                    ema150,
+                    ema200
+                }
+            };
+
+            unifiedResultCache.set(`${interval}:${sym}`, { data, timestamp: Date.now() });
+            results.set(sym, data);
+        });
+
+        return results;
+    })();
+
+    pendingUnifiedRequests.set(requestKey, requestPromise);
+    try {
+        return await requestPromise;
+    } finally {
+        pendingUnifiedRequests.delete(requestKey);
+    }
 }
 
 // ─── Fundamentals Extraction ────────────────────────────────────────

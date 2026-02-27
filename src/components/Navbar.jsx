@@ -38,13 +38,13 @@ export const Navbar = React.memo(({ view, navigate }) => {
                     </button>
 
                     {/* Desktop Links */}
-                    <div className="hidden md:flex items-center gap-4 text-[8px] uppercase tracking-[0.3em] font-bold ml-4 border-l pl-6 border-[var(--ui-divider)]">
+                    <div className="hidden md:flex items-center gap-3 text-[7.5px] uppercase tracking-[0.25em] font-medium ml-4 border-l pl-4 border-[var(--ui-divider)]">
                         {navLinks.map((item) => (
                             <button
                                 key={item.label}
                                 type="button"
                                 className={cn(
-                                    "cursor-pointer hover:text-[var(--accent-primary)] transition-colors uppercase py-1 px-2 rounded",
+                                    "cursor-pointer hover:text-[var(--accent-primary)] transition-colors uppercase py-0.5 px-1.5 rounded",
                                     isActive(item) ? "text-[var(--accent-primary)] bg-[var(--accent-primary)]/5" : "text-[var(--text-muted)]"
                                 )}
                                 onClick={() => navigate(item.view)}
@@ -58,18 +58,30 @@ export const Navbar = React.memo(({ view, navigate }) => {
                 <div className="flex items-center gap-4 md:gap-8">
                     <div className="flex items-center gap-4 md:gap-6">
                         <ThemeToggleButton />
-                        <div className="flex items-center gap-2">
-                            <div className="w-[4px] h-[4px] rounded-full bg-[#af8a44] dark:bg-[#c5a059] shadow-[0_0_8px_rgba(197,160,89,0.5)] animate-pulse" />
-                            <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-[0.4em]">Live</span>
-                        </div>
+                        <button
+                            onClick={() => handleNavigate(VIEWS.MAPPER)}
+                            className={cn(
+                                "flex items-center gap-2 px-2 py-1 rounded-full transition-all hover:bg-[var(--accent-primary)]/5 group",
+                                view === VIEWS.MAPPER && "bg-[var(--accent-primary)]/10"
+                            )}
+                        >
+                            <div className={cn(
+                                "w-[3px] h-[3px] rounded-full animate-pulse",
+                                view === VIEWS.MAPPER ? "bg-[var(--accent-primary)] shadow-[0_0_12px_var(--accent-primary)]" : "bg-[#af8a44] dark:bg-[#c5a059] shadow-[0_0_8px_rgba(197,160,89,0.5)]"
+                            )} />
+                            <span className={cn(
+                                "text-[7.5px] font-bold uppercase tracking-[0.4em] transition-colors",
+                                view === VIEWS.MAPPER ? "text-[var(--accent-primary)]" : "text-[var(--text-muted)] group-hover:text-[var(--accent-primary)]"
+                            )}>Live</span>
+                        </button>
                     </div>
 
                     {/* Mobile Menu Toggle */}
                     <button
-                        className="md:hidden text-[var(--text-main)] p-2 -mr-2"
+                        className="md:hidden text-[var(--text-main)] p-1.5 -mr-1"
                         onClick={() => setIsMenuOpen(!isMenuOpen)}
                     >
-                        {isMenuOpen ? <X size={18} /> : <Menu size={18} />}
+                        {isMenuOpen ? <X size={16} /> : <Menu size={16} />}
                     </button>
                 </div>
             </div>
@@ -83,13 +95,13 @@ export const Navbar = React.memo(({ view, navigate }) => {
                         exit={{ opacity: 0, height: 0 }}
                         className="md:hidden border-t border-[var(--ui-divider)] bg-[var(--bg-main)]/95 backdrop-blur-2xl overflow-hidden"
                     >
-                        <div className="flex flex-col p-6 gap-4">
+                        <div className="flex flex-col p-4 gap-2">
                             {navLinks.map((item) => (
                                 <button
                                     key={item.label}
                                     type="button"
                                     className={cn(
-                                        "text-left text-[10px] font-bold tracking-[0.3em] uppercase py-3 px-4 rounded transition-all",
+                                        "text-left text-[9px] font-medium tracking-[0.3em] uppercase py-2 px-3 rounded transition-all",
                                         isActive(item)
                                             ? "text-[var(--accent-primary)] bg-[var(--accent-primary)]/10 border-l-2 border-[var(--accent-primary)]"
                                             : "text-[var(--text-muted)]"

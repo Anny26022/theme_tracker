@@ -6,7 +6,8 @@ export const VIEWS = {
     SECTOR: 'sector',
     INDUSTRY: 'industry',
     TRACKER: 'tracker',
-    COMPARE: 'compare'
+    COMPARE: 'compare',
+    MAPPER: 'mapper'
 };
 
 export const useUrlState = () => {

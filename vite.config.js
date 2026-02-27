@@ -235,6 +235,37 @@ export default defineConfig({
                         if (!proxyReq.writableEnded) proxyReq.end();
                     });
                 }
+            },
+            '/api/tv': {
+                target: 'https://www.tradingview.com/api/v1',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/api\/tv/, ''),
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq, req) => {
+                        const sessionId = req.headers['x-tv-sessionid'];
+                        const sessionSign = req.headers['x-tv-sessionid-sign'];
+
+                        let cookie = '';
+                        if (sessionId) cookie += `sessionid=${sessionId}; `;
+                        if (sessionSign) cookie += `sessionid_sign=${sessionSign}; `;
+
+                        if (cookie) proxyReq.setHeader('Cookie', cookie.trim());
+
+                        proxyReq.setHeader('Origin', 'https://www.tradingview.com');
+                        proxyReq.setHeader('Referer', 'https://www.tradingview.com/');
+                        proxyReq.setHeader('X-Requested-With', 'XMLHttpRequest');
+
+                        // Handle body for POST/PATCH/DELETE
+                        if (req.rawBody && (req.method === 'POST' || req.method === 'PATCH' || req.method === 'DELETE')) {
+                            proxyReq.setHeader('Content-Type', 'application/json');
+                            proxyReq.setHeader('Content-Length', Buffer.byteLength(req.rawBody));
+                            proxyReq.write(req.rawBody);
+                        }
+
+                        // Don't call .end() for GET requests, let it stream naturally
+                        if (req.method !== 'GET' && !proxyReq.writableEnded) proxyReq.end();
+                    });
+                }
             }
         }
     }

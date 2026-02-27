@@ -19,6 +19,7 @@ import { SectorView } from './views/SectorView';
 import { IndustryView } from './views/IndustryView';
 import { TrackerView } from './views/TrackerView';
 import { ComparisonView } from './views/ComparisonView';
+import { MapperView } from './views/MapperView';
 
 const CompanyInsights = React.lazy(() => import('./components/CompanyInsights').then((mod) => ({ default: mod.CompanyInsights })));
 const VALID_VIEWS = new Set(Object.values(VIEWS));
@@ -76,7 +77,9 @@ const RouterView = React.memo(({
     onSectorBack,
     onIndustryBack,
     onSectorIndustryClick,
-    onOpenInsights
+    onOpenInsights,
+    rawData,
+    loading
 }) => {
     switch (view) {
         case VIEWS.UNIVERSE:
@@ -116,6 +119,8 @@ const RouterView = React.memo(({
                     sector={sector}
                     industry={industry}
                     companies={currentCompanies}
+                    sectors={sectors}
+                    hierarchy={hierarchy}
                     onBack={onIndustryBack}
                     onOpenInsights={onOpenInsights}
                 />
@@ -141,6 +146,8 @@ const RouterView = React.memo(({
                     onOpenInsights={onOpenInsights}
                 />
             );
+        case VIEWS.MAPPER:
+            return <MapperView hierarchy={hierarchy} rawData={rawData} loading={loading} />;
         default:
             return null;
     }
@@ -150,7 +157,7 @@ RouterView.displayName = 'RouterView';
 
 const App = () => {
     const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
-    const { hierarchy, loading, error } = useMarketData();
+    const { hierarchy, rawData, loading, error } = useMarketData();
     const [insightsCompany, setInsightsCompany] = React.useState(null);
 
     // Source of truth from hierarchy to avoid drift between lists and lookup map.
@@ -232,6 +239,8 @@ const App = () => {
                                 onIndustryBack={handleIndustryBack}
                                 onSectorIndustryClick={handleSectorIndustryClick}
                                 onOpenInsights={handleOpenInsights}
+                                rawData={rawData}
+                                loading={loading}
                             />
                         </AnimatePresence>
                     </main>

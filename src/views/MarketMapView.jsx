@@ -4,7 +4,7 @@ import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP } from '../data/thematicMap';
 import { cn } from '../lib/utils';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 
 const COLUMNS = [
     { label: '1D', key: '1D' },
@@ -36,16 +36,116 @@ const getHeatmapColor = (value) => {
     return 'bg-[var(--ui-muted)]/10 border border-[var(--ui-divider)]/20 text-[var(--text-muted)]';
 };
 
+const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) => {
+    const count = companies.length;
+    return (
+        <div className="flex flex-col gap-3">
+            <div className="border-b border-[var(--ui-divider)]/40 pb-2 mb-1 flex justify-between items-end">
+                <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">Thematic Composition</span>
+                    <span className="text-[8.5px] font-black text-[var(--text-main)] uppercase tracking-tight">{theme.name}</span>
+                </div>
+                <div className="flex flex-col items-end gap-2">
+                    {isMobile && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onClose(); }}
+                            className="p-1.5 bg-white/5 rounded-full hover:bg-white/10 transition-colors"
+                        >
+                            <X size={12} className="text-[var(--text-muted)]" />
+                        </button>
+                    )}
+                    <div className="text-right">
+                        <span className="text-[7.5px] font-black text-[var(--text-muted)] opacity-80 uppercase tracking-widest">{count} Stocks</span>
+                        <div className="flex gap-0.5 mt-1">
+                            {COLUMNS.map(col => (
+                                <span key={col.key} className="w-7 text-center text-[5.5px] font-black text-[var(--text-muted)] opacity-40 uppercase">{col.label}</span>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div className={cn(
+                "grid gap-x-8 gap-y-1 overflow-y-auto max-h-[60vh] no-scrollbar",
+                companies.length > 15 && !isMobile ? "grid-cols-2" : "grid-cols-1"
+            )}>
+                {companies.map((stock) => {
+                    const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
+                    return (
+                        <div key={stock.symbol} className="flex items-center justify-between gap-3 group/item py-0.5 border-b border-[var(--ui-divider)]/10 last:border-0">
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <div className="w-5 h-5 flex-shrink-0 rounded-sm overflow-hidden bg-white/5 p-0.5 flex items-center justify-center border border-[var(--ui-divider)]/10">
+                                    <img
+                                        src={`https://images.dhan.co/symbol/${stock.symbol}.png`}
+                                        alt=""
+                                        className="w-full h-full object-contain"
+                                        onError={(e) => {
+                                            e.target.style.display = 'none';
+                                            e.target.nextSibling.style.display = 'flex';
+                                        }}
+                                    />
+                                    <div className="hidden w-full h-full items-center justify-center bg-[var(--accent-primary)]/10">
+                                        <span className="text-[6px] font-bold text-[var(--accent-primary)]">
+                                            {stock.symbol.charAt(0)}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] truncate">
+                                        {stock.name}
+                                    </span>
+                                    <span className="text-[6px] font-bold text-[var(--text-muted)] opacity-30 uppercase font-mono">
+                                        {stock.symbol}
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-0.5 flex-shrink-0">
+                                {COLUMNS.map(col => {
+                                    const perfMap = stockPerfMap.get(col.key);
+                                    const data = perfMap?.get(cleaned);
+                                    const val = data?.changePct;
+                                    const displayVal = val !== null && val !== undefined ? (val > 0 ? `+${val.toFixed(1)}` : val.toFixed(1)) : '-';
+                                    return (
+                                        <div
+                                            key={col.key}
+                                            className={cn(
+                                                "w-7 h-4 flex items-center justify-center text-[6px] rounded-[2px] border transition-colors",
+                                                getHeatmapColor(val)
+                                            )}
+                                        >
+                                            {displayVal}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted }) => {
     const [isHovered, setIsHovered] = useState(false);
+    const [isMobile, setIsMobile] = useState(false);
     const count = companies.length;
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    const showPopover = isHovered && companies.length > 0;
 
     return (
         <tr className="group/row relative">
             <td
-                className="pr-1 py-0.5 relative cursor-help"
-                onMouseEnter={() => setIsHovered(true)}
-                onMouseLeave={() => setIsHovered(false)}
+                className="pr-1 py-0.5 relative cursor-pointer md:cursor-help"
+                onMouseEnter={() => !isMobile && setIsHovered(true)}
+                onMouseLeave={() => !isMobile && setIsHovered(false)}
+                onClick={() => isMobile && setIsHovered(!isHovered)}
             >
                 <div className={cn(
                     "flex items-center justify-between gap-1 w-full relative z-10 px-1 py-1 rounded transition-all duration-700",
@@ -67,91 +167,39 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                     </span>
                 </div>
 
-                {isHovered && companies.length > 0 && (
-                    <div
-                        className={cn(
-                            "absolute right-full top-0 mr-4 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
-                            "!bg-[var(--bg-main)] !opacity-100", // Enforce rock-solid background
-                            companies.length > 15 ? "w-[680px]" : "w-[340px]"
-                        )}
-                    >
-                        <div className="flex flex-col gap-3">
-                            <div className="border-b border-[var(--ui-divider)]/40 pb-2 mb-1 flex justify-between items-end">
-                                <div className="flex flex-col">
-                                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">Thematic Composition</span>
-                                    <span className="text-[8.5px] font-black text-[var(--text-main)] uppercase tracking-tight">{theme.name}</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                    <span className="text-[7.5px] font-black text-[var(--text-muted)] opacity-80 uppercase tracking-widest">{count} Stocks</span>
-                                    <div className="flex gap-0.5 mt-1">
-                                        {COLUMNS.map(col => (
-                                            <span key={col.key} className="w-7 text-center text-[5.5px] font-black text-[var(--text-muted)] opacity-40 uppercase">{col.label}</span>
-                                        ))}
-                                    </div>
-                                </div>
+                {showPopover && (
+                    isMobile ? createPortal(
+                        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setIsHovered(false)}>
+                            <div
+                                className="w-full max-w-[95vw] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-2xl !bg-[var(--bg-main)] !opacity-100"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <CompositionCard
+                                    theme={theme}
+                                    companies={companies}
+                                    stockPerfMap={stockPerfMap}
+                                    onClose={() => setIsHovered(false)}
+                                    isMobile={true}
+                                />
                             </div>
-                            <div className={cn(
-                                "grid gap-x-8 gap-y-1",
-                                companies.length > 15 ? "grid-cols-2" : "grid-cols-1"
-                            )}>
-                                {companies.map((stock) => {
-                                    const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
-                                    return (
-                                        <div key={stock.symbol} className="flex items-center justify-between gap-3 group/item py-0.5 border-b border-[var(--ui-divider)]/10 last:border-0">
-                                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                <div className="w-5 h-5 flex-shrink-0 rounded-sm overflow-hidden bg-white/5 p-0.5 flex items-center justify-center border border-[var(--ui-divider)]/10">
-                                                    <img
-                                                        src={`https://images.dhan.co/symbol/${stock.symbol}.png`}
-                                                        alt=""
-                                                        className="w-full h-full object-contain"
-                                                        onError={(e) => {
-                                                            e.target.style.display = 'none';
-                                                            e.target.nextSibling.style.display = 'flex';
-                                                        }}
-                                                    />
-                                                    <div className="hidden w-full h-full items-center justify-center bg-[var(--accent-primary)]/10">
-                                                        <span className="text-[6px] font-bold text-[var(--accent-primary)]">
-                                                            {stock.symbol.charAt(0)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col min-w-0">
-                                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] truncate">
-                                                        {stock.name}
-                                                    </span>
-                                                    <span className="text-[6px] font-bold text-[var(--text-muted)] opacity-30 uppercase font-mono">
-                                                        {stock.symbol}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            {/* Stock Specific Performance Grid */}
-                                            <div className="flex items-center gap-0.5 flex-shrink-0">
-                                                {COLUMNS.map(col => {
-                                                    const perfMap = stockPerfMap.get(col.key);
-                                                    const data = perfMap?.get(cleaned);
-                                                    const val = data?.changePct;
-                                                    const displayVal = val !== null && val !== undefined ? (val > 0 ? `+${val.toFixed(1)}` : val.toFixed(1)) : '-';
-
-                                                    return (
-                                                        <div
-                                                            key={col.key}
-                                                            className={cn(
-                                                                "w-7 h-4 flex items-center justify-center text-[6px] rounded-[2px] border transition-colors",
-                                                                getHeatmapColor(val)
-                                                            )}
-                                                        >
-                                                            {displayVal}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
+                        </div>,
+                        document.body
+                    ) : (
+                        <div
+                            className={cn(
+                                "absolute right-full top-0 mr-4 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
+                                "!bg-[var(--bg-main)] !opacity-100",
+                                companies.length > 15 ? "w-[680px]" : "w-[340px]"
+                            )}
+                        >
+                            <CompositionCard
+                                theme={theme}
+                                companies={companies}
+                                stockPerfMap={stockPerfMap}
+                                isMobile={false}
+                            />
                         </div>
-                    </div>
+                    )
                 )}
             </td>
             {COLUMNS.map(col => {
@@ -160,7 +208,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                 const numVal = val !== null ? parseFloat(val) : null;
 
                 return (
-                    <td key={col.key} className="p-0">
+                    <td key={col.key} className="p-0 pl-1">
                         <div className={cn(
                             "h-5.5 flex items-center justify-center text-[7px] border rounded-[4px] transition-all duration-500",
                             loading ? "animate-pulse bg-[var(--ui-muted)]/5" : getHeatmapColor(numVal)
@@ -223,7 +271,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
 });
 
 const Legend = () => (
-    <div className="flex items-center gap-8 px-6 py-2.5 glass-card border-[var(--ui-divider)]/20 rounded-full mb-10 w-fit bg-[var(--bg-main)]/40 shadow-xl">
+    <div className="flex items-center gap-4 md:gap-8 px-4 md:px-6 py-2.5 glass-card border-[var(--ui-divider)]/20 rounded-full mb-10 w-fit mx-auto md:mx-0 bg-[var(--bg-main)]/40 shadow-xl">
         <span className="text-[7.5px] font-black uppercase tracking-[0.3em] text-[var(--text-muted)]">Performance Analytics</span>
         <div className="flex items-center gap-2">
             {[
@@ -397,19 +445,19 @@ export const MarketMapView = ({ hierarchy }) => {
     const { heatmapData, stockPerfMap, loading } = useThematicHeatmap(THEMATIC_MAP, filteredHierarchy);
 
     return (
-        <ViewWrapper id="market-map" className="space-y-12 pb-32 !overflow-visible">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-8 relative z-[60] !overflow-visible">
-                <div className="space-y-2 relative z-10">
-                    <h2 className="text-3xl font-light tracking-[0.5em] uppercase opacity-90 text-glow-gold">
+        <ViewWrapper id="market-map" className="space-y-8 md:space-y-12 pb-32 !overflow-visible">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60] !overflow-visible">
+                <div className="space-y-1 relative z-10 w-full md:w-auto">
+                    <h2 className="text-xl md:text-3xl font-light tracking-[0.15em] md:tracking-[0.5em] uppercase opacity-90 text-glow-gold leading-tight">
                         Market <span className="text-[var(--accent-primary)]">Architecture</span>
                     </h2>
-                    <p className="text-[10px] font-black leading-relaxed tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
+                    <p className="text-[7px] md:text-[10px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
                         {hideBSE ? 'Institutional Alpha (NSE Focus)' : 'Deep Thematic Mapping (Global)'}
                     </p>
                 </div>
 
-                {/* Visual Flair */}
-                <div className="absolute top-0 right-0 w-80 h-80 bg-[var(--accent-primary)]/10 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2 animate-pulse" />
+                {/* Visual Flair (Hidden on mobile to prevent overflow) */}
+                <div className="hidden md:block absolute top-0 right-0 w-80 h-80 bg-[var(--accent-primary)]/10 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2 animate-pulse" />
 
                 <div className="flex items-center gap-6 relative z-10 w-full md:w-auto">
                     {/* Search Bar */}
@@ -498,9 +546,9 @@ export const MarketMapView = ({ hierarchy }) => {
                 </div>
             </div>
 
-            <div className="max-w-[1800px] mx-auto">
+            <div className="max-w-full lg:max-w-[1800px] mx-auto">
                 <Legend />
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-x-8 gap-y-12 auto-rows-fr">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr">
                     {THEMATIC_MAP.map((block, idx) => (
                         <ThemeBlock
                             key={block.title || idx}

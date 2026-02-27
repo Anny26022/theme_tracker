@@ -12,6 +12,9 @@ import { BackgroundAmbience } from './components/BackgroundAmbience';
 // Context
 import { PriceProvider } from './context/PriceContext';
 
+// Utils
+import { cn } from './lib/utils';
+
 // Views
 import { UniverseView } from './views/UniverseView';
 import { DomainView } from './views/DomainView';
@@ -227,7 +230,10 @@ const App = () => {
                     <BackgroundAmbience />
                     <Navbar view={normalizedView} navigate={navigate} />
 
-                    <main className="pt-24 md:pt-32 pb-20 px-4 md:px-8 max-w-7xl mx-auto relative z-10 !overflow-visible">
+                    <main className={cn(
+                        "pt-24 md:pt-32 pb-20 px-4 md:px-8 mx-auto relative z-10 !overflow-visible",
+                        normalizedView === VIEWS.MARKET_MAP ? "max-w-[1800px]" : "max-w-7xl"
+                    )}>
                         <AnimatePresence mode="wait">
                             {normalizedView !== VIEWS.MARKET_MAP && (
                                 <RouterView

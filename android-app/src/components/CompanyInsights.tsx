@@ -9,6 +9,7 @@ import {
     ActivityIndicator,
     useWindowDimensions,
     Linking,
+    Alert,
 } from 'react-native';
 import { X, Activity, FileText, Newspaper, PieChart, TrendingUp, Landmark, BarChart3, Award, ExternalLink } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
@@ -37,6 +38,19 @@ interface CompanyInsightsProps {
     name: string | null;
     isOpen: boolean;
     onClose: () => void;
+}
+
+function getFilingUrl(item: any): string | null {
+    const raw = item?.file_url || item?.fileUrl || item?.attachment || item?.url || item?.link || item?.document_url || item?.documentUrl;
+    if (typeof raw !== 'string') return null;
+
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (/^https?:\/\//i.test(trimmed)) return encodeURI(trimmed);
+    if (trimmed.startsWith('//')) return encodeURI(`https:${trimmed}`);
+
+    // If API returns host without scheme, assume HTTPS.
+    return encodeURI(`https://${trimmed.replace(/^\/+/, '')}`);
 }
 
 const Metric = ({ label, value, subValue, icon, colors, currentStyles }: any) => (
@@ -94,6 +108,26 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
     const currentStyles = styles(colors, isDark, screenHeight);
 
     const changeColor = (changePct ?? 0) >= 0 ? '#22c55e' : '#ef4444';
+
+    const handleOpenFiling = async (item: any) => {
+        const url = getFilingUrl(item);
+        if (!url) {
+            Alert.alert('Document Unavailable', 'This filing has no attachment link.');
+            return;
+        }
+
+        try {
+            const supported = await Linking.canOpenURL(url);
+            if (!supported) {
+                Alert.alert('Cannot Open Link', 'No app is available to open this filing link.');
+                return;
+            }
+            await Linking.openURL(url);
+        } catch (error) {
+            console.warn('[CompanyInsights] Failed to open filing URL:', url, error);
+            Alert.alert('Open Failed', 'Unable to open this filing right now. Please try again.');
+        }
+    };
 
     return (
         <Modal
@@ -259,13 +293,13 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
                                                             const category = item.cat || item.descriptor || item.categoryLabel || item.type || 'Notification';
                                                             const dateStr = item.news_date || item.date || item.filingDate || item.fillingDate;
                                                             const dateFormatted = dateStr ? new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-                                                            const attachment = item.attachment || item.url || item.link;
+                                                            const attachment = getFilingUrl(item);
 
                                                             return (
                                                                 <Pressable
                                                                     key={`${title}-${dateStr}-${idx}`}
                                                                     style={currentStyles.filingCard}
-                                                                    onPress={() => attachment && Linking.openURL(attachment)}
+                                                                    onPress={() => handleOpenFiling(item)}
                                                                 >
                                                                     <View style={currentStyles.filingIcon}>
                                                                         <FileText size={14} color={colors.textMuted} />

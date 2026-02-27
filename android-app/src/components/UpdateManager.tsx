@@ -1,66 +1,51 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Modal, AppState } from 'react-native';
 import * as Updates from 'expo-updates';
-import { RefreshCw, X } from 'lucide-react-native';
+import { RefreshCw, Zap, Cpu } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
 export const UpdateManager = () => {
     const { colors } = useTheme();
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
-    const [dismissed, setDismissed] = useState(false);
 
-    const slideAnim = useRef(new Animated.Value(-100)).current;
     const opacityAnim = useRef(new Animated.Value(0)).current;
 
-    useEffect(() => {
+    const checkUpdates = async () => {
         if (__DEV__) return;
-
-        const checkUpdates = async () => {
-            try {
-                const update = await Updates.checkForUpdateAsync();
-                if (update.isAvailable) {
-                    setUpdateAvailable(true);
-                    triggerEntrance();
-                }
-            } catch (error) {
-                console.log('[Updates] Check failed:', error);
+        try {
+            const update = await Updates.checkForUpdateAsync();
+            if (update.isAvailable) {
+                setUpdateAvailable(true);
+                Animated.timing(opacityAnim, {
+                    toValue: 1,
+                    duration: 800,
+                    useNativeDriver: true,
+                }).start();
             }
-        };
+        } catch (error) {
+            console.log('[Updates] Check failed:', error);
+        }
+    };
 
+    useEffect(() => {
         checkUpdates();
+
+        // 1. Re-check when app comes to foreground
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState === 'active') {
+                checkUpdates();
+            }
+        });
+
+        // 2. Periodic re-check every 10 minutes
+        const interval = setInterval(checkUpdates, 1000 * 60 * 10);
+
+        return () => {
+            subscription.remove();
+            clearInterval(interval);
+        };
     }, []);
-
-    const triggerEntrance = () => {
-        Animated.parallel([
-            Animated.spring(slideAnim, {
-                toValue: 20,
-                friction: 8,
-                tension: 40,
-                useNativeDriver: true,
-            }),
-            Animated.timing(opacityAnim, {
-                toValue: 1,
-                duration: 500,
-                useNativeDriver: true,
-            })
-        ]).start();
-    };
-
-    const triggerExit = () => {
-        Animated.parallel([
-            Animated.timing(slideAnim, {
-                toValue: -100,
-                duration: 400,
-                useNativeDriver: true,
-            }),
-            Animated.timing(opacityAnim, {
-                toValue: 0,
-                duration: 300,
-                useNativeDriver: true,
-            })
-        ]).start(() => setDismissed(true));
-    };
 
     const onUpdate = async () => {
         setIsProcessing(true);
@@ -69,122 +54,143 @@ export const UpdateManager = () => {
             await Updates.reloadAsync();
         } catch (error) {
             console.log('[Updates] Fetch/Reload failed:', error);
-            triggerExit();
-        } finally {
             setIsProcessing(false);
         }
     };
 
-    if (!updateAvailable || dismissed) return null;
+    if (!updateAvailable) return null;
 
     const currentStyles = styles(colors);
 
     return (
-        <Animated.View style={[
-            currentStyles.pillContainer,
-            {
-                transform: [{ translateY: slideAnim }],
-                opacity: opacityAnim
-            }
-        ]}>
-            <View style={currentStyles.pill}>
-                <View style={currentStyles.statusDot} />
-                <Text style={currentStyles.label}>Update Ready</Text>
+        <Modal transparent visible={updateAvailable} animationType="none">
+            <Animated.View style={[currentStyles.overlay, { opacity: opacityAnim }]}>
+                <View style={currentStyles.container}>
+                    <View style={currentStyles.header}>
+                        <View style={currentStyles.iconCircle}>
+                            <Zap size={24} color={colors.accentPrimary} />
+                        </View>
+                        <Text style={currentStyles.headerText}>System Evolution</Text>
+                    </View>
 
-                <View style={currentStyles.divider} />
+                    <View style={currentStyles.content}>
+                        <View style={currentStyles.row}>
+                            <Cpu size={14} color={colors.accentPrimary} />
+                            <Text style={currentStyles.title}>OTA SYNCHRONIZATION</Text>
+                        </View>
+                        <Text style={currentStyles.description}>
+                            A critical patch with architectural refinements and alpha streaming optimizations is ready for deployment.
+                        </Text>
+                    </View>
 
-                <TouchableOpacity
-                    activeOpacity={0.7}
-                    disabled={isProcessing}
-                    style={currentStyles.actionBtn}
-                    onPress={onUpdate}
-                >
-                    {isProcessing ? (
-                        <ActivityIndicator color={colors.bgMain} size="small" />
-                    ) : (
-                        <>
-                            <RefreshCw size={10} color={colors.bgMain} />
-                            <Text style={currentStyles.actionText}>SYNCC</Text>
-                        </>
-                    )}
-                </TouchableOpacity>
+                    <TouchableOpacity
+                        activeOpacity={0.8}
+                        disabled={isProcessing}
+                        style={currentStyles.btn}
+                        onPress={onUpdate}
+                    >
+                        {isProcessing ? (
+                            <ActivityIndicator color={colors.bgMain} size="small" />
+                        ) : (
+                            <>
+                                <RefreshCw size={14} color={colors.bgMain} />
+                                <Text style={currentStyles.btnText}>INITIALIZE UPDATE</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
 
-                <TouchableOpacity
-                    onPress={triggerExit}
-                    style={currentStyles.closeBtn}
-                >
-                    <X size={12} color={colors.textMuted} />
-                </TouchableOpacity>
-            </View>
-        </Animated.View>
+                    <Text style={currentStyles.footer}>MANDATORY ARCHITECTURE UPGRADE</Text>
+                </View>
+            </Animated.View>
+        </Modal>
     );
 };
 
 const styles = (colors: any) => StyleSheet.create({
-    pillContainer: {
-        position: 'absolute',
-        top: 40,
-        left: 0,
-        right: 0,
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(5, 5, 8, 0.98)', // Near-black for total focus
+        justifyContent: 'center',
         alignItems: 'center',
-        zIndex: 9999,
-        elevation: 100,
+        padding: 30,
     },
-    pill: {
-        flexDirection: 'row',
+    container: {
+        width: '100%',
+        backgroundColor: 'transparent',
         alignItems: 'center',
-        backgroundColor: colors.bgMain,
-        paddingLeft: 12,
-        paddingRight: 8,
-        paddingVertical: 6,
+        gap: 40,
+    },
+    header: {
+        alignItems: 'center',
+        gap: 16,
+    },
+    iconCircle: {
+        width: 60,
+        height: 60,
         borderRadius: 30,
+        backgroundColor: colors.accentPrimary + '10',
         borderWidth: 1,
-        borderColor: colors.uiDivider,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
+        borderColor: colors.accentPrimary + '30',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    statusDot: {
-        width: 4,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: colors.accentPrimary,
-        marginRight: 8,
-    },
-    label: {
-        fontSize: 9,
-        fontWeight: 'bold',
+    headerText: {
+        fontSize: 22,
+        fontWeight: '300',
         color: colors.textMain,
-        letterSpacing: 1.5,
+        letterSpacing: 8,
         textTransform: 'uppercase',
     },
-    divider: {
-        width: 1,
-        height: 12,
-        backgroundColor: colors.uiDivider,
-        marginHorizontal: 10,
+    content: {
+        alignItems: 'center',
+        gap: 12,
+        maxWidth: 280,
     },
-    actionBtn: {
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    title: {
+        fontSize: 10,
+        fontWeight: 'bold',
+        color: colors.accentPrimary,
+        letterSpacing: 4,
+    },
+    description: {
+        fontSize: 12,
+        color: colors.textMuted,
+        textAlign: 'center',
+        lineHeight: 22,
+        fontWeight: '400',
+    },
+    btn: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: colors.accentPrimary,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderRadius: 20,
-        gap: 6,
+        paddingHorizontal: 32,
+        paddingVertical: 18,
+        borderRadius: 4,
+        gap: 12,
+        width: '100%',
+        justifyContent: 'center',
+        elevation: 10,
+        shadowColor: colors.accentPrimary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
     },
-    actionText: {
+    btnText: {
         color: colors.bgMain,
-        fontSize: 8,
+        fontSize: 12,
         fontWeight: '900',
-        letterSpacing: 1,
+        letterSpacing: 2,
     },
-    closeBtn: {
-        marginLeft: 8,
-        padding: 4,
-    },
-    actionTextDisabled: {
-        opacity: 0.5,
+    footer: {
+        fontSize: 8,
+        color: colors.textMuted,
+        fontWeight: 'bold',
+        letterSpacing: 3,
+        opacity: 0.4,
     }
 });

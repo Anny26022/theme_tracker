@@ -8,8 +8,9 @@ import {
     ScrollView,
     ActivityIndicator,
     useWindowDimensions,
+    Linking,
 } from 'react-native';
-import { X, Activity, FileText, Newspaper, PieChart, TrendingUp, Landmark, BarChart3, Award } from 'lucide-react-native';
+import { X, Activity, FileText, Newspaper, PieChart, TrendingUp, Landmark, BarChart3, Award, ExternalLink } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLivePrice } from '../contexts/PriceContext';
 import { useFundamentals } from '../hooks/useFundamentals';
@@ -258,20 +259,29 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
                                                             const category = item.cat || item.descriptor || item.categoryLabel || item.type || 'Notification';
                                                             const dateStr = item.news_date || item.date || item.filingDate || item.fillingDate;
                                                             const dateFormatted = dateStr ? new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+                                                            const attachment = item.attachment || item.url || item.link;
+
                                                             return (
-                                                                <View key={`${title}-${dateStr}-${idx}`} style={currentStyles.filingCard}>
+                                                                <Pressable
+                                                                    key={`${title}-${dateStr}-${idx}`}
+                                                                    style={currentStyles.filingCard}
+                                                                    onPress={() => attachment && Linking.openURL(attachment)}
+                                                                >
                                                                     <View style={currentStyles.filingIcon}>
                                                                         <FileText size={14} color={colors.textMuted} />
                                                                     </View>
                                                                     <View style={currentStyles.filingInfo}>
-                                                                        <Text style={currentStyles.filingTitle} numberOfLines={2}>{title}</Text>
+                                                                        <View style={currentStyles.filingTitleRow}>
+                                                                            <Text style={currentStyles.filingTitle} numberOfLines={2}>{title}</Text>
+                                                                            {attachment && <ExternalLink size={10} color={colors.accentPrimary} style={{ marginTop: 2 }} />}
+                                                                        </View>
                                                                         <View style={currentStyles.filingMeta}>
                                                                             <Text style={currentStyles.filingCategory}>{category}</Text>
                                                                             <Text style={currentStyles.filingDot}>•</Text>
                                                                             <Text style={currentStyles.filingDate}>{dateFormatted}</Text>
                                                                         </View>
                                                                     </View>
-                                                                </View>
+                                                                </Pressable>
                                                             );
                                                         })}
                                                     </View>
@@ -621,12 +631,19 @@ const styles = (colors: any, isDark: boolean, screenHeight: number) => StyleShee
         flex: 1,
         gap: 4,
     },
+    filingTitleRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        gap: 8,
+    },
     filingTitle: {
         fontSize: 10,
         fontWeight: 'bold',
         color: colors.textMain,
         letterSpacing: 1,
         textTransform: 'uppercase',
+        flex: 1,
     },
     filingMeta: {
         flexDirection: 'row',

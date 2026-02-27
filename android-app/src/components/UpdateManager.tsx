@@ -5,9 +5,10 @@ import { RefreshCw, Zap, Cpu } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
 const CHANGELOG_ITEMS = [
-    'Mandatory update gate to prevent stale client behavior',
-    'Foreground and periodic OTA re-check for missed prompts',
-    'Stability improvements for update fetch and apply flow',
+    'Price polling lifecycle optimized with background pause and zero-subscriber stop',
+    'Live price subscription moved to useSyncExternalStore for lower render churn',
+    'Market map and filings timelines virtualized for smoother interaction',
+    'Logo-heavy composition views now use disk-cached expo-image rendering',
 ];
 
 export const UpdateManager = () => {
@@ -85,7 +86,7 @@ export const UpdateManager = () => {
                             <Text style={currentStyles.title}>OTA SYNCHRONIZATION</Text>
                         </View>
                         <Text style={currentStyles.description}>
-                            A critical patch with architectural refinements and alpha streaming optimizations is ready for deployment.
+                            A mandatory performance release is ready with optimized live pricing, virtualized lists, and faster thematic rendering.
                         </Text>
                         <View style={currentStyles.changelogBox}>
                             <Text style={currentStyles.changelogTitle}>WHAT&apos;S NEW</Text>

@@ -70,8 +70,8 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                 {isHovered && companies.length > 0 && (
                     <div
                         className={cn(
-                            "absolute right-full top-0 mr-4 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] backdrop-blur-3xl pointer-events-none",
-                            "bg-[var(--bg-main)] !bg-opacity-100", // Follow theme but stay solid
+                            "absolute right-full top-0 mr-4 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
+                            "!bg-[var(--bg-main)] !opacity-100", // Enforce rock-solid background
                             companies.length > 15 ? "w-[680px]" : "w-[340px]"
                         )}
                     >
@@ -442,7 +442,7 @@ export const MarketMapView = ({ hierarchy }) => {
                                     width: dropdownPos.width,
                                     zIndex: 10000
                                 }}
-                                className="glass-card bg-[var(--bg-main)] !bg-opacity-100 border border-[var(--ui-divider)]/40 shadow-[0_20px_40px_rgba(0,0,0,0.4)] rounded-xl overflow-hidden max-h-[320px] overflow-y-auto no-scrollbar"
+                                className="glass-card !bg-[var(--bg-main)] !opacity-100 border border-[var(--ui-divider)]/40 shadow-[0_20px_40px_rgba(0,0,0,0.4)] rounded-xl overflow-hidden max-h-[320px] overflow-y-auto no-scrollbar"
                             >
                                 <div className="p-1 space-y-0.5">
                                     {searchResults.map((result, idx) => (

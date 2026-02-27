@@ -1,18 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, Dimensions, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated } from 'react-native';
 import * as Updates from 'expo-updates';
+import { RefreshCw, X } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { TYPOGRAPHY } from '../theme/constants';
-
-const { width } = Dimensions.get('window');
 
 export const UpdateManager = () => {
     const { colors } = useTheme();
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [dismissed, setDismissed] = useState(false);
+
+    const slideAnim = useRef(new Animated.Value(-100)).current;
+    const opacityAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
-        // Only run check in production environment
         if (__DEV__) return;
 
         const checkUpdates = async () => {
@@ -20,15 +21,46 @@ export const UpdateManager = () => {
                 const update = await Updates.checkForUpdateAsync();
                 if (update.isAvailable) {
                     setUpdateAvailable(true);
+                    triggerEntrance();
                 }
             } catch (error) {
-                // Silently fail to not interrupt user experience
                 console.log('[Updates] Check failed:', error);
             }
         };
 
         checkUpdates();
     }, []);
+
+    const triggerEntrance = () => {
+        Animated.parallel([
+            Animated.spring(slideAnim, {
+                toValue: 20,
+                friction: 8,
+                tension: 40,
+                useNativeDriver: true,
+            }),
+            Animated.timing(opacityAnim, {
+                toValue: 1,
+                duration: 500,
+                useNativeDriver: true,
+            })
+        ]).start();
+    };
+
+    const triggerExit = () => {
+        Animated.parallel([
+            Animated.timing(slideAnim, {
+                toValue: -100,
+                duration: 400,
+                useNativeDriver: true,
+            }),
+            Animated.timing(opacityAnim, {
+                toValue: 0,
+                duration: 300,
+                useNativeDriver: true,
+            })
+        ]).start(() => setDismissed(true));
+    };
 
     const onUpdate = async () => {
         setIsProcessing(true);
@@ -37,132 +69,122 @@ export const UpdateManager = () => {
             await Updates.reloadAsync();
         } catch (error) {
             console.log('[Updates] Fetch/Reload failed:', error);
-            setUpdateAvailable(false);
+            triggerExit();
         } finally {
             setIsProcessing(false);
         }
     };
 
-    if (!updateAvailable) return null;
+    if (!updateAvailable || dismissed) return null;
+
+    const currentStyles = styles(colors);
 
     return (
-        <Modal transparent animationType="fade" visible={updateAvailable}>
-            <View style={styles.overlay}>
-                <View style={[
-                    styles.card,
-                    {
-                        backgroundColor: '#0A0A0F', // Absolute dark for luxury feel
-                        borderColor: colors.glassBorder,
-                        borderWidth: 1.5,
-                        shadowColor: colors.accentPrimary,
-                        shadowOffset: { width: 0, height: 10 },
-                        shadowOpacity: 0.2,
-                        shadowRadius: 20,
-                        elevation: 10,
-                    }
-                ]}>
-                    <View style={styles.header}>
-                        <View style={[styles.dot, { backgroundColor: colors.accentPrimary }]} />
-                        <Text style={[
-                            styles.title,
-                            { color: colors.textMain },
-                            TYPOGRAPHY.textLuxury as any // Bypass strict TS check for custom luxury font object
-                        ]}>
-                            Update Ready
-                        </Text>
-                    </View>
+        <Animated.View style={[
+            currentStyles.pillContainer,
+            {
+                transform: [{ translateY: slideAnim }],
+                opacity: opacityAnim
+            }
+        ]}>
+            <View style={currentStyles.pill}>
+                <View style={currentStyles.statusDot} />
+                <Text style={currentStyles.label}>Update Ready</Text>
 
-                    <Text style={[styles.description, { color: colors.textMuted }]}>
-                        A refined version with critical performance optimizations and batching enhancements is available.
-                    </Text>
+                <View style={currentStyles.divider} />
 
-                    <TouchableOpacity
-                        activeOpacity={0.9}
-                        disabled={isProcessing}
-                        style={[
-                            styles.button,
-                            { backgroundColor: colors.accentPrimary }
-                        ]}
-                        onPress={onUpdate}
-                    >
-                        {isProcessing ? (
-                            <ActivityIndicator color="#000" size="small" />
-                        ) : (
-                            <Text style={styles.buttonText}>Refine Experience</Text>
-                        )}
-                    </TouchableOpacity>
-
-                    {!isProcessing && (
-                        <TouchableOpacity
-                            onPress={() => setUpdateAvailable(false)}
-                            style={styles.laterButton}
-                        >
-                            <Text style={[styles.laterText, { color: colors.textMuted }]}>Later</Text>
-                        </TouchableOpacity>
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    disabled={isProcessing}
+                    style={currentStyles.actionBtn}
+                    onPress={onUpdate}
+                >
+                    {isProcessing ? (
+                        <ActivityIndicator color={colors.bgMain} size="small" />
+                    ) : (
+                        <>
+                            <RefreshCw size={10} color={colors.bgMain} />
+                            <Text style={currentStyles.actionText}>SYNCC</Text>
+                        </>
                     )}
-                </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    onPress={triggerExit}
+                    style={currentStyles.closeBtn}
+                >
+                    <X size={12} color={colors.textMuted} />
+                </TouchableOpacity>
             </View>
-        </Modal>
+        </Animated.View>
     );
 };
 
-const styles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.85)',
-        justifyContent: 'center',
+const styles = (colors: any) => StyleSheet.create({
+    pillContainer: {
+        position: 'absolute',
+        top: 40,
+        left: 0,
+        right: 0,
         alignItems: 'center',
+        zIndex: 9999,
+        elevation: 100,
     },
-    card: {
-        width: width * 0.85,
-        padding: 32,
-        borderRadius: 32,
-        alignItems: 'center',
-    },
-    header: {
+    pill: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 16,
-        gap: 8,
+        backgroundColor: colors.bgMain,
+        paddingLeft: 12,
+        paddingRight: 8,
+        paddingVertical: 6,
+        borderRadius: 30,
+        borderWidth: 1,
+        borderColor: colors.uiDivider,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
     },
-    dot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
+    statusDot: {
+        width: 4,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: colors.accentPrimary,
+        marginRight: 8,
     },
-    title: {
-        fontSize: 16,
-    },
-    description: {
-        fontSize: 13,
-        textAlign: 'center',
-        marginBottom: 32,
-        lineHeight: 22,
-        fontWeight: '400',
-        paddingHorizontal: 10,
-    },
-    button: {
-        paddingVertical: 18,
-        borderRadius: 16,
-        width: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    buttonText: {
-        color: '#000',
-        fontWeight: '700',
-        fontSize: 11,
-        letterSpacing: 2,
-        textTransform: 'uppercase',
-    },
-    laterButton: {
-        marginTop: 20,
-        padding: 10,
-    },
-    laterText: {
-        fontSize: 10,
+    label: {
+        fontSize: 9,
+        fontWeight: 'bold',
+        color: colors.textMain,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
-        fontWeight: '500',
+    },
+    divider: {
+        width: 1,
+        height: 12,
+        backgroundColor: colors.uiDivider,
+        marginHorizontal: 10,
+    },
+    actionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.accentPrimary,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 20,
+        gap: 6,
+    },
+    actionText: {
+        color: colors.bgMain,
+        fontSize: 8,
+        fontWeight: '900',
+        letterSpacing: 1,
+    },
+    closeBtn: {
+        marginLeft: 8,
+        padding: 4,
+    },
+    actionTextDisabled: {
+        opacity: 0.5,
     }
 });

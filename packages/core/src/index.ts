@@ -5,4 +5,5 @@ export * from "./market/hierarchy";
 export * from "./math/indicators";
 export * from "./symbol/cleanSymbol";
 export * from "./tracker/aggregation";
+export * from "./market/thematicMap";
 export * from "./watchlist/formatTVWatchlist";

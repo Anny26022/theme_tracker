@@ -12,6 +12,7 @@ import { Navbar } from "../components/Navbar";
 import { useMarketData } from "../hooks/useMarketData";
 import { BackgroundAmbience } from "../components/BackgroundAmbience";
 import { CompanyInsights } from "../components/CompanyInsights";
+import { MarketMapView } from "../views/MarketMapView";
 import { useTheme } from "../contexts/ThemeContext";
 
 export const VIEWS = {
@@ -20,7 +21,8 @@ export const VIEWS = {
   SECTOR: 'SECTOR',
   INDUSTRY: 'INDUSTRY',
   TRACKER: 'TRACKER',
-  COMPARE: 'COMPARE'
+  COMPARE: 'COMPARE',
+  MARKET_MAP: 'MARKET_MAP'
 };
 
 export default function Index() {
@@ -133,6 +135,12 @@ export default function Index() {
         )}
         {view === VIEWS.COMPARE && (
           <ComparisonView
+            onOpenInsights={handleOpenInsights}
+          />
+        )}
+        {view === VIEWS.MARKET_MAP && (
+          <MarketMapView
+            hierarchy={hierarchy}
             onOpenInsights={handleOpenInsights}
           />
         )}

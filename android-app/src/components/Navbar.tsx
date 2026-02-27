@@ -15,6 +15,7 @@ export const Navbar = ({ view, navigate }: NavbarProps) => {
 
     const navLinks = [
         { label: 'Universe', view: 'UNIVERSE' },
+        { label: 'Market Map', view: 'MARKET_MAP' },
         { label: 'Domain Vector', view: 'DOMAIN', matches: ['DOMAIN', 'SECTOR', 'INDUSTRY'] },
         { label: 'Tracker', view: 'TRACKER' },
         { label: 'Comparison', view: 'COMPARE' },

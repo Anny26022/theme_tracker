@@ -104,6 +104,63 @@ export const useWatchlistSync = () => {
         setTimeout(() => setSyncStatus(null), 5000);
     };
 
+    const deleteList = useCallback(async (listId) => {
+        try {
+            const res = await fetch(`/api/tv/symbols_list/custom/${listId}/`, {
+                method: 'DELETE',
+                headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
+            });
+            if (res.ok) {
+                setCustomLists(prev => prev.filter(l => String(l.id) !== String(listId)));
+                return true;
+            }
+        } catch (e) { }
+        return false;
+    }, [tvSessionId, tvSessionSign]);
+
+    const purgeDuplicates = useCallback(async () => {
+        if (!tvSessionId || customLists.length === 0) return;
+        setIsSyncing(true);
+        setSyncStatus({ type: 'info', message: 'PURGING DUPLICATE LISTS...' });
+
+        try {
+            const nameGroups = {};
+            customLists.forEach(l => {
+                if (!nameGroups[l.name]) nameGroups[l.name] = [];
+                nameGroups[l.name].push(l);
+            });
+
+            let deletedCount = 0;
+            for (const name in nameGroups) {
+                const group = nameGroups[name];
+                if (group.length > 1) {
+                    // Keep the one with the highest ID (usually newest)
+                    const sorted = [...group].sort((a, b) => String(b.id).localeCompare(String(a.id)));
+                    const [keep, ...others] = sorted;
+
+                    for (const other of others) {
+                        await fetch(`/api/tv/symbols_list/custom/${other.id}/`, {
+                            method: 'DELETE',
+                            headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
+                        });
+                        deletedCount++;
+                    }
+                }
+            }
+
+            if (deletedCount > 0) {
+                showStatus('success', `PURGED ${deletedCount} DUPLICATE LISTS!`);
+                fetchCustomLists();
+            } else {
+                showStatus('success', 'NO DUPLICATES FOUND');
+            }
+        } catch (e) {
+            showStatus('error', 'PURGE FAILED');
+        } finally {
+            setIsSyncing(false);
+        }
+    }, [tvSessionId, tvSessionSign, customLists, fetchCustomLists]);
+
     return {
         isSyncing,
         setIsSyncing,
@@ -118,6 +175,8 @@ export const useWatchlistSync = () => {
         showStatus,
         customLists,
         fetchCustomLists,
-        disconnectTV
+        disconnectTV,
+        deleteList,
+        purgeDuplicates
     };
 };

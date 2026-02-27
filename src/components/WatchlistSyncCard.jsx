@@ -23,7 +23,8 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
         fetchCustomLists,
         disconnectTV,
         setTvSessionId,
-        setTvSessionSign
+        setTvSessionSign,
+        purgeDuplicates
     } = useWatchlistSync();
 
     const [tempId, setTempId] = useState('');
@@ -60,16 +61,23 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
                     try {
                         const targetName = ind.name.replace(' COMPANIES', '');
                         const symbols = (hierarchy[ind.sector][ind.name] || []).map(c => `NSE:${c.symbol}`);
-                        const existing = existingLists.find(l => l.name === targetName);
+                        const matching = existingLists.filter(l => l.name === targetName);
 
-                        if (existing) {
+                        if (matching.length > 0) {
+                            // Check if the first one is identical to save network
+                            const existing = matching[0];
                             const isIdentical = existing.symbols.length === symbols.length &&
                                 existing.symbols.every((s, i) => s === symbols[i]);
-                            if (isIdentical) { successCount++; return; }
-                            await fetch(`/api/tv/symbols_list/custom/${existing.id}/`, {
-                                method: 'DELETE',
-                                headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
-                            });
+
+                            // If we have more than one, or it's not identical, we must clean
+                            if (isIdentical && matching.length === 1) { successCount++; return; }
+
+                            await Promise.all(matching.map(l =>
+                                fetch(`/api/tv/symbols_list/custom/${l.id}/`, {
+                                    method: 'DELETE',
+                                    headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
+                                })
+                            ));
                         }
 
                         const response = await fetch('/api/tv/symbols_list/custom/', {
@@ -153,12 +161,14 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
                 const symbols = chunks[i];
                 totalSynced += symbols.length;
 
-                const existing = existingLists.find(l => l.name === listName);
-                if (existing) {
-                    await fetch(`/api/tv/symbols_list/custom/${existing.id}/`, {
-                        method: 'DELETE',
-                        headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
-                    });
+                const matching = existingLists.filter(l => l.name === listName);
+                if (matching.length > 0) {
+                    await Promise.all(matching.map(l =>
+                        fetch(`/api/tv/symbols_list/custom/${l.id}/`, {
+                            method: 'DELETE',
+                            headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
+                        })
+                    ));
                 }
                 await fetch('/api/tv/symbols_list/custom/', {
                     method: 'POST',
@@ -401,6 +411,15 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
                                         >
                                             <div className="w-1 h-1 bg-[#ff9800]/40 rounded-full group-hover:bg-[#ff9800] transition-colors" />
                                             Disconnect Session
+                                        </button>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); purgeDuplicates(); }}
+                                            disabled={isSyncing}
+                                            className="flex items-center gap-1.5 group text-[6px] font-black uppercase tracking-widest text-[#2196f3]/60 hover:text-[#2196f3] transition-colors"
+                                            title="Remove multiple watchlists with the same name, keeping only the newest"
+                                        >
+                                            <div className="w-1 h-1 bg-[#2196f3]/40 rounded-full group-hover:bg-[#2196f3] transition-colors" />
+                                            Purge Duplicate Lists
                                         </button>
                                         <button
                                             onClick={(e) => { e.stopPropagation(); handleCleanAllWatchlists(); }}

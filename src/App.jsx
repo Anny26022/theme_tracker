@@ -20,6 +20,7 @@ import { IndustryView } from './views/IndustryView';
 import { TrackerView } from './views/TrackerView';
 import { ComparisonView } from './views/ComparisonView';
 import { MapperView } from './views/MapperView';
+import { MarketMapView } from './views/MarketMapView';
 
 const CompanyInsights = React.lazy(() => import('./components/CompanyInsights').then((mod) => ({ default: mod.CompanyInsights })));
 const VALID_VIEWS = new Set(Object.values(VIEWS));
@@ -148,6 +149,8 @@ const RouterView = React.memo(({
             );
         case VIEWS.MAPPER:
             return <MapperView hierarchy={hierarchy} rawData={rawData} loading={loading} />;
+        case VIEWS.MARKET_MAP:
+            return <MarketMapView hierarchy={hierarchy} />;
         default:
             return null;
     }
@@ -159,6 +162,7 @@ const App = () => {
     const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
     const { hierarchy, rawData, loading, error } = useMarketData();
     const [insightsCompany, setInsightsCompany] = React.useState(null);
+    const [hasVisitedMarketMap, setHasVisitedMarketMap] = React.useState(view === VIEWS.MARKET_MAP);
 
     // Source of truth from hierarchy to avoid drift between lists and lookup map.
     const sectors = useMemo(() => Object.keys(hierarchy).sort(), [hierarchy]);
@@ -192,6 +196,12 @@ const App = () => {
         }
     }, [view, normalizedView, navigate]);
 
+    React.useEffect(() => {
+        if (normalizedView === VIEWS.MARKET_MAP && !hasVisitedMarketMap) {
+            setHasVisitedMarketMap(true);
+        }
+    }, [normalizedView, hasVisitedMarketMap]);
+
     // Self-heal stale URLs when industry moved sectors.
     React.useEffect(() => {
         if (!loading && normalizedView === VIEWS.INDUSTRY && industry && (!sector || !hierarchy[sector]?.[industry])) {
@@ -213,36 +223,44 @@ const App = () => {
     return (
         <LazyMotion features={domAnimation}>
             <PriceProvider>
-                <div className="min-h-screen selection:bg-[#c5a059]/30 overflow-x-hidden bg-[var(--bg-main)] text-[var(--text-main)] transition-colors duration-400">
+                <div className="min-h-screen selection:bg-[#c5a059]/30 !overflow-visible bg-[var(--bg-main)] text-[var(--text-main)] transition-colors duration-400">
                     <BackgroundAmbience />
                     <Navbar view={normalizedView} navigate={navigate} />
 
-                    <main className="pt-24 md:pt-32 pb-20 px-4 md:px-8 max-w-7xl mx-auto relative z-10">
+                    <main className="pt-24 md:pt-32 pb-20 px-4 md:px-8 max-w-7xl mx-auto relative z-10 !overflow-visible">
                         <AnimatePresence mode="wait">
-                            <RouterView
-                                key={normalizedView}
-                                view={normalizedView}
-                                sectors={sectors}
-                                hierarchy={hierarchy}
-                                sector={sector}
-                                industry={industry}
-                                timeframe={timeframe}
-                                setTimeframe={setTimeframe}
-                                currentIndustries={currentIndustries}
-                                currentCompanies={currentCompanies}
-                                onSectorClick={handleSectorClick}
-                                onIndustryClick={handleIndustryClick}
-                                onDomainIndustryClick={handleDomainIndustryClick}
-                                onTrackerSectorClick={handleTrackerSectorClick}
-                                onTrackerIndustryClick={handleTrackerIndustryClick}
-                                onSectorBack={handleSectorBack}
-                                onIndustryBack={handleIndustryBack}
-                                onSectorIndustryClick={handleSectorIndustryClick}
-                                onOpenInsights={handleOpenInsights}
-                                rawData={rawData}
-                                loading={loading}
-                            />
+                            {normalizedView !== VIEWS.MARKET_MAP && (
+                                <RouterView
+                                    key={normalizedView}
+                                    view={normalizedView}
+                                    sectors={sectors}
+                                    hierarchy={hierarchy}
+                                    sector={sector}
+                                    industry={industry}
+                                    timeframe={timeframe}
+                                    setTimeframe={setTimeframe}
+                                    currentIndustries={currentIndustries}
+                                    currentCompanies={currentCompanies}
+                                    onSectorClick={handleSectorClick}
+                                    onIndustryClick={handleIndustryClick}
+                                    onDomainIndustryClick={handleDomainIndustryClick}
+                                    onTrackerSectorClick={handleTrackerSectorClick}
+                                    onTrackerIndustryClick={handleTrackerIndustryClick}
+                                    onSectorBack={handleSectorBack}
+                                    onIndustryBack={handleIndustryBack}
+                                    onSectorIndustryClick={handleSectorIndustryClick}
+                                    onOpenInsights={handleOpenInsights}
+                                    rawData={rawData}
+                                    loading={loading}
+                                />
+                            )}
                         </AnimatePresence>
+
+                        {(normalizedView === VIEWS.MARKET_MAP || hasVisitedMarketMap) && (
+                            <div className={normalizedView === VIEWS.MARKET_MAP ? 'relative z-[60]' : 'hidden'}>
+                                <MarketMapView hierarchy={hierarchy} />
+                            </div>
+                        )}
                     </main>
 
                     <React.Suspense fallback={insightsFallback}>

@@ -7,7 +7,8 @@ export const VIEWS = {
     INDUSTRY: 'industry',
     TRACKER: 'tracker',
     COMPARE: 'compare',
-    MAPPER: 'mapper'
+    MAPPER: 'mapper',
+    MARKET_MAP: 'market-map'
 };
 
 export const useUrlState = () => {

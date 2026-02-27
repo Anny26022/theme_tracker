@@ -11,6 +11,7 @@ export const Navbar = React.memo(({ view, navigate }) => {
     const navLinks = [
         { label: 'Universe', view: VIEWS.UNIVERSE },
         { label: 'Domain Vector', view: VIEWS.DOMAIN, match: [VIEWS.DOMAIN, VIEWS.SECTOR, VIEWS.INDUSTRY] },
+        { label: 'Themes', view: VIEWS.MARKET_MAP },
         { label: 'Tracker', view: VIEWS.TRACKER },
         { label: 'Comparison', view: VIEWS.COMPARE },
     ];

@@ -1,8 +1,14 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Modal, AppState } from 'react-native';
 import * as Updates from 'expo-updates';
 import { RefreshCw, Zap, Cpu } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
+
+const CHANGELOG_ITEMS = [
+    'Mandatory update gate to prevent stale client behavior',
+    'Foreground and periodic OTA re-check for missed prompts',
+    'Stability improvements for update fetch and apply flow',
+];
 
 export const UpdateManager = () => {
     const { colors } = useTheme();
@@ -11,7 +17,7 @@ export const UpdateManager = () => {
 
     const opacityAnim = useRef(new Animated.Value(0)).current;
 
-    const checkUpdates = async () => {
+    const checkUpdates = useCallback(async () => {
         if (__DEV__) return;
         try {
             const update = await Updates.checkForUpdateAsync();
@@ -26,7 +32,7 @@ export const UpdateManager = () => {
         } catch (error) {
             console.log('[Updates] Check failed:', error);
         }
-    };
+    }, [opacityAnim]);
 
     useEffect(() => {
         checkUpdates();
@@ -45,7 +51,7 @@ export const UpdateManager = () => {
             subscription.remove();
             clearInterval(interval);
         };
-    }, []);
+    }, [checkUpdates]);
 
     const onUpdate = async () => {
         setIsProcessing(true);
@@ -81,6 +87,12 @@ export const UpdateManager = () => {
                         <Text style={currentStyles.description}>
                             A critical patch with architectural refinements and alpha streaming optimizations is ready for deployment.
                         </Text>
+                        <View style={currentStyles.changelogBox}>
+                            <Text style={currentStyles.changelogTitle}>WHAT&apos;S NEW</Text>
+                            {CHANGELOG_ITEMS.map((item) => (
+                                <Text key={item} style={currentStyles.changelogItem}>• {item}</Text>
+                            ))}
+                        </View>
                     </View>
 
                     <TouchableOpacity
@@ -163,6 +175,28 @@ const styles = (colors: any) => StyleSheet.create({
         textAlign: 'center',
         lineHeight: 22,
         fontWeight: '400',
+    },
+    changelogBox: {
+        width: '100%',
+        borderWidth: 1,
+        borderColor: colors.uiDivider,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        gap: 5,
+        backgroundColor: colors.bgMain + '66',
+    },
+    changelogTitle: {
+        fontSize: 9,
+        color: colors.accentPrimary,
+        letterSpacing: 2,
+        fontWeight: '800',
+    },
+    changelogItem: {
+        fontSize: 10,
+        color: colors.textMain,
+        lineHeight: 14,
+        opacity: 0.85,
     },
     btn: {
         flexDirection: 'row',

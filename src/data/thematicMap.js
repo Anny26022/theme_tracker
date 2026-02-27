@@ -17,7 +17,8 @@ export const THEMATIC_MAP = [
             { name: "Small Finance Bank", industries: ["Other Bank Companies"], symbols: ["AUFIL", "EQUITASBNK", "UJJIVANSFB"] },
             { name: "Capital Market Intern.", industries: ["Other Capital Market related Services Companies", "Stockbroking & Allied Companies"] },
             { name: "Depositories & Clearing", industries: ["Depositories, Clearing Houses and Other Intermediaries Companies"] },
-            { name: "Fintech", industries: ["Financial Technology (Fintech) Companies"] }
+            { name: "Fintech", industries: ["Financial Technology (Fintech) Companies"] },
+            { name: "Financial Institutions", industries: ["Financial Institution Companies"] }
         ]
     },
     {
@@ -81,7 +82,8 @@ export const THEMATIC_MAP = [
             { name: "Industrial Rubber", industries: ["Rubber Companies"] },
             { name: "Industrial Products", industries: ["Industrial Products Companies", "Other Industrial Products Companies"] },
             { name: "Specialized Engineering", industries: ["Electrodes & Refractories Companies", "Abrasives & Bearings Companies"] },
-            { name: "Welding & Cryogenics", industries: ["Industrial Gases Companies"], symbols: ["ESABINDIA", "ADORWELD"] }
+            { name: "Welding & Cryogenics", industries: ["Industrial Gases Companies"], symbols: ["ESABINDIA", "ADORWELD"] },
+            { name: "Construction & Earthmoving", industries: ["Construction Vehicles Companies"] }
         ]
     },
     {
@@ -117,7 +119,8 @@ export const THEMATIC_MAP = [
             { name: "Gas Utilities", industries: ["Gas Transmission/Marketing Companies", "LPG/CNG/PNG/LNG Supplier Companies", "Trading - Gas Companies"] },
             { name: "Refineries & Mktg", industries: ["Refineries & Marketing Companies"] },
             { name: "Solar & Renewables", industries: ["Other Utilities Companies"], symbols: ["BORORENEW", "KPIGREEN", "SWSOLAR"] },
-            { name: "Oil Equip & Offshore", industries: ["Oil Equipment & Services Companies", "Offshore Support Solution Drilling Companies", "Oil Storage & Transportation Companies"] }
+            { name: "Oil Equip & Offshore", industries: ["Oil Equipment & Services Companies", "Offshore Support Solution Drilling Companies", "Oil Storage & Transportation Companies"] },
+            { name: "Lubricants & Specialty Oils", industries: ["Lubricants Companies"] }
         ]
     },
     {
@@ -175,9 +178,20 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "Tea & Coffee", industries: ["Tea & Coffee Companies"] },
             { name: "Sugar & Ethanol", industries: ["Sugar Companies"] },
+            { name: "Dairy & Milk Products", industries: ["Dairy Products Companies"] },
             { name: "Edible Oil", industries: ["Edible Oil Companies"] },
-            { name: "Packaged Foods", industries: ["Packaged Foods Companies"] },
+            { name: "Packaged & Processed Foods", industries: ["Packaged Foods Companies", "Other Food Products Companies"] },
             { name: "Alcoholic Beverages", industries: ["Breweries & Distilleries Companies", "Other Beverages Companies"] }
+        ]
+    },
+    {
+        title: "TRAVEL & HOSPITALITY",
+        themes: [
+            { name: "Premium Hotels & Resorts", industries: ["Hotels & Resorts Companies"] },
+            { name: "Tour & Travel Services", industries: ["Tour, Travel Related Services Companies"] },
+            { name: "Aviation & Airlines", industries: ["Airline Companies"] },
+            { name: "Quick Service Rest. (QSR)", industries: ["Restaurants Companies"] },
+            { name: "Leisure & Amusement", industries: ["Amusement Parks/ Other Recreation Companies", "Leisure Products Companies"] }
         ]
     },
     {
@@ -280,6 +294,14 @@ export const THEMATIC_MAP = [
             { name: "Energy Storage", industries: ["Batteries - Automotive & Industrial Companies"], symbols: ["EXIDEIND"] },
             { name: "Connectivity / Network", industries: ["Telecom - Infrastructure Companies"], symbols: ["INDUSTOWER", "RAILTEL"] },
             { name: "Information Technology Services", industries: ["Computers - Software & Consulting Companies"], symbols: ["TCS", "INFY"] }
+        ]
+    },
+    {
+        title: "DIVERSIFIED & TRADING",
+        themes: [
+            { name: "Diversified Conglomerates", industries: ["Diversified Companies"] },
+            { name: "Commodity Trading", industries: ["Trading - Minerals Companies", "Trading - Metals Companies", "Trading - Chemicals Companies"] },
+            { name: "General Trading & Dist.", industries: ["Trading & Distributors Companies", "Distributors Companies"] }
         ]
     }
 ];

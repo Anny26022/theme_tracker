@@ -10,6 +10,7 @@
     --text-main: #ffffff;
     --text-muted: rgba(255, 255, 255, 0.4);
     --accent-primary: #c5a059;
+    --accent-primary-rgb: 197, 160, 89;
     --accent-secondary: #4f46e5;
     --glass-bg: rgba(255, 255, 255, 0.03);
     --glass-border: rgba(255, 255, 255, 0.08);
@@ -23,6 +24,7 @@
     --text-main: #000000;
     --text-muted: rgba(0, 0, 0, 0.6);
     --accent-primary: #af8a44;
+    --accent-primary-rgb: 175, 138, 68;
     --accent-secondary: #4338ca;
     --glass-bg: #f9fafb;
     --glass-border: rgba(0, 0, 0, 0.12);

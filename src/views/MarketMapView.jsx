@@ -36,7 +36,7 @@ const getHeatmapColor = (value) => {
     return 'bg-[var(--ui-muted)]/10 border border-[var(--ui-divider)]/20 text-[var(--text-muted)]';
 };
 
-const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap }) => {
+const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted }) => {
     const [isHovered, setIsHovered] = useState(false);
     const count = companies.length;
 
@@ -47,11 +47,22 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                 onMouseEnter={() => setIsHovered(true)}
                 onMouseLeave={() => setIsHovered(false)}
             >
-                <div className="flex items-center justify-between gap-1 w-full relative z-10 px-1 py-0.5 group-hover/row:bg-[var(--accent-primary)]/5 rounded transition-colors">
-                    <span className="text-[8.5px] font-black uppercase tracking-tight text-[var(--text-main)]/90 leading-tight">
+                <div className={cn(
+                    "flex items-center justify-between gap-1 w-full relative z-10 px-1 py-1 rounded transition-all duration-700",
+                    isHighlighted
+                        ? "bg-[var(--accent-primary)]/20 shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.3)] border border-[var(--accent-primary)]/30 scale-[1.02] z-20"
+                        : "group-hover/row:bg-[var(--accent-primary)]/5"
+                )}>
+                    <span className={cn(
+                        "text-[8.5px] font-black uppercase tracking-tight leading-tight transition-colors",
+                        isHighlighted ? "text-[var(--accent-primary)]" : "text-[var(--text-main)]/90"
+                    )}>
                         {theme.name}
                     </span>
-                    <span className="text-[7.5px] font-black text-[var(--text-main)]/60 group-hover/row:text-[var(--accent-primary)] flex-shrink-0 font-mono transition-colors">
+                    <span className={cn(
+                        "text-[7.5px] font-black flex-shrink-0 font-mono transition-colors",
+                        isHighlighted ? "text-[var(--accent-primary)]" : "text-[var(--text-main)]/60 group-hover/row:text-[var(--accent-primary)]"
+                    )}>
                         ({count})
                     </span>
                 </div>
@@ -166,11 +177,12 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     if (prevProps.theme !== nextProps.theme) return false;
     if (prevProps.companies !== nextProps.companies) return false;
     if (prevProps.stockPerfMap !== nextProps.stockPerfMap) return false;
+    if (prevProps.isHighlighted !== nextProps.isHighlighted) return false;
 
     return COLUMNS.every(({ key }) => prevProps.themePerf[key] === nextProps.themePerf[key]);
 });
 
-const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap }) => {
+const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme }) => {
     const blockId = `block-${block.title.toLowerCase().replace(/[^a-z0-s]/g, '-')}`;
 
     return (
@@ -200,6 +212,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                                 themePerf={heatmapData[theme.name] || EMPTY_THEME_PERF}
                                 loading={loading}
                                 stockPerfMap={stockPerfMap}
+                                isHighlighted={highlightedTheme === theme.name}
                             />
                         ))}
                     </tbody>
@@ -233,6 +246,7 @@ export const MarketMapView = ({ hierarchy }) => {
     const [hideBSE, setHideBSE] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
+    const [highlightedTheme, setHighlightedTheme] = useState(null);
     const searchRef = useRef(null);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
 
@@ -367,10 +381,14 @@ export const MarketMapView = ({ hierarchy }) => {
         }).slice(0, 8);
     }, [searchIndex, searchQuery]);
 
-    const scrollToBlock = (blockId) => {
+    const scrollToBlock = (blockId, themeName) => {
         const el = document.getElementById(blockId);
         if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            if (themeName) {
+                setHighlightedTheme(themeName);
+                setTimeout(() => setHighlightedTheme(null), 3500);
+            }
             setSearchQuery('');
             setIsSearchFocused(false);
         }
@@ -430,7 +448,7 @@ export const MarketMapView = ({ hierarchy }) => {
                                     {searchResults.map((result, idx) => (
                                         <button
                                             key={`${result.symbol}-${idx}`}
-                                            onClick={() => scrollToBlock(result.blockId)}
+                                            onClick={() => scrollToBlock(result.blockId, result.themeName)}
                                             className="w-full flex items-center justify-between py-1.5 px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
                                         >
                                             <div className="flex flex-col items-start min-w-0">
@@ -491,6 +509,7 @@ export const MarketMapView = ({ hierarchy }) => {
                             heatmapData={heatmapData}
                             loading={loading}
                             stockPerfMap={stockPerfMap}
+                            highlightedTheme={highlightedTheme}
                         />
                     ))}
                 </div>

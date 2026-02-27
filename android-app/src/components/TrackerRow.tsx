@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -12,14 +12,37 @@ type TrackerRowProps = {
     breadth?: any;
 };
 
-export const TrackerRow = ({ name, perf, onClick, loading, leaders, laggards, breadth }: TrackerRowProps) => {
+const MoverRow = memo(({ item, isPos }: { item: any, isPos: boolean }) => (
+    <View style={rowStyles.moverRow}>
+        <View style={rowStyles.moverInfo}>
+            <Text style={rowStyles.moverName} numberOfLines={1}>{item.name}</Text>
+            <Text style={rowStyles.moverSymbol}>{item.symbol}</Text>
+        </View>
+        <Text style={[rowStyles.moverPerf, { color: isPos ? '#22c55e' : '#ef4444' }]}>
+            {isPos ? '+' : ''}{item.perf?.toFixed(1) || '0.0'}%
+        </Text>
+    </View>
+));
+
+const BreadthItem = memo(({ label, value }: { label: string, value: number }) => (
+    <View style={rowStyles.breadthItem}>
+        <Text style={rowStyles.breadthItemLabel}>{label}</Text>
+        <Text style={[
+            rowStyles.breadthItemVal,
+            { color: value > 70 ? '#22c55e' : value > 40 ? '#f59e0b' : '#ef4444' }
+        ]}>
+            {Math.round(value)}%
+        </Text>
+    </View>
+));
+
+export const TrackerRow = memo(({ name, perf, onClick, loading, leaders, laggards, breadth }: TrackerRowProps) => {
     const { colors, isDark } = useTheme();
     const [showInsights, setShowInsights] = React.useState(false);
 
     const hasData = perf !== null && perf !== undefined;
     const isPos = hasData && perf >= 0;
-    const barWidth = hasData ? Math.min(Math.abs(perf) * 2, 50) : 0;
-    const currentStyles = styles(colors, isDark);
+    const barWidth = hasData ? Math.min(Math.abs(perf) * 2, 45) : 0;
 
     const hasInsights = (leaders && leaders.length > 0) || (laggards && laggards.length > 0) || !!breadth;
 
@@ -28,34 +51,36 @@ export const TrackerRow = ({ name, perf, onClick, loading, leaders, laggards, br
             <Pressable
                 onPress={onClick}
                 onLongPress={() => hasInsights && setShowInsights(true)}
-                delayLongPress={300}
+                delayLongPress={350}
                 style={({ pressed }) => [
-                    currentStyles.row,
-                    (pressed || showInsights) && currentStyles.rowPressed
+                    rowStyles.row,
+                    { borderBottomColor: colors.uiDivider },
+                    (pressed || showInsights) && { backgroundColor: isDark ? 'rgba(197, 160, 89, 0.08)' : 'rgba(197, 160, 89, 0.12)' }
                 ]}
             >
-                <View style={currentStyles.nameContainer}>
+                <View style={rowStyles.nameContainer}>
                     <View style={[
-                        currentStyles.indicator,
-                        isPos ? currentStyles.indicatorPos : currentStyles.indicatorNeg,
-                        !hasData && currentStyles.indicatorMuted,
+                        rowStyles.indicator,
+                        isPos ? { backgroundColor: colors.accentPrimary, shadowColor: colors.accentPrimary } : { backgroundColor: '#f43f5e' },
+                        !hasData && { backgroundColor: colors.uiMuted },
+                        isPos && rowStyles.indicatorGlow,
                         showInsights && { transform: [{ scale: 1.5 }], shadowOpacity: 0.8 }
                     ]} />
                     <Text
-                        style={[currentStyles.nameText, showInsights && { color: colors.accentPrimary }]}
+                        style={[rowStyles.nameText, { color: colors.textMuted }, showInsights && { color: colors.accentPrimary }]}
                         numberOfLines={1}
                     >
                         {name.toUpperCase()}
                     </Text>
                 </View>
 
-                <View style={currentStyles.chartArea}>
-                    <View style={currentStyles.centerLine} />
-                    <View style={currentStyles.barContainer}>
+                <View style={rowStyles.chartArea}>
+                    <View style={[rowStyles.centerLine, { backgroundColor: colors.uiDivider }]} />
+                    <View style={[rowStyles.barContainer, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.05)' }]}>
                         {hasData && (
                             <View style={[
-                                currentStyles.bar,
-                                isPos ? currentStyles.barPos : currentStyles.barNeg,
+                                rowStyles.bar,
+                                isPos ? { backgroundColor: colors.accentPrimary } : { backgroundColor: '#f43f5e' },
                                 { width: `${barWidth}%`, [isPos ? 'left' : 'right']: '50%' },
                                 showInsights && { opacity: 1 }
                             ]} />
@@ -63,75 +88,57 @@ export const TrackerRow = ({ name, perf, onClick, loading, leaders, laggards, br
                     </View>
                 </View>
 
-                <View style={currentStyles.perfContainer}>
+                <View style={rowStyles.perfContainer}>
                     {loading ? (
-                        <View style={currentStyles.loadingPulse} />
-                    ) : hasData ? (
+                        <View style={[rowStyles.loadingPulse, { backgroundColor: colors.uiDivider }]} />
+                    ) : (
                         <Text style={[
-                            currentStyles.perfText,
-                            isPos ? currentStyles.textPos : currentStyles.textNeg,
+                            rowStyles.perfText,
+                            isPos ? { color: colors.accentPrimary } : { color: '#f43f5e' },
+                            !hasData && { color: colors.textMuted, opacity: 0.3 },
                             showInsights && { fontSize: 13 }
                         ]}>
-                            {isPos ? '+' : ''}{perf.toFixed(2)}%
+                            {hasData ? `${isPos ? '+' : ''}${perf.toFixed(2)}%` : '—'}
                         </Text>
-                    ) : (
-                        <Text style={currentStyles.perfTextMuted}>—</Text>
                     )}
                 </View>
             </Pressable>
 
-            {/* INSIGHTS OVERLAY (PARITY WITH WEB HOVER) */}
             {showInsights && (
-                <View style={currentStyles.insightsOverlay}>
+                <View style={rowStyles.insightsOverlay}>
                     <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowInsights(false)} />
-                    <View style={currentStyles.insightsCard}>
-                        <View style={currentStyles.insightsHeader}>
-                            <Text style={currentStyles.insightsTitle}>{name} INSIGHTS</Text>
+                    <View style={[rowStyles.insightsCard, { backgroundColor: colors.bgMain, borderColor: colors.accentPrimary }]}>
+                        <View style={[rowStyles.insightsHeader, { borderBottomColor: colors.uiDivider }]}>
+                            <Text style={[rowStyles.insightsTitle, { color: colors.accentPrimary }]}>{name} INSIGHTS</Text>
                             <Pressable onPress={() => setShowInsights(false)}>
                                 <Text style={{ color: colors.textMuted, fontSize: 10 }}>CLOSE</Text>
                             </Pressable>
                         </View>
 
-                        <View style={currentStyles.moversContainer}>
+                        <View style={rowStyles.moversContainer}>
                             {leaders && leaders.length > 0 && (
-                                <View style={currentStyles.moversSection}>
-                                    <View style={[currentStyles.moversHeader, { borderBottomColor: 'rgba(34, 197, 94, 0.2)' }]}>
-                                        <View style={[currentStyles.moversDot, { backgroundColor: '#22c55e' }]} />
-                                        <Text style={[currentStyles.moversHeaderText, { color: '#22c55e' }]}>LEADERS</Text>
+                                <View style={rowStyles.moversSection}>
+                                    <View style={[rowStyles.moversHeader, { borderBottomColor: 'rgba(34, 197, 94, 0.2)' }]}>
+                                        <View style={[rowStyles.moversDot, { backgroundColor: '#22c55e' }]} />
+                                        <Text style={[rowStyles.moversHeaderText, { color: '#22c55e' }]}>LEADERS</Text>
                                     </View>
-                                    <View style={currentStyles.moversList}>
+                                    <View style={rowStyles.moversList}>
                                         {leaders.slice(0, 4).map((l: any) => (
-                                            <View key={l.symbol} style={currentStyles.moverRow}>
-                                                <View style={currentStyles.moverInfo}>
-                                                    <Text style={currentStyles.moverName} numberOfLines={1}>{l.name}</Text>
-                                                    <Text style={currentStyles.moverSymbol}>{l.symbol}</Text>
-                                                </View>
-                                                <Text style={[currentStyles.moverPerf, { color: '#22c55e' }]}>
-                                                    +{l.perf.toFixed(1)}%
-                                                </Text>
-                                            </View>
+                                            <MoverRow key={l.symbol} item={l} isPos={true} />
                                         ))}
                                     </View>
                                 </View>
                             )}
 
                             {laggards && laggards.length > 0 && (
-                                <View style={currentStyles.moversSection}>
-                                    <View style={[currentStyles.moversHeader, { borderBottomColor: 'rgba(239, 68, 68, 0.2)' }]}>
-                                        <View style={[currentStyles.moversDot, { backgroundColor: '#ef4444' }]} />
-                                        <Text style={[currentStyles.moversHeaderText, { color: '#ef4444' }]}>LAGGARDS</Text>
+                                <View style={rowStyles.moversSection}>
+                                    <View style={[rowStyles.moversHeader, { borderBottomColor: 'rgba(239, 68, 68, 0.2)' }]}>
+                                        <View style={[rowStyles.moversDot, { backgroundColor: '#ef4444' }]} />
+                                        <Text style={[rowStyles.moversHeaderText, { color: '#ef4444' }]}>LAGGARDS</Text>
                                     </View>
-                                    <View style={currentStyles.moversList}>
+                                    <View style={rowStyles.moversList}>
                                         {laggards.slice(0, 4).map((l: any) => (
-                                            <View key={l.symbol} style={currentStyles.moverRow}>
-                                                <View style={currentStyles.moverInfo}>
-                                                    <Text style={currentStyles.moverName} numberOfLines={1}>{l.name}</Text>
-                                                    <Text style={currentStyles.moverSymbol}>{l.symbol}</Text>
-                                                </View>
-                                                <Text style={[currentStyles.moverPerf, { color: '#ef4444' }]}>
-                                                    {l.perf.toFixed(1)}%
-                                                </Text>
-                                            </View>
+                                            <MoverRow key={l.symbol} item={l} isPos={false} />
                                         ))}
                                     </View>
                                 </View>
@@ -139,26 +146,14 @@ export const TrackerRow = ({ name, perf, onClick, loading, leaders, laggards, br
                         </View>
 
                         {breadth && (
-                            <View style={currentStyles.breadthSection}>
-                                <Text style={currentStyles.breadthLabel}>TECHNICAL BREADTH (EMA)</Text>
-                                <View style={currentStyles.breadthGrid}>
-                                    {[
-                                        { l: '10', v: breadth.above10EMA },
-                                        { l: '21', v: breadth.above21EMA },
-                                        { l: '50', v: breadth.above50EMA },
-                                        { l: '150', v: breadth.above150EMA },
-                                        { l: '200', v: breadth.above200EMA },
-                                    ].map(it => (
-                                        <View key={it.l} style={currentStyles.breadthItem}>
-                                            <Text style={currentStyles.breadthItemLabel}>{it.l}</Text>
-                                            <Text style={[
-                                                currentStyles.breadthItemVal,
-                                                { color: it.v > 70 ? '#22c55e' : it.v > 40 ? '#f59e0b' : '#ef4444' }
-                                            ]}>
-                                                {Math.round(it.v)}%
-                                            </Text>
-                                        </View>
-                                    ))}
+                            <View style={[rowStyles.breadthSection, { borderTopColor: colors.uiDivider }]}>
+                                <Text style={[rowStyles.breadthLabel, { color: colors.textMuted }]}>TECHNICAL BREADTH (EMA)</Text>
+                                <View style={rowStyles.breadthGrid}>
+                                    <BreadthItem label="10" value={breadth.above10EMA} />
+                                    <BreadthItem label="21" value={breadth.above21EMA} />
+                                    <BreadthItem label="50" value={breadth.above50EMA} />
+                                    <BreadthItem label="150" value={breadth.above150EMA} />
+                                    <BreadthItem label="200" value={breadth.above200EMA} />
                                 </View>
                             </View>
                         )}
@@ -167,20 +162,16 @@ export const TrackerRow = ({ name, perf, onClick, loading, leaders, laggards, br
             )}
         </View>
     );
-};
+});
 
-const styles = (colors: any, isDark: boolean) => StyleSheet.create({
+const rowStyles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 12,
         paddingHorizontal: 16,
         borderBottomWidth: 1,
-        borderBottomColor: colors.uiDivider,
         backgroundColor: 'transparent',
-    },
-    rowPressed: {
-        backgroundColor: isDark ? 'rgba(197, 160, 89, 0.08)' : 'rgba(197, 160, 89, 0.12)',
     },
     nameContainer: {
         width: '40%',
@@ -193,21 +184,12 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         borderRadius: 3,
         marginRight: 10,
     },
-    indicatorPos: {
-        backgroundColor: colors.accentPrimary,
-        shadowColor: colors.accentPrimary,
+    indicatorGlow: {
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.5,
         shadowRadius: 4,
     },
-    indicatorNeg: {
-        backgroundColor: '#f43f5e',
-    },
-    indicatorMuted: {
-        backgroundColor: colors.uiMuted,
-    },
     nameText: {
-        color: colors.textMuted,
         fontSize: 10,
         fontWeight: '700',
         letterSpacing: 1.5,
@@ -224,13 +206,11 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         left: '50%',
         width: 1,
         height: 12,
-        backgroundColor: colors.uiDivider,
         opacity: 0.5,
     },
     barContainer: {
         width: '100%',
         height: 4,
-        backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.05)',
         borderRadius: 2,
         overflow: 'hidden',
         position: 'relative',
@@ -241,12 +221,6 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         borderRadius: 2,
         opacity: 0.6,
     },
-    barPos: {
-        backgroundColor: colors.accentPrimary,
-    },
-    barNeg: {
-        backgroundColor: '#f43f5e',
-    },
     perfContainer: {
         width: 70,
         alignItems: 'flex-end',
@@ -256,24 +230,11 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         fontWeight: '700',
         letterSpacing: 0.5,
     },
-    perfTextMuted: {
-        color: colors.textMuted,
-        fontSize: 10,
-        opacity: 0.3,
-    },
-    textPos: {
-        color: colors.accentPrimary,
-    },
-    textNeg: {
-        color: '#f43f5e',
-    },
     loadingPulse: {
         width: 40,
         height: 10,
-        backgroundColor: colors.uiDivider,
         borderRadius: 2,
     },
-    // ─── Insights Overlay Styles ────────────────────────────────
     insightsOverlay: {
         position: 'absolute',
         top: 0,
@@ -285,11 +246,9 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         paddingHorizontal: 16,
     },
     insightsCard: {
-        backgroundColor: colors.bgMain,
         borderRadius: 8,
         padding: 16,
         borderWidth: 1,
-        borderColor: colors.accentPrimary,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.5,
@@ -302,13 +261,11 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         borderBottomWidth: 1,
-        borderBottomColor: colors.uiDivider,
         paddingBottom: 8,
     },
     insightsTitle: {
         fontSize: 9,
         fontWeight: 'bold',
-        color: colors.accentPrimary,
         letterSpacing: 3,
     },
     moversContainer: {
@@ -350,12 +307,12 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
     moverName: {
         fontSize: 9,
         fontWeight: 'bold',
-        color: colors.textMain,
+        color: '#fff',
         opacity: 0.9,
     },
     moverSymbol: {
         fontSize: 7,
-        color: colors.textMuted,
+        color: 'rgba(255,255,255,0.4)',
         opacity: 0.6,
     },
     moverPerf: {
@@ -365,14 +322,12 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
     },
     breadthSection: {
         borderTopWidth: 1,
-        borderTopColor: colors.uiDivider,
         paddingTop: 12,
         gap: 8,
     },
     breadthLabel: {
         fontSize: 8,
         fontWeight: 'bold',
-        color: colors.textMuted,
         letterSpacing: 1.5,
         opacity: 0.6,
     },
@@ -386,7 +341,7 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
     },
     breadthItemLabel: {
         fontSize: 7,
-        color: colors.textMuted,
+        color: 'rgba(255,255,255,0.4)',
         fontWeight: 'bold',
     },
     breadthItemVal: {

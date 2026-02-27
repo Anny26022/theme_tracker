@@ -11,7 +11,7 @@ interface IndustryNodeProps {
     index: number;
 }
 
-export const IndustryNode = ({ name, count, onClick, onCopy, index }: IndustryNodeProps) => {
+export const IndustryNode = React.memo(({ name, count, onClick, onCopy, index }: IndustryNodeProps) => {
     return (
         <BaseNode
             label="Industry"
@@ -28,7 +28,7 @@ export const IndustryNode = ({ name, count, onClick, onCopy, index }: IndustryNo
             </View>
         </BaseNode>
     );
-};
+});
 
 const styles = StyleSheet.create({
     footer: {

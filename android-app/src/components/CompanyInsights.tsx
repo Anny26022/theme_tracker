@@ -6,6 +6,7 @@ import {
     StyleSheet,
     Pressable,
     ScrollView,
+    SectionList,
     ActivityIndicator,
     useWindowDimensions,
     Linking,
@@ -38,6 +39,20 @@ interface CompanyInsightsProps {
     name: string | null;
     isOpen: boolean;
     onClose: () => void;
+}
+
+type FilingSection = {
+    title: string;
+    monthKey: number;
+    data: any[];
+};
+
+function getFilingDate(item: any): Date | null {
+    const dateStr = item?.news_date || item?.date || item?.filingDate || item?.fillingDate;
+    if (!dateStr) return null;
+    const parsed = new Date(dateStr);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed;
 }
 
 function getFilingUrl(item: any): string | null {
@@ -79,23 +94,40 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
     const isin = isOpen ? getIsin(symbol) : null;
     const { data: filings, loading: filingsLoading } = useFilings(isin);
 
-    const groupedFilings = React.useMemo(() => {
-        if (!filings || !Array.isArray(filings)) return {};
-        const groups: Record<string, any[]> = {};
-        const filtered = filings.filter((f: any) => {
-            const dateStr = f.news_date || f.date || f.filingDate || f.fillingDate;
-            if (!dateStr) return false;
-            const date = new Date(dateStr);
-            return date.getFullYear() === selectedYear;
+    const filingSections = React.useMemo<FilingSection[]>(() => {
+        if (!Array.isArray(filings)) return [];
+
+        const grouped = new Map<string, FilingSection>();
+
+        filings.forEach((filing: any) => {
+            const date = getFilingDate(filing);
+            if (!date || date.getFullYear() !== selectedYear) return;
+
+            const monthKey = (date.getFullYear() * 100) + date.getMonth();
+            const mapKey = String(monthKey);
+            const monthLabel = date.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+
+            if (!grouped.has(mapKey)) {
+                grouped.set(mapKey, {
+                    title: monthLabel,
+                    monthKey,
+                    data: [],
+                });
+            }
+
+            grouped.get(mapKey)!.data.push(filing);
         });
-        filtered.forEach((f: any) => {
-            const dateStr = f.news_date || f.date || f.filingDate || f.fillingDate;
-            const date = new Date(dateStr);
-            const monthYear = date.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-            if (!groups[monthYear]) groups[monthYear] = [];
-            groups[monthYear].push(f);
-        });
-        return groups;
+
+        return Array.from(grouped.values())
+            .sort((a, b) => b.monthKey - a.monthKey)
+            .map((section) => ({
+                ...section,
+                data: [...section.data].sort((a: any, b: any) => {
+                    const aDate = getFilingDate(a)?.getTime() ?? 0;
+                    const bDate = getFilingDate(b)?.getTime() ?? 0;
+                    return bDate - aDate;
+                }),
+            }));
     }, [filings, selectedYear]);
 
     const tabs = [
@@ -177,170 +209,181 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
                     </View>
 
                     {/* Body */}
-                    <ScrollView style={currentStyles.scrollView} showsVerticalScrollIndicator={false}>
-                        {activeTab === 'SNAPSHOT' && (
-                            <View style={currentStyles.section}>
-                                <View style={currentStyles.sectionHeader}>
-                                    <Activity size={12} color={colors.accentPrimary} />
-                                    <Text style={currentStyles.sectionTitle}>Live Quote</Text>
+                    {activeTab === 'FILINGS' ? (
+                        <View style={currentStyles.filingsBody}>
+                            {!isin ? (
+                                <View style={currentStyles.centerSection}>
+                                    <FileText size={32} color={colors.uiMuted} />
+                                    <Text style={currentStyles.offlineTitle}>ISIN Missing</Text>
+                                    <Text style={currentStyles.offlineSub}>Cannot resolve ISIN for this symbol</Text>
                                 </View>
-
-                                <View style={currentStyles.priceCard}>
-                                    <View>
-                                        <Text style={currentStyles.priceLabel}>Current Market Price</Text>
-                                        <Text style={currentStyles.priceValue}>
-                                            {price ? `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}{' '}
-                                            <Text style={currentStyles.currency}>INR</Text>
-                                        </Text>
-                                    </View>
-                                    <View style={{ alignItems: 'flex-end' }}>
-                                        <Text style={currentStyles.priceLabel}>Session Change</Text>
-                                        <Text style={[currentStyles.changeValue, { color: changeColor }]}>
-                                            {changePct != null ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%` : '—'}
-                                        </Text>
-                                    </View>
+                            ) : filingsLoading ? (
+                                <View style={currentStyles.loadingContainer}>
+                                    <ActivityIndicator color={colors.accentPrimary} />
+                                    <Text style={currentStyles.loadingText}>Loading filings...</Text>
                                 </View>
-
-                                <View style={currentStyles.sectionHeader}>
-                                    <BarChart3 size={12} color={colors.accentPrimary} />
-                                    <Text style={currentStyles.sectionTitle}>Fundamental Specs</Text>
-                                </View>
-
-                                {fundaLoading ? (
-                                    <View style={currentStyles.loadingContainer}>
-                                        <ActivityIndicator color={colors.accentPrimary} />
-                                        <Text style={currentStyles.loadingText}>Loading fundamentals...</Text>
-                                    </View>
-                                ) : funda ? (
-                                    <View style={currentStyles.metricsGrid}>
-                                        <Metric label="Market Cap" value={formatIndianNumber(funda.marketCap)} subValue="INR" icon={<PieChart size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                        <Metric label="P/E Ratio" value={funda.peRatio ? funda.peRatio.toFixed(2) : '—'} subValue="Multiple" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                        <Metric label="Div. Yield" value={formatPercent(funda.yield)} subValue="Yield" icon={<Landmark size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                        <Metric label="Volume" value={formatIndianNumber(funda.volume)} subValue="Shares" icon={<BarChart3 size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                        <Metric label="EPS (TTM)" value={funda.eps ? funda.eps.toFixed(2) : '—'} subValue="Per Share" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                        <Metric label="52W Range" value={`${formatIndianNumber(funda.low52)} - ${formatIndianNumber(funda.high52)}`} subValue="Price" icon={<Activity size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                    </View>
-                                ) : (
-                                    <View style={currentStyles.restrictedContainer}>
-                                        <Text style={currentStyles.restrictedText}>Alpha data restricted</Text>
-                                    </View>
-                                )}
-
-                                {funda?.description ? (
-                                    <View style={{ marginTop: 16 }}>
-                                        <View style={currentStyles.sectionHeader}>
-                                            <Award size={12} color={colors.accentPrimary} />
-                                            <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
+                            ) : (
+                                <View style={currentStyles.filingsContent}>
+                                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.yearSelectorScroll}>
+                                        <View style={currentStyles.yearSelector}>
+                                            {[2026, 2025, 2024, 2023, 2022, 2021].map(year => (
+                                                <Pressable
+                                                    key={year}
+                                                    onPress={() => setSelectedYear(year)}
+                                                    style={[currentStyles.yearButton, selectedYear === year && currentStyles.yearButtonActive]}
+                                                >
+                                                    <Text style={[currentStyles.yearButtonText, selectedYear === year && currentStyles.yearButtonTextActive]}>
+                                                        {year}
+                                                    </Text>
+                                                </Pressable>
+                                            ))}
                                         </View>
-                                        <Text style={currentStyles.description}>{funda.description}</Text>
-                                    </View>
-                                ) : (
-                                    <View style={{ marginTop: 16 }}>
-                                        <View style={currentStyles.sectionHeader}>
-                                            <Award size={12} color={colors.accentPrimary} />
-                                            <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
-                                        </View>
-                                        <Text style={currentStyles.description}>
-                                            Loading deep-dive intelligence for {name}...
-                                        </Text>
-                                    </View>
-                                )}
-                            </View>
-                        )}
+                                    </ScrollView>
 
-                        {activeTab === 'FILINGS' && (
-                            <View style={currentStyles.section}>
-                                {!isin ? (
-                                    <View style={currentStyles.centerSection}>
-                                        <FileText size={32} color={colors.uiMuted} />
-                                        <Text style={currentStyles.offlineTitle}>ISIN Missing</Text>
-                                        <Text style={currentStyles.offlineSub}>Cannot resolve ISIN for this symbol</Text>
-                                    </View>
-                                ) : filingsLoading ? (
-                                    <View style={currentStyles.loadingContainer}>
-                                        <ActivityIndicator color={colors.accentPrimary} />
-                                        <Text style={currentStyles.loadingText}>Loading filings...</Text>
-                                    </View>
-                                ) : (
-                                    <View>
-                                        {/* Year selector */}
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
-                                            <View style={currentStyles.yearSelector}>
-                                                {[2026, 2025, 2024, 2023, 2022, 2021].map(year => (
-                                                    <Pressable
-                                                        key={year}
-                                                        onPress={() => setSelectedYear(year)}
-                                                        style={[currentStyles.yearButton, selectedYear === year && currentStyles.yearButtonActive]}
-                                                    >
-                                                        <Text style={[currentStyles.yearButtonText, selectedYear === year && currentStyles.yearButtonTextActive]}>
-                                                            {year}
-                                                        </Text>
-                                                    </Pressable>
-                                                ))}
-                                            </View>
-                                        </ScrollView>
-
-                                        {/* Timeline */}
-                                        {Object.keys(groupedFilings).length > 0 ? (
-                                            <View style={currentStyles.timeline}>
-                                                <View style={currentStyles.timelineLine} />
-                                                {Object.entries(groupedFilings).map(([month, items]) => (
-                                                    <View key={month} style={currentStyles.timelineGroup}>
+                                    {filingSections.length > 0 ? (
+                                        <View style={currentStyles.timelineListContainer}>
+                                            <View style={currentStyles.timelineLine} />
+                                            <SectionList
+                                                sections={filingSections}
+                                                keyExtractor={(item, idx) => {
+                                                    const title = item.caption || item.title || item.subject || 'Corporate Filing';
+                                                    const datePart = getFilingDate(item)?.toISOString() || String(idx);
+                                                    return `${title}-${datePart}-${idx}`;
+                                                }}
+                                                renderSectionHeader={({ section }) => (
+                                                    <View style={currentStyles.timelineSectionHeader}>
                                                         <View style={currentStyles.timelineDot} />
-                                                        <Text style={currentStyles.timelineMonth}>{month}</Text>
-                                                        {(items as any[]).map((item: any, idx: number) => {
-                                                            const title = item.caption || item.title || item.subject || 'Corporate Filing';
-                                                            const category = item.cat || item.descriptor || item.categoryLabel || item.type || 'Notification';
-                                                            const dateStr = item.news_date || item.date || item.filingDate || item.fillingDate;
-                                                            const dateFormatted = dateStr ? new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-                                                            const attachment = getFilingUrl(item);
-
-                                                            return (
-                                                                <Pressable
-                                                                    key={`${title}-${dateStr}-${idx}`}
-                                                                    style={currentStyles.filingCard}
-                                                                    onPress={() => handleOpenFiling(item)}
-                                                                >
-                                                                    <View style={currentStyles.filingIcon}>
-                                                                        <FileText size={14} color={colors.textMuted} />
-                                                                    </View>
-                                                                    <View style={currentStyles.filingInfo}>
-                                                                        <View style={currentStyles.filingTitleRow}>
-                                                                            <Text style={currentStyles.filingTitle} numberOfLines={2}>{title}</Text>
-                                                                            {attachment && <ExternalLink size={10} color={colors.accentPrimary} style={{ marginTop: 2 }} />}
-                                                                        </View>
-                                                                        <View style={currentStyles.filingMeta}>
-                                                                            <Text style={currentStyles.filingCategory}>{category}</Text>
-                                                                            <Text style={currentStyles.filingDot}>•</Text>
-                                                                            <Text style={currentStyles.filingDate}>{dateFormatted}</Text>
-                                                                        </View>
-                                                                    </View>
-                                                                </Pressable>
-                                                            );
-                                                        })}
+                                                        <Text style={currentStyles.timelineMonth}>{section.title}</Text>
                                                     </View>
-                                                ))}
-                                            </View>
-                                        ) : (
-                                            <View style={currentStyles.centerSection}>
-                                                <Text style={currentStyles.offlineSub}>No filings detected for {selectedYear}</Text>
-                                            </View>
-                                        )}
+                                                )}
+                                                renderItem={({ item }) => {
+                                                    const title = item.caption || item.title || item.subject || 'Corporate Filing';
+                                                    const category = item.cat || item.descriptor || item.categoryLabel || item.type || 'Notification';
+                                                    const dateFormatted = getFilingDate(item)?.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) || '';
+                                                    const attachment = getFilingUrl(item);
+
+                                                    return (
+                                                        <Pressable
+                                                            style={currentStyles.filingCard}
+                                                            onPress={() => handleOpenFiling(item)}
+                                                        >
+                                                            <View style={currentStyles.filingIcon}>
+                                                                <FileText size={14} color={colors.textMuted} />
+                                                            </View>
+                                                            <View style={currentStyles.filingInfo}>
+                                                                <View style={currentStyles.filingTitleRow}>
+                                                                    <Text style={currentStyles.filingTitle} numberOfLines={2}>{title}</Text>
+                                                                    {attachment && <ExternalLink size={10} color={colors.accentPrimary} style={{ marginTop: 2 }} />}
+                                                                </View>
+                                                                <View style={currentStyles.filingMeta}>
+                                                                    <Text style={currentStyles.filingCategory}>{category}</Text>
+                                                                    <Text style={currentStyles.filingDot}>•</Text>
+                                                                    <Text style={currentStyles.filingDate}>{dateFormatted}</Text>
+                                                                </View>
+                                                            </View>
+                                                        </Pressable>
+                                                    );
+                                                }}
+                                                stickySectionHeadersEnabled={false}
+                                                contentContainerStyle={currentStyles.timelineListContent}
+                                                showsVerticalScrollIndicator={false}
+                                                initialNumToRender={20}
+                                                maxToRenderPerBatch={20}
+                                                windowSize={7}
+                                                removeClippedSubviews={true}
+                                            />
+                                        </View>
+                                    ) : (
+                                        <View style={currentStyles.centerSection}>
+                                            <Text style={currentStyles.offlineSub}>No filings detected for {selectedYear}</Text>
+                                        </View>
+                                    )}
+                                </View>
+                            )}
+                        </View>
+                    ) : (
+                        <ScrollView style={currentStyles.scrollView} showsVerticalScrollIndicator={false}>
+                            {activeTab === 'SNAPSHOT' && (
+                                <View style={currentStyles.section}>
+                                    <View style={currentStyles.sectionHeader}>
+                                        <Activity size={12} color={colors.accentPrimary} />
+                                        <Text style={currentStyles.sectionTitle}>Live Quote</Text>
                                     </View>
-                                )}
-                            </View>
-                        )}
 
-                        {activeTab === 'NEWS' && (
-                            <View style={currentStyles.centerSection}>
-                                <Newspaper size={32} color={colors.uiMuted} />
-                                <Text style={currentStyles.offlineTitle}>Wire Feed Offline</Text>
-                                <Text style={currentStyles.offlineSub}>Syncing with Bloomberg/Reuters feeds...</Text>
-                            </View>
-                        )}
+                                    <View style={currentStyles.priceCard}>
+                                        <View>
+                                            <Text style={currentStyles.priceLabel}>Current Market Price</Text>
+                                            <Text style={currentStyles.priceValue}>
+                                                {price ? `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}{' '}
+                                                <Text style={currentStyles.currency}>INR</Text>
+                                            </Text>
+                                        </View>
+                                        <View style={{ alignItems: 'flex-end' }}>
+                                            <Text style={currentStyles.priceLabel}>Session Change</Text>
+                                            <Text style={[currentStyles.changeValue, { color: changeColor }]}>
+                                                {changePct != null ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%` : '—'}
+                                            </Text>
+                                        </View>
+                                    </View>
 
-                        <View style={{ height: 40 }} />
-                    </ScrollView>
+                                    <View style={currentStyles.sectionHeader}>
+                                        <BarChart3 size={12} color={colors.accentPrimary} />
+                                        <Text style={currentStyles.sectionTitle}>Fundamental Specs</Text>
+                                    </View>
+
+                                    {fundaLoading ? (
+                                        <View style={currentStyles.loadingContainer}>
+                                            <ActivityIndicator color={colors.accentPrimary} />
+                                            <Text style={currentStyles.loadingText}>Loading fundamentals...</Text>
+                                        </View>
+                                    ) : funda ? (
+                                        <View style={currentStyles.metricsGrid}>
+                                            <Metric label="Market Cap" value={formatIndianNumber(funda.marketCap)} subValue="INR" icon={<PieChart size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                                            <Metric label="P/E Ratio" value={funda.peRatio ? funda.peRatio.toFixed(2) : '—'} subValue="Multiple" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                                            <Metric label="Div. Yield" value={formatPercent(funda.yield)} subValue="Yield" icon={<Landmark size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                                            <Metric label="Volume" value={formatIndianNumber(funda.volume)} subValue="Shares" icon={<BarChart3 size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                                            <Metric label="EPS (TTM)" value={funda.eps ? funda.eps.toFixed(2) : '—'} subValue="Per Share" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                                            <Metric label="52W Range" value={`${formatIndianNumber(funda.low52)} - ${formatIndianNumber(funda.high52)}`} subValue="Price" icon={<Activity size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                                        </View>
+                                    ) : (
+                                        <View style={currentStyles.restrictedContainer}>
+                                            <Text style={currentStyles.restrictedText}>Alpha data restricted</Text>
+                                        </View>
+                                    )}
+
+                                    {funda?.description ? (
+                                        <View style={{ marginTop: 16 }}>
+                                            <View style={currentStyles.sectionHeader}>
+                                                <Award size={12} color={colors.accentPrimary} />
+                                                <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
+                                            </View>
+                                            <Text style={currentStyles.description}>{funda.description}</Text>
+                                        </View>
+                                    ) : (
+                                        <View style={{ marginTop: 16 }}>
+                                            <View style={currentStyles.sectionHeader}>
+                                                <Award size={12} color={colors.accentPrimary} />
+                                                <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
+                                            </View>
+                                            <Text style={currentStyles.description}>
+                                                Loading deep-dive intelligence for {name}...
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
+                            )}
+
+                            {activeTab === 'NEWS' && (
+                                <View style={currentStyles.centerSection}>
+                                    <Newspaper size={32} color={colors.uiMuted} />
+                                    <Text style={currentStyles.offlineTitle}>Wire Feed Offline</Text>
+                                    <Text style={currentStyles.offlineSub}>Syncing with Bloomberg/Reuters feeds...</Text>
+                                </View>
+                            )}
+
+                            <View style={{ height: 40 }} />
+                        </ScrollView>
+                    )}
                 </View>
             </View>
         </Modal>
@@ -445,6 +488,16 @@ const styles = (colors: any, isDark: boolean, screenHeight: number) => StyleShee
     scrollView: {
         flex: 1,
         padding: 20,
+    },
+    filingsBody: {
+        flex: 1,
+        padding: 20,
+    },
+    filingsContent: {
+        flex: 1,
+    },
+    yearSelectorScroll: {
+        marginBottom: 20,
     },
     section: {
         gap: 16,
@@ -610,9 +663,13 @@ const styles = (colors: any, isDark: boolean, screenHeight: number) => StyleShee
     yearButtonTextActive: {
         color: isDark ? '#000000' : '#ffffff',
     },
-    timeline: {
+    timelineListContainer: {
+        flex: 1,
         paddingLeft: 24,
         position: 'relative',
+    },
+    timelineListContent: {
+        paddingBottom: 20,
     },
     timelineLine: {
         position: 'absolute',
@@ -622,8 +679,8 @@ const styles = (colors: any, isDark: boolean, screenHeight: number) => StyleShee
         width: 1,
         backgroundColor: colors.uiDivider,
     },
-    timelineGroup: {
-        marginBottom: 24,
+    timelineSectionHeader: {
+        marginBottom: 12,
         position: 'relative',
     },
     timelineDot: {

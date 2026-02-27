@@ -11,6 +11,7 @@ const RAW_DATA_KEY = 'tt_raw_price_data:v1';
 // Module-level memory cache for instant tab switching
 let globalPriceDataCache = new Map<string, Map<string, number>>();
 let globalPriceDataTimestamp = 0;
+let globalPriceDataVersion = 0;
 const globalPriceCoverage = new Map<string, Set<string>>();
 
 async function loadPersistedRawData() {
@@ -48,6 +49,7 @@ loadPersistedRawData().then(initial => {
     if (initial) {
         globalPriceDataCache = initial.cache;
         globalPriceDataTimestamp = initial.timestamp;
+        globalPriceDataVersion += 1;
         initial.cache.forEach((perfMap: Map<string, number>, interval: string) => {
             globalPriceCoverage.set(interval, new Set(perfMap.keys()));
         });
@@ -94,12 +96,14 @@ export function useThematicHeatmap(hierarchy: any) {
             themeToSymbols,
             allSymbols: Array.from(allSymbolsSet)
         };
-    }, [hierarchy]);
+    }, [hierarchy, thematicMap]);
 
     const { themeToSymbols, allSymbols } = themeMappings;
 
     const fetchFunc = useCallback(async () => {
-        if (allSymbols.length === 0) return {};
+        if (allSymbols.length === 0) {
+            return { heatmap: {}, stockPerfVersion: globalPriceDataVersion };
+        }
 
         const now = Date.now();
         const isCacheValid = (now - globalPriceDataTimestamp < CACHE_TTL);
@@ -139,6 +143,7 @@ export function useThematicHeatmap(hierarchy: any) {
 
         if (wasRefetched) {
             globalPriceDataTimestamp = Date.now();
+            globalPriceDataVersion += 1;
             savePersistedRawData(globalPriceDataCache, globalPriceDataTimestamp);
         }
 
@@ -160,10 +165,13 @@ export function useThematicHeatmap(hierarchy: any) {
             });
         });
 
-        return heatmap;
+        return {
+            heatmap,
+            stockPerfVersion: globalPriceDataVersion
+        };
     }, [allSymbols, themeToSymbols]);
 
-    const { data: heatmapData, loading, execute } = useAsync(fetchFunc, [allSymbols, themeToSymbols]);
+    const { data: heatmapResult, loading, execute } = useAsync(fetchFunc, [allSymbols, themeToSymbols]);
 
     useEffect(() => {
         if (!allSymbols.length) return;
@@ -172,8 +180,9 @@ export function useThematicHeatmap(hierarchy: any) {
     }, [allSymbols, execute]);
 
     return {
-        heatmapData: heatmapData || {},
+        heatmapData: heatmapResult?.heatmap || {},
         stockPerfMap: globalPriceDataCache,
-        loading: loading && !heatmapData
+        stockPerfVersion: heatmapResult?.stockPerfVersion ?? globalPriceDataVersion,
+        loading: loading && !heatmapResult
     };
 }

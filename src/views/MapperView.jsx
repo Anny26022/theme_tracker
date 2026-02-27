@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
-import { Search, Plus, Play, Info, ListTree, ChevronRight, Check, Copy, LayoutGrid } from 'lucide-react';
+import { Search, Plus, Play, Info, ListTree, ChevronRight, Check, Copy, LayoutGrid, RotateCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { m, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';

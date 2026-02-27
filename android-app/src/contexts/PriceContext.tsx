@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { fetchLivePrices } from '../services/priceService';
 
 /**
@@ -39,12 +40,16 @@ export function PriceProvider({ children }: { children: React.ReactNode }) {
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const fetchingRef = useRef(false);
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const isAppActiveRef = useRef(AppState.currentState === 'active');
 
     const hasPriceChanged = (prev: PriceData | undefined, next: PriceData) => {
         if (!prev) return true;
         return prev.price !== next.price
             || prev.change !== next.change
-            || prev.changePct !== next.changePct;
+            || prev.changePct !== next.changePct
+            || prev.prevClose !== next.prevClose
+            || prev.source !== next.source;
     };
 
     const notifySymbol = useCallback((symbol: string) => {
@@ -59,6 +64,14 @@ export function PriceProvider({ children }: { children: React.ReactNode }) {
             if (subs.size > 0) symbols.push(symbol);
         }
         return symbols;
+    }, []);
+
+    const getActiveSymbolCount = useCallback(() => {
+        let count = 0;
+        for (const subs of subscribersRef.current.values()) {
+            if (subs.size > 0) count += 1;
+        }
+        return count;
     }, []);
 
     const fetchAll = useCallback(async () => {
@@ -90,25 +103,72 @@ export function PriceProvider({ children }: { children: React.ReactNode }) {
         }
     }, [getActiveSymbols, notifySymbol]);
 
-    const scheduleFetch = useCallback(() => {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => {
-            fetchAll();
+    const stopPolling = useCallback(() => {
+        if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+        }
+        if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+            debounceRef.current = null;
+        }
+    }, []);
 
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            intervalRef.current = setInterval(fetchAll, REFRESH_INTERVAL);
+    const startPolling = useCallback(() => {
+        if (debounceRef.current || intervalRef.current) return;
+
+        debounceRef.current = setTimeout(() => {
+            debounceRef.current = null;
+
+            if (!isAppActiveRef.current || getActiveSymbolCount() === 0) {
+                stopPolling();
+                return;
+            }
+
+            fetchAll();
+            intervalRef.current = setInterval(() => {
+                if (!isAppActiveRef.current || getActiveSymbolCount() === 0) {
+                    stopPolling();
+                    return;
+                }
+                fetchAll();
+            }, REFRESH_INTERVAL);
         }, DEBOUNCE_MS);
-    }, [fetchAll]);
+    }, [fetchAll, getActiveSymbolCount, stopPolling]);
+
+    const syncPollingState = useCallback(() => {
+        if (!isAppActiveRef.current || getActiveSymbolCount() === 0) {
+            stopPolling();
+            return;
+        }
+        startPolling();
+    }, [getActiveSymbolCount, startPolling, stopPolling]);
 
     useEffect(() => {
+        const appStateSub = AppState.addEventListener('change', (nextState) => {
+            const wasActive = appStateRef.current === 'active';
+            const isActive = nextState === 'active';
+            appStateRef.current = nextState;
+            isAppActiveRef.current = isActive;
+
+            if (wasActive && !isActive) {
+                stopPolling();
+                return;
+            }
+            if (!wasActive && isActive) {
+                syncPollingState();
+            }
+        });
+
         return () => {
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            if (debounceRef.current) clearTimeout(debounceRef.current);
+            appStateSub.remove();
+            stopPolling();
         };
-    }, []);
+    }, [stopPolling, syncPollingState]);
 
     const subscribeToSymbol = useCallback((symbol: string) => {
         const key = symbol.trim().toUpperCase();
+        if (!key) return () => { };
         const id = nextIdRef.current++;
 
         if (!subscribersRef.current.has(key)) {
@@ -116,7 +176,7 @@ export function PriceProvider({ children }: { children: React.ReactNode }) {
         }
         subscribersRef.current.get(key)!.add(id);
 
-        scheduleFetch();
+        syncPollingState();
 
         return () => {
             const subs = subscribersRef.current.get(key);
@@ -126,8 +186,9 @@ export function PriceProvider({ children }: { children: React.ReactNode }) {
                     subscribersRef.current.delete(key);
                 }
             }
+            syncPollingState();
         };
-    }, [scheduleFetch]);
+    }, [syncPollingState]);
 
     const addListener = useCallback((symbol: string, listener: () => void) => {
         const key = symbol.trim().toUpperCase();
@@ -171,7 +232,6 @@ export function PriceProvider({ children }: { children: React.ReactNode }) {
 export function useLivePrice(symbol: string | undefined) {
     const { subscribeToSymbol, getPriceSnapshot, addListener } = useContext(PriceContext);
     const key = symbol?.trim().toUpperCase();
-    const [, forceUpdate] = useState(0);
 
     // Subscribe to the symbol for fetching
     useEffect(() => {
@@ -180,16 +240,17 @@ export function useLivePrice(symbol: string | undefined) {
         return unsubscribe;
     }, [key, subscribeToSymbol]);
 
-    // Listen for price changes to trigger re-renders
-    useEffect(() => {
-        if (!key) return;
-        const unlisten = addListener(key, () => {
-            forceUpdate(n => n + 1);
-        });
-        return unlisten;
+    const subscribe = useCallback((onStoreChange: () => void) => {
+        if (!key) return () => { };
+        return addListener(key, onStoreChange);
     }, [key, addListener]);
 
-    const data = key ? getPriceSnapshot(key) : null;
+    const getSnapshot = useCallback(() => {
+        if (!key) return null;
+        return getPriceSnapshot(key);
+    }, [key, getPriceSnapshot]);
+
+    const data = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
     return {
         price: data?.price ?? null,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, memo } from 'react';
 import { View, Text, StyleSheet, TextInput, FlatList, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { Search, ArrowUpRight } from 'lucide-react-native';
 import { useMarketData } from '../hooks/useMarketData';
@@ -15,13 +15,44 @@ interface DomainViewProps {
     onOpenInsights: (company: any) => void;
 }
 
+const IndustryItem = memo(({ item, index, onIndustryClick, onCopy }: any) => (
+    <View style={viewStyles.column}>
+        <IndustryNode
+            name={item.name}
+            count={item.count}
+            index={index}
+            onClick={() => onIndustryClick(item.sector, item.name)}
+            onCopy={() => onCopy(item)}
+        />
+    </View>
+));
+
+const SearchResultItem = memo(({ c, onPress, colors }: any) => (
+    <Pressable
+        style={viewStyles.searchResultItem}
+        onPress={() => onPress(c)}
+    >
+        <View style={viewStyles.resContent}>
+            <View style={viewStyles.resRowTop}>
+                <Text style={[viewStyles.resSymbol, { color: colors.accentPrimary }]}>{c.symbol}</Text>
+                <Text style={[viewStyles.resName, { color: colors.textMain }]} numberOfLines={1}>{c.name}</Text>
+                <ArrowUpRight size={14} color={colors.textMain} style={viewStyles.resArrow} />
+            </View>
+            <View style={viewStyles.resRowBottom}>
+                <Text style={[viewStyles.resSector, { color: colors.textMuted }]}>{c.sector}</Text>
+                <View style={[viewStyles.resSeparator, { backgroundColor: colors.uiDivider }]} />
+                <Text style={[viewStyles.resIndustry, { color: colors.textMuted }]}>{c.industry}</Text>
+            </View>
+        </View>
+    </Pressable>
+));
+
 export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps) => {
     const { colors, isDark } = useTheme();
     const { hierarchy, sectors, loading } = useMarketData();
     const [filter, setFilter] = useState('');
     const [showResults, setShowResults] = useState(false);
 
-    // Flatten all industries across all sectors
     const { allIndustries, companiesIndex } = useMemo(() => {
         const seen = new Set();
         const industries: any[] = [];
@@ -59,30 +90,22 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
     const filteredIndustries = useMemo(() => {
         if (!filter) return allIndustries;
         const search = filter.toLowerCase();
-
-        // Search in industries
         const matches = allIndustries.filter(ind => ind.name.toLowerCase().includes(search));
-
-        // Also check if any companies match the search, then include their industries
         const companyMatches = companiesIndex.filter(c =>
             c.symbol.toLowerCase().includes(search) ||
             (c.name && c.name.toLowerCase().includes(search))
         );
-
         const relatedIndustryNames = new Set(companyMatches.map(c => c.industry));
-
-        // Merge results
         const finalResults = [...matches];
         allIndustries.forEach(ind => {
             if (relatedIndustryNames.has(ind.name) && !matches.find(m => m.name === ind.name)) {
                 finalResults.push(ind);
             }
         });
-
         return finalResults.sort((a, b) => a.name.localeCompare(b.name));
     }, [allIndustries, companiesIndex, filter]);
 
-    const handleCopyAll = () => {
+    const handleCopyAll = useCallback(() => {
         const data = filteredIndustries.map(ind => ({
             label: ind.name,
             companies: hierarchy[ind.sector][ind.name] || []
@@ -93,9 +116,9 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
             return true;
         }
         return false;
-    };
+    }, [filteredIndustries, hierarchy]);
 
-    const handleCopyIndustry = (ind: any) => {
+    const handleCopyIndustry = useCallback((ind: any) => {
         const text = formatTVWatchlist([{
             label: ind.name,
             companies: hierarchy[ind.sector][ind.name] || []
@@ -105,12 +128,11 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
             return true;
         }
         return false;
-    };
+    }, [hierarchy]);
 
     const matchingCompanies = useMemo(() => {
-        if (!filter || filter.length < 1) return []; // Lowered threshold to 1 char
+        if (!filter || filter.length < 1) return [];
         const search = filter.toLowerCase();
-
         return companiesIndex
             .filter(c =>
                 c.symbol.toLowerCase().includes(search) ||
@@ -119,44 +141,52 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
             .slice(0, 10);
     }, [filter, companiesIndex]);
 
-    const handleResultSelect = (c: any) => {
+    const handleResultSelect = useCallback((c: any) => {
         onIndustryClick(c.sector, c.industry);
         onOpenInsights?.({ symbol: c.symbol, name: c.name });
         setShowResults(false);
         setFilter('');
-    };
+    }, [onIndustryClick, onOpenInsights]);
 
-    const currentStyles = styles(colors, isDark);
+    const renderItem = useCallback(({ item, index }: any) => (
+        <IndustryItem
+            item={item}
+            index={index}
+            onIndustryClick={onIndustryClick}
+            onCopy={handleCopyIndustry}
+        />
+    ), [onIndustryClick, handleCopyIndustry]);
+
+    const keyExtractor = useCallback((item: any) => `${item.sector}-${item.name}`, []);
 
     if (loading) {
         return (
-            <View style={currentStyles.loadingContainer}>
+            <View style={viewStyles.loadingContainer}>
                 <ActivityIndicator color={colors.accentPrimary} />
-                <Text style={currentStyles.loadingText}>Synchronizing Architecture...</Text>
+                <Text style={[viewStyles.loadingText, { color: colors.textMuted }]}>Synchronizing Architecture...</Text>
             </View>
         );
     }
 
     return (
-        <ViewWrapper style={currentStyles.container}>
-            {/* Header with Search */}
-            <View style={currentStyles.header} collapsable={false}>
-                <View style={currentStyles.headerText}>
-                    <View style={currentStyles.titleRow}>
-                        <Text style={currentStyles.title}>DOMAIN VECTOR</Text>
+        <ViewWrapper style={viewStyles.container}>
+            <View style={[viewStyles.header, { borderBottomColor: colors.uiDivider, backgroundColor: isDark ? 'rgba(5, 5, 8, 0.8)' : 'rgba(248, 249, 250, 0.8)' }]} collapsable={false}>
+                <View style={viewStyles.headerText}>
+                    <View style={viewStyles.titleRow}>
+                        <Text style={[viewStyles.title, { color: colors.textMain }]}>DOMAIN VECTOR</Text>
                         <WatchlistCopyButton
                             onCopy={handleCopyAll}
                             size={14}
-                            style={currentStyles.copyMaster}
+                            style={viewStyles.copyMaster}
                         />
                     </View>
-                    <Text style={currentStyles.subtitle}>{allIndustries.length} INDUSTRIES ACROSS {sectors.length} SECTORS</Text>
+                    <Text style={[viewStyles.subtitle, { color: colors.accentPrimary }]}>{allIndustries.length} INDUSTRIES ACROSS {sectors.length} SECTORS</Text>
                 </View>
 
-                <View style={currentStyles.searchContainer}>
-                    <View style={currentStyles.searchBar}>
+                <View style={viewStyles.searchContainer}>
+                    <View style={viewStyles.searchBar}>
                         <TextInput
-                            style={currentStyles.input}
+                            style={[viewStyles.input, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : '#fff', borderColor: colors.uiDivider, color: colors.textMain }]}
                             placeholder="TA"
                             placeholderTextColor={colors.uiMuted}
                             value={filter}
@@ -168,34 +198,16 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
                             autoCapitalize="characters"
                             autoCorrect={false}
                         />
-                        <View style={currentStyles.searchIconContainer}>
+                        <View style={viewStyles.searchIconContainer}>
                             <Search size={12} color="#fff" />
                         </View>
                     </View>
 
-                    {/* Results Overlay */}
                     {showResults && matchingCompanies.length > 0 && (
-                        <View style={currentStyles.searchResults}>
+                        <View style={[viewStyles.searchResults, { backgroundColor: isDark ? colors.bgMain : '#ffffff', borderColor: colors.accentPrimary }]}>
                             <ScrollView keyboardShouldPersistTaps="always" style={{ flex: 1 }} contentInsetAdjustmentBehavior="automatic">
                                 {matchingCompanies.map((c) => (
-                                    <Pressable
-                                        key={`${c.symbol}-${c.sector}-${c.industry}`}
-                                        style={currentStyles.searchResultItem}
-                                        onPress={() => handleResultSelect(c)}
-                                    >
-                                        <View style={currentStyles.resContent}>
-                                            <View style={currentStyles.resRowTop}>
-                                                <Text style={currentStyles.resSymbol}>{c.symbol}</Text>
-                                                <Text style={currentStyles.resName} numberOfLines={1}>{c.name}</Text>
-                                                <ArrowUpRight size={14} color={colors.textMain} style={currentStyles.resArrow} />
-                                            </View>
-                                            <View style={currentStyles.resRowBottom}>
-                                                <Text style={currentStyles.resSector}>{c.sector}</Text>
-                                                <View style={currentStyles.resSeparator} />
-                                                <Text style={currentStyles.resIndustry}>{c.industry}</Text>
-                                            </View>
-                                        </View>
-                                    </Pressable>
+                                    <SearchResultItem key={`${c.symbol}-${c.sector}-${c.industry}`} c={c} onPress={handleResultSelect} colors={colors} />
                                 ))}
                             </ScrollView>
                         </View>
@@ -203,28 +215,21 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
                 </View>
             </View>
 
-            {/* Industry Grid */}
             <FlatList
                 data={filteredIndustries}
                 contentInsetAdjustmentBehavior="automatic"
-                keyExtractor={(item) => `${item.sector}-${item.name}`}
+                keyExtractor={keyExtractor}
                 numColumns={2}
-                columnWrapperStyle={currentStyles.row}
-                renderItem={({ item, index }) => (
-                    <View style={currentStyles.column}>
-                        <IndustryNode
-                            name={item.name}
-                            count={item.count}
-                            index={index}
-                            onClick={() => onIndustryClick(item.sector, item.name)}
-                            onCopy={() => handleCopyIndustry(item)}
-                        />
-                    </View>
-                )}
-                contentContainerStyle={currentStyles.listContent}
+                columnWrapperStyle={viewStyles.row}
+                renderItem={renderItem}
+                initialNumToRender={10}
+                windowSize={5}
+                maxToRenderPerBatch={10}
+                removeClippedSubviews={true}
+                contentContainerStyle={viewStyles.listContent}
                 ListEmptyComponent={
-                    <View style={currentStyles.empty}>
-                        <Text style={currentStyles.emptyText}>NO VECTORS IDENTIFIED</Text>
+                    <View style={viewStyles.empty}>
+                        <Text style={[viewStyles.emptyText, { color: colors.textMuted }]}>NO VECTORS IDENTIFIED</Text>
                     </View>
                 }
             />
@@ -232,197 +237,34 @@ export const DomainView = ({ onIndustryClick, onOpenInsights }: DomainViewProps)
     );
 };
 
-const styles = (colors: any, isDark: boolean) => StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: 'transparent',
-    },
-    titleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-    },
-    copyMaster: {
-        opacity: 0.5,
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        gap: 12,
-    },
-    loadingText: {
-        fontSize: 10,
-        fontWeight: 'bold',
-        color: colors.textMuted,
-        letterSpacing: 2,
-        textTransform: 'uppercase',
-    },
-    header: {
-        paddingVertical: 24,
-        paddingHorizontal: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.uiDivider,
-        marginBottom: 16,
-        gap: 16,
-        zIndex: 1000,
-        elevation: 5,
-        backgroundColor: isDark ? 'rgba(5, 5, 8, 0.8)' : 'rgba(248, 249, 250, 0.8)',
-    },
-    headerText: {
-        gap: 4,
-    },
-    title: {
-        fontSize: 18,
-        fontWeight: '300',
-        color: colors.textMain,
-        letterSpacing: 6,
-    },
-    subtitle: {
-        fontSize: 8,
-        fontWeight: 'bold',
-        color: colors.accentPrimary,
-        letterSpacing: 2,
-    },
-    searchContainer: {
-        position: 'relative',
-        zIndex: 2000,
-        alignItems: 'center',
-    },
-    searchBar: {
-        width: 240, // Sleek, compact width
-        position: 'relative',
-        alignItems: 'flex-start',
-        alignSelf: 'center', // Keep the mini-box centered on screen
-    },
-    input: {
-        width: '100%',
-        backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : '#fff',
-        borderWidth: 1,
-        borderColor: colors.uiDivider,
-        borderRadius: 4,
-        paddingVertical: 10, // Slimmer height
-        paddingLeft: 36,
-        paddingRight: 16,
-        fontSize: 10, // Refined font size
-        fontWeight: 'bold',
-        color: colors.textMain,
-        letterSpacing: 2, // Less aggressive letter spacing for small box
-        textAlign: 'left',
-    },
-    searchIconContainer: {
-        position: 'absolute',
-        bottom: -8,
-        left: 14,
-        backgroundColor: '#0085ff',
-        width: 18, // Mini badge
-        height: 18,
-        borderRadius: 9,
-        justifyContent: 'center',
-        alignItems: 'center',
-        elevation: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 3,
-        zIndex: 2002,
-    },
-    searchResults: {
-        position: 'absolute',
-        top: 54,
-        left: 0,
-        right: 0,
-        backgroundColor: isDark ? colors.bgMain : '#ffffff',
-        borderWidth: 1,
-        borderColor: colors.accentPrimary,
-        borderRadius: 4,
-        maxHeight: 350,
-        minHeight: 100,
-        zIndex: 5000,
-        elevation: 20,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 15 },
-        shadowOpacity: 0.4,
-        shadowRadius: 20,
-        overflow: 'hidden',
-    },
-    searchResultItem: {
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.uiDivider,
-    },
-    resContent: {
-        gap: 6,
-    },
-    resRowTop: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 10,
-        position: 'relative',
-    },
-    resSymbol: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: colors.accentPrimary,
-        letterSpacing: 1,
-    },
-    resName: {
-        fontSize: 9,
-        fontWeight: '600',
-        color: colors.textMain,
-        opacity: 0.8,
-        flex: 1,
-    },
-    resArrow: {
-        position: 'absolute',
-        right: 0,
-        top: 2,
-        opacity: 0.6,
-    },
-    resRowBottom: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    resSector: {
-        fontSize: 7,
-        fontWeight: '900',
-        color: colors.textMuted,
-        letterSpacing: 1,
-        textTransform: 'uppercase',
-    },
-    resSeparator: {
-        width: 1,
-        height: 6,
-        backgroundColor: colors.uiDivider,
-    },
-    resIndustry: {
-        fontSize: 7,
-        fontWeight: '900',
-        color: colors.textMuted,
-        letterSpacing: 1,
-        textTransform: 'uppercase',
-    },
-    listContent: {
-        paddingBottom: 40,
-        paddingHorizontal: 16,
-    },
-    row: {
-        gap: 8,
-        marginBottom: 8,
-    },
-    column: {
-        flex: 1,
-    },
-    empty: {
-        padding: 40,
-        alignItems: 'center',
-    },
-    emptyText: {
-        color: colors.textMuted,
-        fontSize: 10,
-        fontWeight: 'bold',
-        letterSpacing: 2,
-        textTransform: 'uppercase',
-    }
+const viewStyles = StyleSheet.create({
+    container: { flex: 1, backgroundColor: 'transparent' },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    copyMaster: { opacity: 0.5 },
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
+    loadingText: { fontSize: 10, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' },
+    header: { paddingVertical: 24, paddingHorizontal: 16, borderBottomWidth: 1, marginBottom: 16, gap: 16, zIndex: 1000, elevation: 5 },
+    headerText: { gap: 4 },
+    title: { fontSize: 18, fontWeight: '300', letterSpacing: 6 },
+    subtitle: { fontSize: 8, fontWeight: 'bold', letterSpacing: 2 },
+    searchContainer: { position: 'relative', zIndex: 2000, alignItems: 'center' },
+    searchBar: { width: 240, position: 'relative', alignItems: 'flex-start', alignSelf: 'center' },
+    input: { width: '100%', borderWidth: 1, borderRadius: 4, paddingVertical: 10, paddingLeft: 36, paddingRight: 16, fontSize: 10, fontWeight: 'bold', letterSpacing: 2, textAlign: 'left' },
+    searchIconContainer: { position: 'absolute', bottom: -8, left: 14, backgroundColor: '#0085ff', width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, zIndex: 2002 },
+    searchResults: { position: 'absolute', top: 54, left: 0, right: 0, borderWidth: 1, borderRadius: 4, maxHeight: 350, minHeight: 100, zIndex: 5000, elevation: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 15 }, shadowOpacity: 0.4, shadowRadius: 20, overflow: 'hidden' },
+    searchResultItem: { padding: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+    resContent: { gap: 6 },
+    resRowTop: { flexDirection: 'row', alignItems: 'baseline', gap: 10, position: 'relative' },
+    resSymbol: { fontSize: 12, fontWeight: '800', letterSpacing: 1 },
+    resName: { fontSize: 9, fontWeight: '600', opacity: 0.8, flex: 1 },
+    resArrow: { position: 'absolute', right: 0, top: 2, opacity: 0.6 },
+    resRowBottom: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    resSector: { fontSize: 7, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase' },
+    resSeparator: { width: 1, height: 6 },
+    resIndustry: { fontSize: 7, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase' },
+    listContent: { paddingBottom: 40, paddingHorizontal: 16 },
+    row: { gap: 8, marginBottom: 8 },
+    column: { flex: 1 },
+    empty: { padding: 40, alignItems: 'center' },
+    emptyText: { fontSize: 10, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }
 });

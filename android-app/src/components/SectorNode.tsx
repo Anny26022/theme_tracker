@@ -12,7 +12,7 @@ interface SectorNodeProps {
     colorObj: { border: string, text: string };
 }
 
-export const SectorNode = ({ name, count, onClick, onCopy, index, colorObj }: SectorNodeProps) => {
+export const SectorNode = React.memo(({ name, count, onClick, onCopy, index, colorObj }: SectorNodeProps) => {
     return (
         <BaseNode
             label={`Node_0${index + 1}`}
@@ -35,7 +35,7 @@ export const SectorNode = ({ name, count, onClick, onCopy, index, colorObj }: Se
             </View>
         </BaseNode>
     );
-};
+});
 
 const styles = StyleSheet.create({
     hairline: {

@@ -575,14 +575,14 @@ export const MarketMapView = ({ hierarchy }) => {
     const { heatmapData, stockPerfMap, loading } = useThematicHeatmap(THEMATIC_MAP, filteredHierarchy);
 
     return (
-        <ViewWrapper id="market-map" className="space-y-8 md:space-y-12 pb-32 !overflow-visible">
+        <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 !overflow-visible">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60] !overflow-visible">
                 <div className="space-y-1 relative z-10 w-full md:w-auto">
                     <h2 className="text-xl md:text-3xl font-light tracking-[0.15em] md:tracking-[0.5em] uppercase opacity-90 text-glow-gold leading-tight">
                         Market <span className="text-[var(--accent-primary)]">Architecture</span>
                     </h2>
                     <p className="text-[7px] md:text-[10px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
-                        {hideBSE ? 'Institutional Alpha (NSE Only)' : 'Deep Thematic Mapping (Global)'}
+                        {hideBSE ? 'Deep Thematic Mapping (NSE Only)' : 'Deep Thematic Mapping (Full Universe)'}
                     </p>
                 </div>
 

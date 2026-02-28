@@ -164,7 +164,7 @@ RouterView.displayName = 'RouterView';
 const App = () => {
     const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
     const { hierarchy, rawData, loading, error } = useMarketData();
-    const [insightsCompany, setInsightsCompany] = React.useState(null);
+    const [insightsCompany, setInsightsCompany] = React.useState(null); 
     const [hasVisitedMarketMap, setHasVisitedMarketMap] = React.useState(view === VIEWS.MARKET_MAP);
 
     // Source of truth from hierarchy to avoid drift between lists and lookup map.

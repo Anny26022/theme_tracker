@@ -10,7 +10,9 @@ const COLUMNS = [
     { label: '1D', key: '1D' },
     { label: '1W', key: '5D' },
     { label: '1M', key: '1M' },
+    { label: '3M', key: '3M' },
     { label: '6M', key: '6M' },
+    { label: '12M', key: '1Y' },
     { label: 'YTD', key: 'YTD' }
 ];
 const EMPTY_THEME_PERF = Object.freeze({});
@@ -38,6 +40,17 @@ const getHeatmapColor = (value) => {
 
 const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) => {
     const count = companies.length;
+    const hasAnyMissingData = useMemo(() => {
+        if (!stockPerfMap || stockPerfMap.size === 0) return false;
+        return companies.some(stock => {
+            const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
+            return COLUMNS.some(col => {
+                const val = stockPerfMap.get(col.key)?.get(cleaned)?.changePct;
+                return val === null || val === undefined;
+            });
+        });
+    }, [companies, stockPerfMap]);
+
     return (
         <div className="flex flex-col gap-3">
             <div className="border-b border-[var(--ui-divider)]/40 pb-2 mb-1 flex justify-between items-end">
@@ -90,8 +103,16 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                                     </div>
                                 </div>
                                 <div className="flex flex-col min-w-0">
-                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] truncate">
+                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] truncate flex items-center gap-1">
                                         {stock.name}
+                                        {(() => {
+                                            const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
+                                            const hasData = COLUMNS.some(col => {
+                                                const val = stockPerfMap.get(col.key)?.get(cleaned)?.changePct;
+                                                return val !== null && val !== undefined;
+                                            });
+                                            return !hasData && <span className="text-[var(--accent-primary)] animate-pulse">*</span>;
+                                        })()}
                                     </span>
                                     <span className="text-[6px] font-bold text-[var(--text-muted)] opacity-30 uppercase font-mono">
                                         {stock.symbol}
@@ -121,6 +142,23 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                     );
                 })}
             </div>
+
+            {hasAnyMissingData && (
+                <div className="mt-4 pt-4 border-t border-[var(--ui-divider)]/40 bg-[var(--accent-primary)]/[0.03] -mx-4 px-4 pb-1">
+                    <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[var(--accent-primary)] mb-2.5 flex items-center gap-2.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] shadow-[0_0_8px_var(--accent-primary)]"></span>
+                        CALCULATION POOL ADVISORY
+                    </p>
+                    <div className="space-y-3.5">
+                        <p className="text-[9px] font-bold text-[var(--text-main)] opacity-90 leading-relaxed uppercase tracking-tight italic">
+                            Stocks marked with <span className="text-[var(--accent-primary)] font-black text-[12px]">*</span> (or showing <span className="font-mono bg-white/10 px-1 rounded text-[var(--accent-primary)]">-</span>) have no fetched price data for the selected timeframe.
+                        </p>
+                        <p className="text-[8.5px] font-medium text-[var(--text-muted)] opacity-80 leading-normal uppercase tracking-wide">
+                            These symbols are <span className="text-[var(--text-main)] font-black underline decoration-[var(--accent-primary)] underline-offset-4 decoration-2">completely excluded</span> from the thematic performance calculation pool to ensure statistical accuracy.
+                        </p>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -187,7 +225,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                     ) : (
                         <div
                             className={cn(
-                                "absolute right-full top-0 mr-4 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
+                                "absolute left-full top-8 ml-6 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
                                 "!bg-[var(--bg-main)] !opacity-100",
                                 companies.length > 15 ? "w-[680px]" : "w-[340px]"
                             )}
@@ -452,7 +490,7 @@ export const MarketMapView = ({ hierarchy }) => {
                         Market <span className="text-[var(--accent-primary)]">Architecture</span>
                     </h2>
                     <p className="text-[7px] md:text-[10px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
-                        {hideBSE ? 'Institutional Alpha (NSE Focus)' : 'Deep Thematic Mapping (Global)'}
+                        {hideBSE ? 'Institutional Alpha (NSE Only)' : 'Deep Thematic Mapping (Global)'}
                     </p>
                 </div>
 
@@ -540,7 +578,7 @@ export const MarketMapView = ({ hierarchy }) => {
                             hideBSE ? "bg-[var(--accent-primary)] shadow-[0_0_10px_var(--accent-primary)]" : "bg-[var(--text-muted)] opacity-30 group-hover/btn:opacity-100"
                         )} />
                         <span className="text-[8.5px] font-black uppercase tracking-[0.25em]">
-                            {hideBSE ? 'NSE PRIMARY' : 'SHOW ALL'}
+                            {hideBSE ? 'NSE ONLY' : 'SHOW ALL'}
                         </span>
                     </button>
                 </div>

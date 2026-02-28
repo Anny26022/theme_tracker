@@ -4,6 +4,7 @@ export type MarketCompany = {
   sector?: string;
   industry?: string;
   exch?: string;
+  levels?: string[];
   [key: string]: unknown;
 };
 

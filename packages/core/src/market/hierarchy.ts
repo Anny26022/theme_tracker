@@ -8,21 +8,31 @@ export function buildHierarchyFromRawData(rawData: MarketCompany[] = []): Market
 
   for (const item of rawData) {
     if (!item?.industry) continue;
-    if (item.sector && item.sector !== "N/A") {
-      industryToSector[item.industry] = item.sector;
+    let fallback = item.sector;
+    if ((!fallback || fallback === "N/A") && Array.isArray(item.levels) && item.levels.length > 0) {
+      fallback = item.levels[0];
+    }
+
+    if (fallback && fallback !== "N/A") {
+      industryToSector[item.industry] = fallback as string;
     }
   }
 
   for (const item of rawData) {
     if (!item?.industry) continue;
 
-    const sector = industryToSector[item.industry] || item.sector || "N/A";
-    if (!tree[sector]) tree[sector] = {};
-    if (!tree[sector][item.industry]) tree[sector][item.industry] = [];
+    let sector = industryToSector[item.industry] || item.sector;
+    if ((!sector || sector === "N/A") && Array.isArray(item.levels) && item.levels.length > 0) {
+      sector = item.levels[0];
+    }
+    if (!sector) sector = "N/A";
 
-    tree[sector][item.industry].push({
+    if (!tree[sector as string]) tree[sector as string] = {};
+    if (!tree[sector as string][item.industry]) tree[sector as string][item.industry] = [];
+
+    tree[sector as string][item.industry].push({
       ...item,
-      sector,
+      sector: sector as string,
     });
   }
 

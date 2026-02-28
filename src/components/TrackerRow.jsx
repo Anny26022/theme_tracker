@@ -5,7 +5,7 @@ import { cn } from '../lib/utils';
 
 const EMPTY_ITEMS = [];
 
-export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY_ITEMS, breadth, onClick, loading }) => {
+export const TrackerRow = ({ name, count, perf, leaders = EMPTY_ITEMS, laggards = EMPTY_ITEMS, breadth, onClick, loading }) => {
     const [tooltipOpen, setTooltipOpen] = useState(false);
     const [pos, setPos] = useState(null);
     const rowRef = useRef(null);
@@ -55,13 +55,16 @@ export const TrackerRow = ({ name, perf, leaders = EMPTY_ITEMS, laggards = EMPTY
                             "w-1.5 h-1.5 rounded-full transition-all duration-300 shrink-0",
                             tooltipOpen ? "bg-[var(--accent-primary)] shadow-[0_0_10px_var(--accent-primary)] scale-125" : "bg-[var(--ui-muted)] group-hover/row:bg-[var(--accent-primary)]/50"
                         )} />
-                        <div className="flex flex-col min-w-0">
+                        <div className="flex items-baseline gap-1.5 min-w-0">
                             <span className={cn(
                                 "text-[10px] font-bold uppercase tracking-[0.2em] truncate transition-all duration-300",
                                 tooltipOpen ? "text-[var(--accent-primary)]" : "text-[var(--text-muted)] group-hover/row:text-[var(--text-main)]"
                             )}>
                                 {name}
                             </span>
+                            {count !== undefined && (
+                                <span className="text-[8px] font-mono opacity-40 shrink-0 tracking-tighter">({count})</span>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -6,7 +6,7 @@ import { useComparisonData } from '../hooks/useComparisonData';
 import { cleanSymbol } from '../services/priceService';
 import { ViewWrapper } from '../components/ViewWrapper';
 
-const INTERVALS = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
+const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 const MAX_CHART_SYMBOLS = 60;
 const COMPARISON_STORAGE_KEY = 'tt_comparison_symbols:v2';
 const LEGACY_COMPARISON_STORAGE_KEY = 'tt_comparison_symbols_v2';

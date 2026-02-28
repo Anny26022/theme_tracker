@@ -92,7 +92,7 @@ function scheduleFundaSave() {
 }
 
 export const INTERVAL_WINDOWS = {
-    '1D': 1, '5D': 2, '1M': 3, '6M': 4,
+    '1D': 1, '5D': 2, '1M': 3, '3M': 4, '6M': 4,
     'YTD': 5, '1Y': 6, '5Y': 7, 'MAX': 8
 };
 
@@ -100,6 +100,7 @@ const INTERVAL_CACHE_TTL = {
     '1D': 300_000,     // 5 min
     '5D': 300_000,     // 5 min
     '1M': 600_000,     // 10 min
+    '3M': 600_000,     // 10 min
     '6M': 600_000,     // 10 min
     'YTD': 600_000,    // 10 min
     '1Y': 600_000,     // 10 min
@@ -276,17 +277,33 @@ function extractPriceFromFrame(payload) {
 
 // ─── Chart/Interval Extraction ─────────────────────────────────────
 
-function extractChartFromFrame(payload) {
+function extractChartFromFrame(payload, interval) {
     const root = payload?.[0]?.[0];
     if (!Array.isArray(root)) return null;
 
     const symbolInfo = root[0]; // ["RELIANCE", "NSE"]
-    const points = root[3]?.[0]?.[1];
+
+    // Robustly find the points array. Google structure varies.
+    let points = root[3]?.[0]?.[1];
+    if (!Array.isArray(points) || points.length < 2) {
+        points = root[3]?.[1];
+    }
+
     if (!Array.isArray(symbolInfo) || !Array.isArray(points) || points.length === 0) return null;
 
     const lastPoint = points[points.length - 1];
-    const changePct = lastPoint?.[1]?.[2];
     const close = lastPoint?.[1]?.[0];
+    let changePct = lastPoint?.[1]?.[2];
+
+    // Compute custom intervals requiring manual lookback
+    if (interval === '3M') {
+        const lookback = 63; // ~63 trading days in 3 months
+        const startIndex = Math.max(0, points.length - 1 - lookback);
+        const startPrice = points[startIndex]?.[1]?.[0];
+        if (startPrice && close) {
+            changePct = ((close - startPrice) / startPrice);
+        }
+    }
 
     if (typeof changePct !== 'number' || !isFinite(changePct)) return null;
 
@@ -582,7 +599,7 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                 const returned = new Set();
 
                 frames.forEach(frame => {
-                    const extracted = extractChartFromFrame(frame.payload);
+                    const extracted = extractChartFromFrame(frame.payload, interval);
                     if (extracted) {
                         const cacheKey = `${extracted.symbol}:${window}`;
                         intervalCache.set(cacheKey, { data: extracted.data, timestamp: Date.now() });
@@ -660,7 +677,7 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
             const currentPrice = prices[prices.length - 1];
             let changePct = 0;
 
-            const dayIndices = { '1D': 1, '5D': 5, '1M': 20, '6M': 125, '1Y': 250, 'YTD': 250 };
+            const dayIndices = { '1D': 1, '5D': 5, '1M': 20, '3M': 63, '6M': 125, '1Y': 250, 'YTD': 250 };
             const lookback = dayIndices[interval] || 20;
             const startIndex = Math.max(0, prices.length - 1 - lookback);
             const startPrice = prices[startIndex];

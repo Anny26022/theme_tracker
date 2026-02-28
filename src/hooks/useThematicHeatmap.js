@@ -2,7 +2,7 @@ import { useMemo, useCallback, useEffect } from 'react';
 import { useAsync } from './useAsync';
 import { fetchBatchIntervalPerformance, cleanSymbol } from '../services/priceService';
 
-const HEATMAP_INTERVALS = ['1D', '5D', '1M', '6M', 'YTD'];
+const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
 const CACHE_TTL = 300_000; // 5 minutes
 const RAW_DATA_KEY = 'tt_raw_price_data:v1';
 

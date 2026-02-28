@@ -44,6 +44,7 @@ const initialPersisted = loadPersistedRawData();
 let globalPriceDataCache = initialPersisted ? initialPersisted.cache : new Map();
 let globalPriceDataTimestamp = initialPersisted ? initialPersisted.timestamp : 0;
 const globalPriceCoverage = new Map();
+const globalHeatmapByHierarchy = new WeakMap();
 
 if (initialPersisted?.cache) {
     initialPersisted.cache.forEach((perfMap, interval) => {
@@ -99,6 +100,23 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
         const now = Date.now();
         const isCacheValid = (now - globalPriceDataTimestamp < CACHE_TTL);
         const normalizedSymbols = Array.from(new Set(allSymbols.map((symbol) => cleanSymbol(symbol))));
+
+        const hasFullCoverage = HEATMAP_INTERVALS.every((interval) => {
+            if (!globalPriceDataCache.has(interval)) return false;
+            const coverage = globalPriceCoverage.get(interval);
+            if (!coverage) return false;
+            for (const symbol of normalizedSymbols) {
+                if (!coverage.has(symbol)) return false;
+            }
+            return true;
+        });
+
+        if (isCacheValid && hierarchy && hasFullCoverage) {
+            const cachedHeatmapEntry = globalHeatmapByHierarchy.get(hierarchy);
+            if (cachedHeatmapEntry?.timestamp === globalPriceDataTimestamp) {
+                return cachedHeatmapEntry.heatmap;
+            }
+        }
 
         // 1. Fetch raw performance data for all unique symbols across intervals
         let wasRefetched = false;
@@ -158,8 +176,15 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             });
         });
 
+        if (hierarchy) {
+            globalHeatmapByHierarchy.set(hierarchy, {
+                heatmap,
+                timestamp: globalPriceDataTimestamp
+            });
+        }
+
         return heatmap;
-    }, [allSymbols, themeToSymbols]);
+    }, [allSymbols, hierarchy, themeToSymbols]);
 
     const { data: heatmapData, loading, execute } = useAsync(fetchFunc, [allSymbols, themeToSymbols]);
 

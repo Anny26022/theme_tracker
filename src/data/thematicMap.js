@@ -18,7 +18,8 @@ export const THEMATIC_MAP = [
             { name: "Capital Market Intern.", industries: ["Other Capital Market related Services Companies", "Stockbroking & Allied Companies"] },
             { name: "Depositories & Clearing", industries: ["Depositories, Clearing Houses and Other Intermediaries Companies"] },
             { name: "Fintech", industries: ["Financial Technology (Fintech) Companies"] },
-            { name: "Financial Institutions", industries: ["Financial Institution Companies"] }
+            { name: "Financial Institutions", industries: ["Financial Institution Companies"] },
+            { name: "Financial Distributors", industries: ["Financial Products Distributor Companies", "Insurance Distributors Companies"] }
         ]
     },
     {
@@ -50,27 +51,25 @@ export const THEMATIC_MAP = [
     {
         title: "INFORMATION TECHNOLOGY & TECHNOLOGY",
         themes: [
-            { name: "Software & Consulting", industries: ["Computers - Software & Consulting Companies"] },
-            { name: "IT Enabled Services", industries: ["IT Enabled Services Companies"] },
-            { name: "Computer Hardware", industries: ["Computers Hardware & Equipments Companies"] },
-            { name: "Telecom Services", industries: ["Telecom - Cellular & Fixed line services Companies", "Other Telecom Services Companies"] },
-            { name: "Telecom Infra", industries: ["Telecom - Infrastructure Companies"] },
-            { name: "Internet Retail", industries: ["Internet & Catalogue Retail Companies", "E-Retail/ E-Commerce Companies"] },
-            { name: "Software Products", industries: ["Software Products Companies"] },
-            { name: "E-Learning", industries: ["E-Learning Companies"] },
-            { name: "BPO / KPO", industries: ["Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO) Companies"] },
-            { name: "Digital Connectivity", industries: ["Web based media and service Companies"] }
+            { name: "IT Services (Consulting)", industries: ["Computers - Software & Consulting Companies"] },
+            { name: "IT Enabled Services (BPM)", industries: ["IT Enabled Services Companies"] },
+            { name: "ER&D / Product Software", industries: ["Computers - Software & Consulting Companies"], symbols: ["LTTS", "TATAELXSI", "CYIENT", "KPITTECH", "PERSISTENT", "COFORGE"] },
+            { name: "Enterprise Platforms", industries: ["Software Products Companies"] },
+            { name: "Telecom & Network Infra", industries: ["Telecom - Infrastructure Companies", "Telecom - Equipment & Accessories Companies"], symbols: ["INDUSTOWER", "RAILTEL", "HFCL", "STLTECH"] },
+            { name: "E-Learning / EdTech", industries: ["E-Learning Companies"] },
+            { name: "Digital Services & BPO", industries: ["Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO) Companies"] },
+            { name: "Web Content & Connectivity", industries: ["Web based media and service Companies"] }
         ]
     },
     {
         title: "CHEMICALS SECTOR",
         themes: [
             { name: "Industrial Gases", industries: ["Industrial Gases Companies"] },
-            { name: "Agrochemicals", industries: ["Pesticides & Agrochemicals Companies"] },
             { name: "Specialty Chemicals", industries: ["Specialty Chemicals Companies"] },
             { name: "Petrochemicals", industries: ["Petrochemicals Companies"] },
             { name: "Commodity Chemicals", industries: ["Commodity Chemicals Companies"] },
-            { name: "Dyes & Pigments", industries: ["Dyes And Pigments Companies"] }
+            { name: "Dyes & Pigments", industries: ["Dyes And Pigments Companies"] },
+            { name: "Carbon Black", industries: ["Carbon Black Companies"] }
         ]
     },
     {
@@ -87,14 +86,24 @@ export const THEMATIC_MAP = [
         ]
     },
     {
-        title: "DEFENSE & ELECTRONICS",
+        title: "POWER INFRA & ELECTRICALS",
         themes: [
-            { name: "Cables & Electricals", industries: ["Cables - Electricals Companies"], symbols: ["POLYCAB", "KEI"] },
-            { name: "Explosives", industries: ["Explosives Companies"], symbols: ["SOLARINDS"] },
-            { name: "Metering & Instrument", industries: ["Other Electrical Equipment Companies"], symbols: ["HPL", "GENUSPOWER"] },
-            { name: "EMS - Electronics", industries: ["Industrial Products Companies"], symbols: ["KAYNES", "SYRMA"] },
-            { name: "Aerospace & Defense", industries: ["Aerospace & Defense Companies"] },
-            { name: "Ship Building", industries: ["Ship Building & Allied Services Companies"] }
+            { name: "Cables & Electricals", industries: ["Cables - Electricals Companies"], symbols: ["POLYCAB", "KEI", "FINPIPE"] },
+            { name: "Smart Metering & Inst.", industries: ["Other Electrical Equipment Companies"], symbols: ["HPL", "GENUSPOWER"] },
+            { name: "Transformers & Switchgears", industries: ["Heavy Electrical Equipment Companies"], symbols: ["TRITURBINE”, “VOLTAMP", "GEPIL"] },
+            { name: "EPC - Power & Grid", industries: ["Engineering Services Companies"], symbols: ["KPTL", "TECHNOE"] }
+        ]
+    },
+    {
+        title: "DEFENSE & AEROSPACE SYSTEMS",
+        themes: [
+            { name: "Aerospace & Defense OEM", industries: ["Aerospace & Defense Companies"], symbols: ["HAL", "BEL"] },
+            { name: "Ship Building (Defense)", industries: ["Ship Building & Allied Services Companies"], symbols: ["MAZDOCK", "COCHINSHIP", "GRSE"] },
+            { name: "Defense Electronics & Systems", industries: ["Aerospace & Defense Companies"], symbols: ["DATA PATT", "ASTRAZEN", "BEL"] },
+            { name: "Ammunition & Explosives", industries: ["Explosives Companies"], symbols: ["SOLARINDS"] },
+            { name: "Defense Misc / Land Systems", industries: ["Other Construction Materials Companies", "Tractors Companies"], symbols: ["BEML"] },
+            { name: "Railway Systems & Rolling Stock", industries: ["Railway Wagons Companies"], symbols: ["TITAGARH", "TEXRAIL", "JWL", "BEML"] },
+            { name: "EMS - Electronics", industries: ["Industrial Products Companies"], symbols: ["KAYNES", "SYRMA", "AVALON"] }
         ]
     },
     {
@@ -120,7 +129,8 @@ export const THEMATIC_MAP = [
             { name: "Refineries & Mktg", industries: ["Refineries & Marketing Companies"] },
             { name: "Solar & Renewables", industries: ["Other Utilities Companies"], symbols: ["BORORENEW", "KPIGREEN", "SWSOLAR"] },
             { name: "Oil Equip & Offshore", industries: ["Oil Equipment & Services Companies", "Offshore Support Solution Drilling Companies", "Oil Storage & Transportation Companies"] },
-            { name: "Lubricants & Specialty Oils", industries: ["Lubricants Companies"] }
+            { name: "Lubricants & Specialty Oils", industries: ["Lubricants Companies"] },
+            { name: "Power Trading", industries: ["Power Trading Companies", "Trading - Electricity Companies"] }
         ]
     },
     {
@@ -131,17 +141,19 @@ export const THEMATIC_MAP = [
             { name: "Fashion & Garments", industries: ["Garments & Apparels Companies", "Trading - Textile Products Companies", "Other Textile Products Companies"] },
             { name: "Footwear", industries: ["Footwear Companies"] },
             { name: "Specialty Retail", industries: ["Speciality Retail Companies", "Pharmacy Retail Companies", "Diversified Retail Companies"] },
-            { name: "E-Retail & E-Commerce", industries: ["E-Retail/ E-Commerce Companies", "Internet & Catalogue Retail Companies"] }
+            { name: "E-Retail & E-Commerce", industries: ["E-Retail/ E-Commerce Companies", "Internet & Catalogue Retail Companies"] },
+            { name: "Jute & Fiber Products", industries: ["Jute & Jute Products Companies"] }
         ]
     },
     {
         title: "Consumer Durables",
         themes: [
             { name: "Consumer Electronics", industries: ["Consumer Electronics Companies"] },
-            { name: "Household Appliances", industries: ["Household Appliances Companies"] },
-            { name: "Furniture & Furnishing", industries: ["Furniture, Home Furnishing Companies"] },
-            { name: "Plastic Products", industries: ["Plastic Products - Consumer Companies"] },
-            { name: "Houseware", industries: ["Houseware Companies"] }
+            { name: "Household White Goods", industries: ["Household Appliances Companies"] },
+            { name: "HVAC & Cooling", industries: ["Other Electrical Equipment Companies"], symbols: ["VOLTAS", "BLUESTARCO", "JOHNSONCNTL", "AMBER"] },
+            { name: "Furniture & Decor", industries: ["Furniture, Home Furnishing Companies"] },
+            { name: "Cons. Plastic Products", industries: ["Plastic Products - Consumer Companies"] },
+            { name: "Houseware & Glass", industries: ["Houseware Companies", "Glass - Consumer Companies"] }
         ]
     },
     {
@@ -151,15 +163,16 @@ export const THEMATIC_MAP = [
             { name: "Advertising & Agencies", industries: ["Advertising & Media Agencies Companies"] },
             { name: "Amusement Parks", industries: ["Amusement Parks/ Other Recreation Companies"] },
             { name: "Broadcast & Print", industries: ["TV Broadcasting & Software Production Companies", "Print Media Companies", "Film Production, Distribution & Exhibition Companies"] },
-            { name: "Events & Weddings", industries: ["Other Consumer Services Companies"] }
+            { name: "Events & Weddings", industries: ["Other Consumer Services Companies"] },
+            { name: "Digital Entertainment", industries: ["Digital Entertainment Companies"] },
+            { name: "Print & Publication", industries: ["Printing & Publication Companies", "Print Media Companies"] }
         ]
     },
     {
         title: "PROFESSIONAL SERVICES",
         themes: [
-            { name: "Education", industries: ["Education Companies", "E-Learning Companies"] },
+            { name: "Education & EdTech", industries: ["Education Companies", "E-Learning Companies"] },
             { name: "Stationery & Paper", industries: ["Paper & Paper Products Companies", "Stationary Companies"] },
-            { name: "Packaging", industries: ["Packaging Companies"] },
             { name: "Business Services", industries: ["Diversified Commercial Services Companies", "Consulting Services Companies"] }
         ]
     },
@@ -222,7 +235,9 @@ export const THEMATIC_MAP = [
             { name: "Glass, Granite & Roof", industries: ["Granites & Marbles Companies", "Glass - Industrial Companies", "Ceramics Companies"] },
             { name: "Wood & Laminates", industries: ["Plywood Boards/ Laminates Companies", "Furniture, Home Furnishing Companies"] },
             { name: "PEB & Steel Structures", industries: ["Iron & Steel Products Companies"] },
-            { name: "Paints & Coatings", industries: ["Paints Companies"] }
+            { name: "Plumbing & Piping", industries: ["Iron & Steel Products Companies", "Plastic Products - Industrial Companies"], symbols: ["APLAPOLLO", "SUPREMEIND", "ASTRAL", "PRINCEPIPE"] },
+            { name: "Paints & Coatings", industries: ["Paints Companies"] },
+            { name: "Sanitary Ware", industries: ["Sanitary Ware Companies"] }
         ]
     },
     {
@@ -231,69 +246,36 @@ export const THEMATIC_MAP = [
             { name: "Residential Projects", industries: ["Residential, Commercial Projects Companies"] },
             { name: "Real Estate Services & Platforms", industries: ["Real Estate related services Companies"] },
             { name: "Property Allied Services", industries: ["Diversified Commercial Services Companies"] },
-            { name: "Commercial & Diversified", industries: ["Residential, Commercial Projects Companies"], symbols: ["DLF", "PHOENIXLTD"] }
+            { name: "Commercial & Diversified", industries: ["Residential, Commercial Projects Companies"], symbols: ["DLF", "PHOENIXLTD"] },
+            { name: "REITs", industries: ["Real Estate Investment Trusts (REITs) Companies"] }
         ]
     },
     {
         title: "Logistics & Trans",
         themes: [
             { name: "Shipping", industries: ["Shipping Companies"] },
-            { name: "Ports & Airports", industries: ["Port & Port services Companies", "Airport & Airport services Companies"] },
-            { name: "Logistics Solutions", industries: ["Logistics Solution Provider Companies"] },
-            { name: "Road Assets & Infrastructure", industries: ["Road AssetsToll, Annuity, Hybrid-Annuity Companies", "Road Transport Companies"] },
-            { name: "Railway Infrastructure", industries: ["Railway Wagons Companies"] }
+            { name: "Logistics Infra (Ports/Air)", industries: ["Port & Port services Companies", "Airport & Airport services Companies"] },
+            { name: "Logistics Services (3PL)", industries: ["Logistics Solution Provider Companies", "Transport Related Services Companies"] },
+            { name: "Road Assets (Tolls/HAM)", industries: ["Road AssetsToll, Annuity, Hybrid-Annuity Companies"] },
+            { name: "Surface Transport", industries: ["Road Transport Companies", "Transport Related Services Companies"] }
         ]
     },
     {
         title: "Env & Sustainability",
         themes: [
-            { name: "Water Infra / Pipes", industries: ["Iron & Steel Products Companies", "Plastic Products - Industrial Companies"], symbols: ["APLAPOLLO", "SUPREMEIND"] },
             { name: "Environmental Eng.", industries: ["Engineering Services Companies"] },
-            { name: "Waste & Recycling", industries: ["Waste Management Companies"] },
-            { name: "Water Management", industries: ["Water Supply & Management Companies"] }
+            { name: "Waste Management", industries: ["Waste Management Companies"] },
+            { name: "Water & Effluent Mgmt", industries: ["Water Supply & Management Companies", "Other Utilities Companies"], symbols: ["IONEXCHANG", "VA TECH WABAG"] }
         ]
     },
-    {
-        title: "AEROSPACE VALUE CHAIN",
-        themes: [
-            { name: "Engine Component Suppliers", industries: ["Castings & Forgings Companies", "Industrial Products Companies"], symbols: ["MTARTECH", "SYRMA", "KAYNES"] },
-            { name: "Forgings / Industrial Proxy", industries: ["Castings & Forgings Companies"], symbols: ["BHARATFORG", "RKFORGE"] },
-            { name: "Aerostructures & Assemblies", industries: ["Aerospace & Defense Companies"], symbols: ["HAL"] },
-            { name: "Aerospace Electronics", industries: ["Aerospace & Defense Companies"], symbols: ["BEL", "DATA PATT", "ASTRAZEN"] },
-            { name: "OEM / Airframe Integrators", industries: ["Aerospace & Defense Companies"], symbols: ["HAL"] },
-            { name: "Materials / Metals Proxy", industries: ["Aluminium Companies", "Diversified Metals Companies"], symbols: ["HINDALCO", "VEDL"] },
-            { name: "Engineering Services", industries: ["Computers - Software & Consulting Companies"], symbols: ["CYIENT", "LTTS"] }
-        ]
-    },
-    {
-        title: "Defence",
-        themes: [
-            { name: "Air: Weak Proxy", industries: ["Industrial Products Companies", "Tractors Companies"], symbols: ["BEML"] },
-            { name: "Air: Strong Proxy", industries: ["Aerospace & Defense Companies"], symbols: ["HAL", "DATA PATT"] },
-            { name: "Land: Core", industries: ["Aerospace & Defense Companies"], symbols: ["BEL", "BDL"] },
-            { name: "Water: Strong Proxy", industries: ["Ship Building & Allied Services Companies"], symbols: ["MAZDOCK"] },
-            { name: "Land: Strong Proxy", industries: ["Aerospace & Defense Companies"], symbols: ["BEL"] },
-            { name: "Land: Weak Proxy", industries: ["Other Construction Materials Companies"], symbols: ["BEML"] },
-            { name: "Air: Core", industries: ["Aerospace & Defense Companies"], symbols: ["HAL"] },
-            { name: "Water: Core", industries: ["Ship Building & Allied Services Companies"], symbols: ["COCHINSHIP", "GRSE"] },
-            { name: "Water: Weak Proxy", industries: ["Dredging Companies"] }
-        ]
-    },
+
     {
         title: "DATA CENTER ECOSYSTEM",
         themes: [
-            { name: "Optical Fiber / OFC", industries: ["Telecom -  Equipment & Accessories Companies"], symbols: ["HFCL", "STLTECH"] },
             { name: "Power Grid & Distribution", industries: ["Power Distribution Companies", "Power - Transmission Companies"], symbols: ["POWERGRID", "RECLTD", "PFC"] },
-            { name: "Power Cables", industries: ["Cables - Electricals Companies"], symbols: ["KEI", "POLYCAB"] },
-            { name: "Cooling & HVAC", industries: ["Other Electrical Equipment Companies"], symbols: ["BLUESTARCO", "VOLTAS"] },
-            { name: "Backup Power", industries: ["Batteries - Automotive & Industrial Companies"], symbols: ["EXIDEIND", "AMARAJABAT"] },
-            { name: "Electrical Equipment", industries: ["Heavy Electrical Equipment Companies"], symbols: ["ABB", "SIEMENS", "CUMMINSIND"] },
-            { name: "EPC / Buildout", industries: ["Civil Construction Companies"], symbols: ["LT"] },
-            { name: "Data Center Operators / Cloud", industries: ["IT Enabled Services Companies"], symbols: ["NETWEB", "TATACOMM"] },
-            { name: "Real Estate / Data Center Sites", industries: ["Residential, Commercial Projects Companies"], symbols: ["DLF", "MAHLIFE"] },
-            { name: "Energy Storage", industries: ["Batteries - Automotive & Industrial Companies"], symbols: ["EXIDEIND"] },
-            { name: "Connectivity / Network", industries: ["Telecom - Infrastructure Companies"], symbols: ["INDUSTOWER", "RAILTEL"] },
-            { name: "Information Technology Services", industries: ["Computers - Software & Consulting Companies"], symbols: ["TCS", "INFY"] }
+            { name: "Cooling & DC HVAC", industries: ["Other Electrical Equipment Companies"], symbols: ["BLUESTARCO", "VOLTAS", "SCHNEIDER"] },
+            { name: "Hardware & Server Proxies", industries: ["IT Enabled Services Companies", "Heavy Electrical Equipment Companies"], symbols: ["NETWEB", "ABB", "SIEMENS"] },
+            { name: "EPC / Buildout", industries: ["Civil Construction Companies"], symbols: ["LT"] }
         ]
     },
     {
@@ -303,5 +285,32 @@ export const THEMATIC_MAP = [
             { name: "Commodity Trading", industries: ["Trading - Minerals Companies", "Trading - Metals Companies", "Trading - Chemicals Companies"] },
             { name: "General Trading & Dist.", industries: ["Trading & Distributors Companies", "Distributors Companies"] }
         ]
+    }
+];
+
+export const MACRO_PILLARS = [
+    {
+        title: "I. FINANCIAL BACKBONE",
+        blocks: ["BANKING & FINANCIAL SERVICES", "PROFESSIONAL SERVICES"]
+    },
+    {
+        title: "II. INDUSTRIAL & DEFENSE ALPHA",
+        blocks: ["AUTOMOTIVE (STOCKS)", "AUTOMOTIVE COMPONENTS", "ENGINEERING & MANUFACTURING", "DEFENSE & AEROSPACE SYSTEMS"]
+    },
+    {
+        title: "III. DIGITAL ECONOMY & TECH",
+        blocks: ["INFORMATION TECHNOLOGY & TECHNOLOGY", "DATA CENTER ECOSYSTEM", "POWER INFRA & ELECTRICALS"]
+    },
+    {
+        title: "IV. CONSUMPTION & LIFESTYLE",
+        blocks: ["FMCG", "Food & Beverages", "Lifestyle & Retail", "Consumer Durables", "Media & Leisure", "TRAVEL & HOSPITALITY", "Healthcare Segments"]
+    },
+    {
+        title: "V. NATION BUILDING (INFRA/RE)",
+        blocks: ["Const. & Materials", "Real Estate Segments", "Logistics & Trans", "Env & Sustainability"]
+    },
+    {
+        title: "VI. COMMODITIES & RESOURCES",
+        blocks: ["CHEMICALS SECTOR", "METALS & MINING", "ENERGY, OIL & GAS", "Agri Business", "DIVERSIFIED & TRADING"]
     }
 ];

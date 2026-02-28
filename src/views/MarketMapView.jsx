@@ -1,7 +1,7 @@
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { startTransition, useMemo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ViewWrapper } from '../components/ViewWrapper';
-import { THEMATIC_MAP } from '../data/thematicMap';
+import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cn } from '../lib/utils';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
 import { Search, X } from 'lucide-react';
@@ -16,6 +16,99 @@ const COLUMNS = [
     { label: 'YTD', key: 'YTD' }
 ];
 const EMPTY_THEME_PERF = Object.freeze({});
+const EMPTY_OBJECT = Object.freeze({});
+const EMPTY_ARRAY = Object.freeze([]);
+
+const makeBlockId = (title) => `block-${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+
+const isBSESymbol = (symbol) => {
+    if (!symbol) return false;
+    return /^\d+$/.test(symbol) || symbol.includes(':BSE');
+};
+
+const buildIndustryMap = (sourceHierarchy) => {
+    if (!sourceHierarchy) return EMPTY_OBJECT;
+
+    const map = {};
+    Object.keys(sourceHierarchy).forEach((sector) => {
+        const industries = sourceHierarchy[sector];
+        if (!industries) return;
+        Object.keys(industries).forEach((industry) => {
+            map[industry] = industries[industry];
+        });
+    });
+    return map;
+};
+
+const buildSymbolNameMap = (industryMap) => {
+    const map = new Map();
+    Object.keys(industryMap).forEach((industry) => {
+        const companies = industryMap[industry];
+        if (!Array.isArray(companies)) return;
+        companies.forEach((company) => {
+            if (company?.symbol && !map.has(company.symbol)) {
+                map.set(company.symbol, company.name || company.symbol);
+            }
+        });
+    });
+    return map;
+};
+
+const buildThemeCompaniesMap = (industryMap, symbolNameMap) => {
+    const next = {};
+
+    THEMATIC_MAP.forEach((block) => {
+        block.themes.forEach((theme) => {
+            const symbolToName = new Map();
+
+            if (theme.industries) {
+                theme.industries.forEach((industry) => {
+                    const companies = industryMap[industry];
+                    if (!Array.isArray(companies)) return;
+                    companies.forEach((company) => {
+                        if (company?.symbol && !symbolToName.has(company.symbol)) {
+                            symbolToName.set(company.symbol, company.name || company.symbol);
+                        }
+                    });
+                });
+            }
+
+            if (theme.symbols) {
+                theme.symbols.forEach((symbol) => {
+                    if (!symbolToName.has(symbol)) {
+                        symbolToName.set(symbol, symbolNameMap.get(symbol) || symbol);
+                    }
+                });
+            }
+
+            next[theme.name] = Array.from(symbolToName.entries())
+                .map(([symbol, name]) => ({ symbol, name }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+        });
+    });
+
+    return next;
+};
+
+const buildSearchIndex = (mapSource, themeCompaniesMap) => {
+    const index = [];
+
+    mapSource.forEach((block) => {
+        block.themes.forEach((theme) => {
+            const companies = themeCompaniesMap[theme.name] || EMPTY_ARRAY;
+            companies.forEach((company) => {
+                index.push({
+                    ...company,
+                    themeName: theme.name,
+                    groupTitle: block.title,
+                    blockId: makeBlockId(block.title)
+                });
+            });
+        });
+    });
+
+    return index;
+};
 
 const getHeatmapColor = (value) => {
     if (value === null || value === undefined || isNaN(value)) return 'bg-[var(--ui-muted)]/5 text-[var(--text-muted)] opacity-20';
@@ -103,7 +196,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                                     </div>
                                 </div>
                                 <div className="flex flex-col min-w-0">
-                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] truncate flex items-center gap-1">
+                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] whitespace-normal leading-tight flex items-center gap-1">
                                         {stock.name}
                                         {(() => {
                                             const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
@@ -163,17 +256,9 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
     );
 };
 
-const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted }) => {
+const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted, isMobile }) => {
     const [isHovered, setIsHovered] = useState(false);
-    const [isMobile, setIsMobile] = useState(false);
     const count = companies.length;
-
-    useEffect(() => {
-        const checkMobile = () => setIsMobile(window.innerWidth < 768);
-        checkMobile();
-        window.addEventListener('resize', checkMobile);
-        return () => window.removeEventListener('resize', checkMobile);
-    }, []);
 
     const showPopover = isHovered && companies.length > 0;
 
@@ -183,7 +268,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                 className="pr-1 py-0.5 relative cursor-pointer md:cursor-help"
                 onMouseEnter={() => !isMobile && setIsHovered(true)}
                 onMouseLeave={() => !isMobile && setIsHovered(false)}
-                onClick={() => isMobile && setIsHovered(!isHovered)}
+                onClick={() => isMobile && setIsHovered((prev) => !prev)}
             >
                 <div className={cn(
                     "flex items-center justify-between gap-1 w-full relative z-10 px-1 py-1 rounded transition-all duration-700",
@@ -264,12 +349,13 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     if (prevProps.companies !== nextProps.companies) return false;
     if (prevProps.stockPerfMap !== nextProps.stockPerfMap) return false;
     if (prevProps.isHighlighted !== nextProps.isHighlighted) return false;
+    if (prevProps.isMobile !== nextProps.isMobile) return false;
 
     return COLUMNS.every(({ key }) => prevProps.themePerf[key] === nextProps.themePerf[key]);
 });
 
-const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme }) => {
-    const blockId = `block-${block.title.toLowerCase().replace(/[^a-z0-s]/g, '-')}`;
+const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => {
+    const blockId = makeBlockId(block.title);
 
     return (
         <div id={blockId} className="flex flex-col h-full group/block transition-all duration-700 scroll-mt-32">
@@ -294,11 +380,12 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                             <ThemeRow
                                 key={theme.name}
                                 theme={theme}
-                                companies={themeCompaniesMap[theme.name] || []}
+                                companies={themeCompaniesMap[theme.name] || EMPTY_ARRAY}
                                 themePerf={heatmapData[theme.name] || EMPTY_THEME_PERF}
                                 loading={loading}
                                 stockPerfMap={stockPerfMap}
                                 isHighlighted={highlightedTheme === theme.name}
+                                isMobile={isMobile}
                             />
                         ))}
                     </tbody>
@@ -307,6 +394,23 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
         </div>
     );
 });
+
+const ThemeGrid = React.memo(({ mapSource, gridClassName, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => (
+    <div className={gridClassName}>
+        {mapSource.map((block, idx) => (
+            <ThemeBlock
+                key={block.title || idx}
+                block={block}
+                themeCompaniesMap={themeCompaniesMap}
+                heatmapData={heatmapData}
+                loading={loading}
+                stockPerfMap={stockPerfMap}
+                highlightedTheme={highlightedTheme}
+                isMobile={isMobile}
+            />
+        ))}
+    </div>
+));
 
 const Legend = () => (
     <div className="flex items-center gap-4 md:gap-8 px-4 md:px-6 py-2.5 glass-card border-[var(--ui-divider)]/20 rounded-full mb-10 w-fit mx-auto md:mx-0 bg-[var(--bg-main)]/40 shadow-xl">
@@ -333,8 +437,38 @@ export const MarketMapView = ({ hierarchy }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [highlightedTheme, setHighlightedTheme] = useState(null);
+    const [viewMode, setViewMode] = useState('THEMATIC'); // 'THEMATIC' or 'MACRO'
+    const [hasMountedMacro, setHasMountedMacro] = useState(false);
+    const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth < 768 : false));
     const searchRef = useRef(null);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    useEffect(() => {
+        if (hasMountedMacro || typeof window === 'undefined') return undefined;
+
+        const warmMacroTree = () => {
+            startTransition(() => {
+                setHasMountedMacro(true);
+            });
+        };
+
+        if (typeof window.requestIdleCallback === 'function') {
+            const idleId = window.requestIdleCallback(warmMacroTree, { timeout: 1200 });
+            return () => window.cancelIdleCallback(idleId);
+        }
+
+        const timeoutId = window.setTimeout(warmMacroTree, 500);
+        return () => window.clearTimeout(timeoutId);
+    }, [hasMountedMacro]);
 
     useEffect(() => {
         if (isSearchFocused && searchRef.current) {
@@ -347,109 +481,67 @@ export const MarketMapView = ({ hierarchy }) => {
         }
     }, [isSearchFocused, searchQuery]);
 
-    // Helper to detect BSE-only stocks (usually numeric codes that lack logos in Dhan infra)
-    const isBSESymbol = (symbol) => {
-        if (!symbol) return false;
-        // Check if numeric (typical for BSE only scripts like "532540")
-        return /^\d+$/.test(symbol) || symbol.includes(':BSE');
-    };
-
-    const filteredHierarchy = useMemo(() => {
+    const nseHierarchy = useMemo(() => {
         if (!hierarchy) return null;
-        if (!hideBSE) return hierarchy;
 
         const newHierarchy = {};
-        Object.keys(hierarchy).forEach(sector => {
+        Object.keys(hierarchy).forEach((sector) => {
             newHierarchy[sector] = {};
-            Object.keys(hierarchy[sector]).forEach(industry => {
-                newHierarchy[sector][industry] = hierarchy[sector][industry].filter(c => !isBSESymbol(c.symbol));
+            Object.keys(hierarchy[sector]).forEach((industry) => {
+                newHierarchy[sector][industry] = hierarchy[sector][industry].filter((company) => !isBSESymbol(company.symbol));
             });
         });
+
         return newHierarchy;
-    }, [hierarchy, hideBSE]);
+    }, [hierarchy]);
 
-    const industryMap = useMemo(() => {
-        const map = {};
-        if (!filteredHierarchy) return map;
-        Object.keys(filteredHierarchy).forEach(sector => {
-            const industries = filteredHierarchy[sector];
-            if (industries) {
-                Object.keys(industries).forEach(ind => {
-                    map[ind] = industries[ind];
-                });
-            }
-        });
-        return map;
-    }, [filteredHierarchy]);
+    const allIndustryMap = useMemo(() => buildIndustryMap(hierarchy), [hierarchy]);
+    const nseIndustryMap = useMemo(() => buildIndustryMap(nseHierarchy), [nseHierarchy]);
 
-    const symbolNameMap = useMemo(() => {
-        const map = new Map();
-        Object.keys(industryMap).forEach((industry) => {
-            const companies = industryMap[industry];
-            if (!Array.isArray(companies)) return;
-            companies.forEach((company) => {
-                if (company?.symbol && !map.has(company.symbol)) {
-                    map.set(company.symbol, company.name || company.symbol);
-                }
-            });
-        });
-        return map;
-    }, [industryMap]);
+    const allSymbolNameMap = useMemo(() => buildSymbolNameMap(allIndustryMap), [allIndustryMap]);
+    const nseSymbolNameMap = useMemo(() => buildSymbolNameMap(nseIndustryMap), [nseIndustryMap]);
 
-    const themeCompaniesMap = useMemo(() => {
-        const next = {};
+    const allThemeCompaniesMap = useMemo(
+        () => buildThemeCompaniesMap(allIndustryMap, allSymbolNameMap),
+        [allIndustryMap, allSymbolNameMap]
+    );
+    const nseThemeCompaniesMap = useMemo(
+        () => buildThemeCompaniesMap(nseIndustryMap, nseSymbolNameMap),
+        [nseIndustryMap, nseSymbolNameMap]
+    );
 
-        THEMATIC_MAP.forEach((block) => {
-            block.themes.forEach((theme) => {
-                const symbolToName = new Map();
+    const macroMap = useMemo(() => {
+        return MACRO_PILLARS.map((pillar) => ({
+            title: pillar.title,
+            isPillar: true,
+            themes: pillar.blocks.flatMap((blockTitle) =>
+                THEMATIC_MAP.find((block) => block.title === blockTitle)?.themes || EMPTY_ARRAY
+            )
+        }));
+    }, []);
 
-                if (theme.industries) {
-                    theme.industries.forEach((industry) => {
-                        const companies = industryMap[industry];
-                        if (!Array.isArray(companies)) return;
-                        companies.forEach((company) => {
-                            if (company?.symbol && !symbolToName.has(company.symbol)) {
-                                symbolToName.set(company.symbol, company.name || company.symbol);
-                            }
-                        });
-                    });
-                }
+    const allThematicSearchIndex = useMemo(
+        () => buildSearchIndex(THEMATIC_MAP, allThemeCompaniesMap),
+        [allThemeCompaniesMap]
+    );
+    const nseThematicSearchIndex = useMemo(
+        () => buildSearchIndex(THEMATIC_MAP, nseThemeCompaniesMap),
+        [nseThemeCompaniesMap]
+    );
+    const allMacroSearchIndex = useMemo(
+        () => buildSearchIndex(macroMap, allThemeCompaniesMap),
+        [macroMap, allThemeCompaniesMap]
+    );
+    const nseMacroSearchIndex = useMemo(
+        () => buildSearchIndex(macroMap, nseThemeCompaniesMap),
+        [macroMap, nseThemeCompaniesMap]
+    );
 
-                if (theme.symbols) {
-                    theme.symbols.forEach((symbol) => {
-                        if (!symbolToName.has(symbol)) {
-                            symbolToName.set(symbol, symbolNameMap.get(symbol) || symbol);
-                        }
-                    });
-                }
-
-                next[theme.name] = Array.from(symbolToName.entries())
-                    .map(([symbol, name]) => ({ symbol, name }))
-                    .sort((a, b) => a.name.localeCompare(b.name));
-            });
-        });
-
-        return next;
-    }, [industryMap, symbolNameMap]);
-
-    // Search Index
-    const searchIndex = useMemo(() => {
-        const index = [];
-        THEMATIC_MAP.forEach(block => {
-            block.themes.forEach(theme => {
-                const companies = themeCompaniesMap[theme.name] || [];
-                companies.forEach(company => {
-                    index.push({
-                        ...company,
-                        themeName: theme.name,
-                        groupTitle: block.title,
-                        blockId: `block-${block.title.toLowerCase().replace(/[^a-z0-s]/g, '-')}`
-                    });
-                });
-            });
-        });
-        return index;
-    }, [themeCompaniesMap]);
+    const filteredHierarchy = hideBSE ? nseHierarchy : hierarchy;
+    const themeCompaniesMap = hideBSE ? nseThemeCompaniesMap : allThemeCompaniesMap;
+    const searchIndex = viewMode === 'MACRO'
+        ? (hideBSE ? nseMacroSearchIndex : allMacroSearchIndex)
+        : (hideBSE ? nseThematicSearchIndex : allThematicSearchIndex);
 
     const searchResults = useMemo(() => {
         if (!searchQuery.trim() || searchQuery.length < 2) return [];
@@ -564,8 +656,46 @@ export const MarketMapView = ({ hierarchy }) => {
                         )}
                     </div>
 
+                    <div className="flex bg-[var(--ui-muted)]/5 p-1 rounded-full border border-[var(--ui-divider)]/20">
+                        <button
+                            onClick={() => {
+                                startTransition(() => {
+                                    setViewMode('THEMATIC');
+                                });
+                            }}
+                            className={cn(
+                                "px-4 py-1.5 rounded-full text-[7.5px] font-black uppercase tracking-widest transition-all duration-500",
+                                viewMode === 'THEMATIC'
+                                    ? "bg-[var(--accent-primary)] text-white shadow-lg"
+                                    : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                            )}
+                        >
+                            Thematic
+                        </button>
+                        <button
+                            onClick={() => {
+                                startTransition(() => {
+                                    setHasMountedMacro(true);
+                                    setViewMode('MACRO');
+                                });
+                            }}
+                            className={cn(
+                                "px-4 py-1.5 rounded-full text-[7.5px] font-black uppercase tracking-widest transition-all duration-500",
+                                viewMode === 'MACRO'
+                                    ? "bg-[var(--accent-primary)] text-white shadow-lg"
+                                    : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                            )}
+                        >
+                            Macro
+                        </button>
+                    </div>
+
                     <button
-                        onClick={() => setHideBSE(!hideBSE)}
+                        onClick={() => {
+                            startTransition(() => {
+                                setHideBSE((prev) => !prev);
+                            });
+                        }}
                         className={cn(
                             "flex items-center gap-3 px-5 py-2.5 rounded-full border transition-all duration-700 group/btn",
                             hideBSE
@@ -586,19 +716,33 @@ export const MarketMapView = ({ hierarchy }) => {
 
             <div className="max-w-full lg:max-w-[1800px] mx-auto">
                 <Legend />
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr">
-                    {THEMATIC_MAP.map((block, idx) => (
-                        <ThemeBlock
-                            key={block.title || idx}
-                            block={block}
+                <div className={cn(viewMode === 'THEMATIC' ? 'block' : 'hidden')}>
+                    <ThemeGrid
+                        mapSource={THEMATIC_MAP}
+                        gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+                        themeCompaniesMap={themeCompaniesMap}
+                        heatmapData={heatmapData}
+                        loading={loading}
+                        stockPerfMap={stockPerfMap}
+                        highlightedTheme={highlightedTheme}
+                        isMobile={isMobile}
+                    />
+                </div>
+
+                {(hasMountedMacro || viewMode === 'MACRO') && (
+                    <div className={cn(viewMode === 'MACRO' ? 'block' : 'hidden')}>
+                        <ThemeGrid
+                            mapSource={macroMap}
+                            gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3"
                             themeCompaniesMap={themeCompaniesMap}
                             heatmapData={heatmapData}
                             loading={loading}
                             stockPerfMap={stockPerfMap}
                             highlightedTheme={highlightedTheme}
+                            isMobile={isMobile}
                         />
-                    ))}
-                </div>
+                    </div>
+                )}
             </div>
         </ViewWrapper>
     );

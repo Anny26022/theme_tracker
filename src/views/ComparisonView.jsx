@@ -20,15 +20,9 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
     const [selectedSymbols, setSelectedSymbols] = useState(() => {
         try {
             const saved = localStorage.getItem(COMPARISON_STORAGE_KEY) || localStorage.getItem(LEGACY_COMPARISON_STORAGE_KEY);
-            return saved ? JSON.parse(saved) : [
-                { id: 'RELIANCE', type: 'STOCK' },
-                { id: 'HDFCBANK', type: 'STOCK' }
-            ];
+            return saved ? JSON.parse(saved) : [];
         } catch {
-            return [
-                { id: 'RELIANCE', type: 'STOCK' },
-                { id: 'HDFCBANK', type: 'STOCK' }
-            ];
+            return [];
         }
     });
 

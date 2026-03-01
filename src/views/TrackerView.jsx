@@ -6,6 +6,7 @@ import { useUnifiedTracker } from '../hooks/useUnifiedTracker';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { Virtuoso } from 'react-virtuoso';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
+import { UniverseLoader } from '../components/UniverseLoader';
 
 const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 
@@ -138,6 +139,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
 
     return (
         <ViewWrapper id="tracker">
+            {isGlobalLoading && <UniverseLoader />}
             <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-[var(--ui-divider)] pb-6">
                 <div className="space-y-1 max-w-full xl:max-w-xl shrink-0">
                     <div className="flex items-center gap-3 mb-2">

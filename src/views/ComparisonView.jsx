@@ -104,15 +104,32 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
             ).map(s => ({ ...s, type: 'STOCK' }));
 
         if (searchMode === 'THEMATIC') {
-            const clusterMatches = Array.from(allClusters.keys())
-                .filter(name => name.toLowerCase().includes(q))
-                .map(name => ({
-                    symbol: name,
-                    name: 'Thematic Cluster',
-                    type: 'THEMATIC',
-                    constituents: allClusters.get(name)
-                }));
-            return [...clusterMatches, ...stockMatches].slice(0, 10);
+            const directClusterMatches = Array.from(allClusters.keys())
+                .filter(name => name.toLowerCase().includes(q));
+
+            // Identify clusters that contain any of the matched stocks
+            const relatedClusters = new Set();
+            stockMatches.forEach(stock => {
+                allClusters.forEach((constituents, clusterName) => {
+                    if (constituents.includes(stock.clean)) {
+                        relatedClusters.add(clusterName);
+                    }
+                });
+            });
+
+            const mergedClusterNames = Array.from(new Set([
+                ...directClusterMatches,
+                ...Array.from(relatedClusters)
+            ]));
+
+            const clusterResults = mergedClusterNames.map(name => ({
+                symbol: name,
+                name: 'Thematic Cluster',
+                type: 'THEMATIC',
+                constituents: allClusters.get(name)
+            }));
+
+            return [...clusterResults, ...stockMatches].slice(0, 10);
         }
 
         // Default: INDUSTRY mode

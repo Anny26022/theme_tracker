@@ -35,7 +35,7 @@ const RANGE_LABEL = {
 
 export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, timeframe, setTimeframe, onOpenInsights }) => {
     const [viewMode, setViewMode] = useState('performance'); // 'performance' | 'breadth'
-    const [trackingType, setTrackingType] = useState('TRADITIONAL'); // 'TRADITIONAL' | 'THEMATIC'
+    const [trackingType, setTrackingType] = useState('INDUSTRY'); // 'INDUSTRY' | 'THEMATIC'
     const [sectorSortDesc, setSectorSortDesc] = useState(true);
     const [industrySortDesc, setIndustrySortDesc] = useState(true);
 
@@ -75,21 +75,21 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     }, []);
 
     // Unified Data Hook
-    const leftItems = trackingType === 'TRADITIONAL' ? sectors : thematicPillars;
-    const rightItems = trackingType === 'TRADITIONAL' ? industryNames : thematicThemes;
+    const leftItems = trackingType === 'INDUSTRY' ? sectors : thematicPillars;
+    const rightItems = trackingType === 'INDUSTRY' ? industryNames : thematicThemes;
 
     const { trackerMap: leftData, loading: leftLoading } = useUnifiedTracker(
-        leftItems, hierarchy, timeframe, trackingType === 'TRADITIONAL' ? 'sector' : 'thematic'
+        leftItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'sector' : 'thematic'
     );
     const { trackerMap: rightData, loading: rightLoading } = useUnifiedTracker(
-        rightItems, hierarchy, timeframe, trackingType === 'TRADITIONAL' ? 'industry' : 'thematic'
+        rightItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'industry' : 'thematic'
     );
 
     // Sorting Logic
     const sortedLeft = useMemo(() => {
         const dir = sectorSortDesc ? -1 : 1;
         const getCount = (name) => {
-            if (trackingType === 'TRADITIONAL') {
+            if (trackingType === 'INDUSTRY') {
                 return hierarchy[name] ? Object.values(hierarchy[name]).reduce((acc, comp) => acc + comp.length, 0) : 0;
             }
             // For thematic pillars, sum their constituent themes' companies
@@ -142,7 +142,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                 <div className="space-y-1 max-w-full xl:max-w-xl shrink-0">
                     <div className="flex items-center gap-3 mb-2">
                         <h2 className="text-base md:text-lg xl:text-xl font-light tracking-[0.2em] xl:tracking-[0.4em] uppercase opacity-90 text-glow-gold">
-                            {trackingType === 'TRADITIONAL' ? 'Traditional Industry & Sector Tracker' : 'Deep Thematic Cluster Tracker'}
+                            {trackingType === 'INDUSTRY' ? 'Custom Industry & Sector Tracker' : 'Deep Thematic Cluster Tracker'}
                         </h2>
                         <div className="relative group flex items-center shrink-0">
                             <Info className="w-4 h-4 text-[var(--accent-primary)]/50 cursor-help hover:text-[var(--accent-primary)] transition-colors group-hover:opacity-100" />
@@ -164,7 +164,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                 <div className="flex flex-nowrap items-center gap-4 xl:justify-end shrink-0 max-w-full overflow-x-auto no-scrollbar pb-2 md:pb-0">
 
                     <div className="flex bg-[var(--nav-bg)]/80 p-0.5 rounded-lg border border-[var(--ui-divider)] shrink-0">
-                        {['TRADITIONAL', 'THEMATIC'].map(mode => (
+                        {['INDUSTRY', 'THEMATIC'].map(mode => (
                             <button
                                 key={mode}
                                 onClick={() => setTrackingType(mode)}
@@ -215,7 +215,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
                             <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
                             <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">
-                                {trackingType === 'TRADITIONAL' ? 'Sector' : 'Macro Pillar'} {viewMode === 'breadth' ? 'Health' : 'Rankings'}
+                                {trackingType === 'INDUSTRY' ? 'Sector' : 'Macro Pillar'} {viewMode === 'breadth' ? 'Health' : 'Rankings'}
                             </h2>
                             <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
@@ -234,7 +234,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                 computeItemKey={(_, item) => item}
                                 itemContent={(_, item) => {
                                     const data = leftData[item];
-                                    const companies = (trackingType === 'TRADITIONAL') ? (hierarchy[item] ? Object.values(hierarchy[item]).flat() : []) : [];
+                                    const companies = (trackingType === 'INDUSTRY') ? (hierarchy[item] ? Object.values(hierarchy[item]).flat() : []) : [];
 
                                     return (
                                         <TrackerRow
@@ -244,7 +244,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                             breadth={data?.breadth}
                                             leaders={data?.leaders}
                                             laggards={data?.laggards}
-                                            onClick={() => trackingType === 'TRADITIONAL' && onSectorClick(item)}
+                                            onClick={() => trackingType === 'INDUSTRY' && onSectorClick(item)}
                                             loading={isGlobalLoading && !data}
                                         />
                                     );
@@ -258,7 +258,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
                             <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
                             <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">
-                                {trackingType === 'TRADITIONAL' ? 'Industry' : 'Thematic Theme'} {viewMode === 'breadth' ? 'Breadth' : 'Alpha'}
+                                {trackingType === 'INDUSTRY' ? 'Industry' : 'Thematic Theme'} {viewMode === 'breadth' ? 'Breadth' : 'Alpha'}
                             </h2>
                             <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
@@ -287,7 +287,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                             laggards={data?.laggards}
                                             loading={isGlobalLoading && !data}
                                             onClick={() => {
-                                                if (trackingType === 'TRADITIONAL') {
+                                                if (trackingType === 'INDUSTRY') {
                                                     const ind = allIndustries.find(i => i.name === item);
                                                     if (ind) onIndustryClick(ind.sector, item);
                                                 }

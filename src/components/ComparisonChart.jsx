@@ -11,6 +11,33 @@ const COLORS = [
     '#06b6d4', // cyan
 ];
 
+const TooltipCompanyLogo = React.memo(({ symbol }) => {
+    const [imgError, setImgError] = useState(false);
+
+    React.useEffect(() => {
+        setImgError(false);
+    }, [symbol]);
+
+    if (imgError) {
+        return (
+            <div className="w-4 h-4 rounded-[3px] bg-[var(--ui-divider)]/40 border border-[var(--ui-divider)]/60 flex items-center justify-center flex-shrink-0">
+                <span className="text-[7px] font-bold text-[var(--text-muted)] uppercase">
+                    {symbol?.charAt(0) || '?'}
+                </span>
+            </div>
+        );
+    }
+
+    return (
+        <img
+            src={`https://images.dhan.co/symbol/${symbol}.png`}
+            alt=""
+            className="w-4 h-4 object-contain flex-shrink-0"
+            onError={() => setImgError(true)}
+        />
+    );
+});
+
 /**
  * Binary Search for high-frequency time-series indexing.
  * Complexity: O(log n) vs previous O(n)
@@ -142,29 +169,40 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
 
     if (!bounds || seriesList.length === 0) {
         return (
-            <div className="w-full border border-dashed border-[var(--ui-divider)] rounded-lg flex items-center justify-center text-[var(--text-muted)] text-[10px] tracking-widest uppercase" style={{ height }}>
-                Initializing Comparison Vector...
+            <div className="w-full border border-[var(--ui-divider)] rounded-lg flex flex-col items-center justify-center gap-3 text-[var(--text-muted)] group transition-all" style={{ height }}>
+                <div className="w-8 h-[1px] bg-[var(--accent-primary)]/30 group-hover:w-16 transition-all duration-500" />
+                <span className="text-[9px] font-bold tracking-[0.3em] uppercase opacity-40">
+                    Search & Select Standard Indices or Thematic Clusters to Compare
+                </span>
+                <div className="w-8 h-[1px] bg-[var(--accent-primary)]/30 group-hover:w-16 transition-all duration-500" />
             </div>
         );
     }
 
     return (
-        <div className="relative w-full" style={{ height }}>
+        <div
+            ref={svgRef}
+            className="relative w-full"
+            style={{ height }}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => setHoverIndex(null)}
+        >
             {/* Liquid Tooltip */}
             {hoverIndex !== null && seriesList.length > 0 && seriesList[0].points[hoverIndex] && (
                 <div
-                    className="absolute z-40 pointer-events-none glass-card p-3 border border-[var(--accent-primary)]/40 shadow-2xl flex flex-col gap-2 min-w-[200px] bg-[var(--bg-main)]/95 backdrop-blur-3xl transition-all duration-75 ease-out"
+                    className="absolute z-40 pointer-events-auto glass-card p-3 border border-[var(--accent-primary)]/40 shadow-2xl flex flex-col gap-2 min-w-[240px] bg-[var(--bg-main)]/95 backdrop-blur-3xl transition-all duration-75 ease-out"
                     style={{
                         left: `${(getX(seriesList[0].points[hoverIndex].time) / width) * 100}%`,
                         top: '0%',
-                        transform: 'translateX(-50%) translateY(-100%) translateY(-20px)'
+                        transform: 'translateX(-50%) translateY(0px)',
+                        maxHeight: '400px'
                     }}
                 >
-                    <div className="flex items-center justify-between gap-4 border-b border-[var(--ui-divider)] pb-1.5 mb-1">
+                    <div className="flex items-center justify-between gap-4 border-b border-[var(--ui-divider)] pb-1.5 mb-1 shrink-0">
                         <span className="text-[7px] font-bold text-[var(--accent-primary)] uppercase tracking-widest">Momentum Scan</span>
                         <span className="text-[7px] font-mono text-[var(--text-muted)]">{formatTime(seriesList[0].points[hoverIndex].time)}</span>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2 overflow-y-auto pr-1">
                         {seriesList
                             .map(s => ({
                                 ...s,
@@ -177,8 +215,9 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
                                 return (
                                     <div key={s.symbol} className="flex items-center justify-between gap-6">
                                         <div className="flex items-center gap-2">
-                                            <div className="w-1.5 h-1.5 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: s.color, color: s.color }} />
-                                            <span className="text-[9px] font-bold tracking-tight text-[var(--text-main)] uppercase truncate max-w-[120px]">
+                                            <TooltipCompanyLogo symbol={s.symbol} />
+                                            <div className="w-[1px] h-3.5 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: s.color, color: s.color }} />
+                                            <span className="text-[9px] font-bold tracking-tight text-[var(--text-main)] uppercase truncate max-w-[140px]">
                                                 {labels.get(s.symbol) || s.symbol}
                                             </span>
                                         </div>
@@ -202,12 +241,9 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
             </div>
 
             <svg
-                ref={svgRef}
                 viewBox={`0 0 ${width} ${height}`}
                 className="w-full h-full overflow-visible cursor-crosshair"
                 preserveAspectRatio="none"
-                onMouseMove={handleMouseMove}
-                onMouseLeave={() => setHoverIndex(null)}
             >
                 <defs>
                     <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">

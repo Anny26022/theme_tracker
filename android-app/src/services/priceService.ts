@@ -17,7 +17,7 @@ const STRIKE_PROXY_URL = getMobileProxyUrl('/api/mobile-strike');
 const MAX_BATCH_SIZE = 550;
 const BATCH_AGGREGATION_WINDOW = 16; // 16ms (frame-sync) for instant feel
 const EDGE_CACHE_MAX_URL_LENGTH = 7000;
-const EDGE_REALTIME_GROUP_SIZE = 20;
+const EDGE_REALTIME_GROUP_SIZE = 550;
 const EDGE_BATCH_TTL_MS = 300_000;
 const IS_PROD = typeof __DEV__ !== 'undefined' ? !__DEV__ : true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
@@ -381,34 +381,6 @@ function estimateEdgeGetUrlLengthFromEntries(entries: any[]) {
     return `${BATCH_PROXY_URL}?${getQuery.toString()}`.length;
 }
 
-function splitQueueItemsByUrlBudget(items: QueueItem[], maxUrlLength = EDGE_CACHE_MAX_URL_LENGTH) {
-    if (!Array.isArray(items) || items.length <= 1 || !BATCH_PROXY_URL) return [items];
-
-    const chunks: QueueItem[][] = [];
-    let current: QueueItem[] = [];
-
-    for (const item of items) {
-        if (current.length === 0) {
-            current.push(item);
-            continue;
-        }
-
-        const trial = [...current, item];
-        const trialEntries = trial.map((q) => q.entry);
-        const trialLength = estimateEdgeGetUrlLengthFromEntries(trialEntries);
-
-        if (trialLength <= maxUrlLength) {
-            current.push(item);
-        } else {
-            chunks.push(current);
-            current = [item];
-        }
-    }
-
-    if (current.length > 0) chunks.push(current);
-    return chunks;
-}
-
 // ─── Transport: All requests go through proxy ─────────────────────
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
@@ -718,9 +690,7 @@ async function flushBatch() {
                 const transportGroups: QueueItem[][] = [];
                 for (let i = 0; i < group.length; i += transportChunkSize) {
                     const seededGroup = group.slice(i, i + transportChunkSize);
-                    splitQueueItemsByUrlBudget(seededGroup).forEach((budgetGroup) => {
-                        transportGroups.push(budgetGroup);
-                    });
+                    transportGroups.push(seededGroup);
                 }
 
                 await Promise.all(

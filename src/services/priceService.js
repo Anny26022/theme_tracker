@@ -12,9 +12,8 @@ const GOOGLE_RPC_FUNDAMENTALS = RPC_FUNDA;
 const GOOGLE_BATCH_PATH = EP_GOOGLE;
 const MAX_BATCH_SIZE = 550; // Massively batched for maximum efficiency
 const BATCH_AGGREGATION_WINDOW = 16; // 16ms (1 frame) aggregation window for instant feel
-const EDGE_CACHE_MAX_URL_LENGTH = 7000;
-const EDGE_REALTIME_GROUP_SIZE = 20;
-const EDGE_CACHEABLE_GROUP_SIZE = 25;
+const EDGE_REALTIME_GROUP_SIZE = 550;
+const EDGE_CACHEABLE_GROUP_SIZE = 550;
 const EDGE_BATCH_TTL_MS = 300_000;
 const INTERVAL_CHUNK_CONCURRENCY = 4;
 const IS_DEV = import.meta.env?.DEV;
@@ -447,24 +446,6 @@ function markEdgeGetFailure() {
     incrementMetric('edgeGetFailures');
 }
 
-function markEdgeUrlTooLongSkip() {
-    incrementMetric('edgeGetUrlTooLongSkips');
-    markMissReason('url-too-long');
-}
-
-function maybeWarnEdgeUrlTooLong(urlLength, entriesLength) {
-    if (!IS_DEV) return;
-    const now = Date.now();
-    const shouldLog = edgeUrlTooLongWarnCount < 3 || (now - edgeUrlTooLongWarnLastAt) > 15_000;
-    if (!shouldLog) return;
-    edgeUrlTooLongWarnLastAt = now;
-    edgeUrlTooLongWarnCount += 1;
-    console.warn(`[PriceService] Edge GET skipped: URL too long (${urlLength}) [entries=${entriesLength}]`);
-    if (edgeUrlTooLongWarnCount === 3) {
-        console.warn('[PriceService] URL-too-long warnings are now throttled (15s window).');
-    }
-}
-
 function markPostFallback() {
     incrementMetric('postFallbacks');
     markMissReason('post-fallback');
@@ -629,74 +610,6 @@ function initProdCacheMetricsLogging() {
 
 initProdCacheMetricsLogging();
 
-function estimateEdgeGetUrlLengthFromEntries(entries) {
-    if (!Array.isArray(entries) || entries.length === 0) return 0;
-    const rpcIds = [...new Set(entries.map(e => e[0]))];
-    const fReq = JSON.stringify([entries]);
-    const encoded = base64UrlEncode(fReq);
-    const params = new URLSearchParams({
-        rpcids: rpcIds.join(','),
-        f_req: encoded
-    });
-    return `${buildBatchUrl(rpcIds)}?${params.toString()}`.length;
-}
-
-function splitQueueItemsByUrlBudget(items, maxUrlLength = EDGE_CACHE_MAX_URL_LENGTH) {
-    if (!Array.isArray(items) || items.length <= 1) return [items];
-
-    const chunks = [];
-    let current = [];
-
-    for (const item of items) {
-        if (current.length === 0) {
-            current.push(item);
-            continue;
-        }
-
-        const trial = [...current, item];
-        const trialEntries = trial.map(itm => itm.q.entry);
-        const trialLength = estimateEdgeGetUrlLengthFromEntries(trialEntries);
-
-        if (trialLength <= maxUrlLength) {
-            current.push(item);
-        } else {
-            chunks.push(current);
-            current = [item];
-        }
-    }
-
-    if (current.length > 0) chunks.push(current);
-    return chunks;
-}
-
-function splitItemsByUrlBudget(items, toEntry, maxUrlLength = EDGE_CACHE_MAX_URL_LENGTH) {
-    if (!Array.isArray(items) || items.length <= 1) return [items];
-
-    const chunks = [];
-    let current = [];
-
-    for (const item of items) {
-        if (current.length === 0) {
-            current.push(item);
-            continue;
-        }
-
-        const trial = [...current, item];
-        const trialEntries = trial.map(toEntry);
-        const trialLength = estimateEdgeGetUrlLengthFromEntries(trialEntries);
-
-        if (trialLength <= maxUrlLength) {
-            current.push(item);
-        } else {
-            chunks.push(current);
-            current = [item];
-        }
-    }
-
-    if (current.length > 0) chunks.push(current);
-    return chunks;
-}
-
 async function runWithConcurrency(items, concurrency, worker) {
     if (!Array.isArray(items) || items.length === 0) return;
     const poolSize = Math.max(1, Math.min(concurrency, items.length));
@@ -778,9 +691,7 @@ async function flushBatch() {
 
             for (let i = 0; i < sortedGroup.length; i += transportChunkSize) {
                 const seededGroup = sortedGroup.slice(i, i + transportChunkSize);
-                splitQueueItemsByUrlBudget(seededGroup).forEach((budgetGroup) => {
-                    transportGroups.push(budgetGroup);
-                });
+                transportGroups.push(seededGroup);
             }
 
             await Promise.all(transportGroups.map(async (transportGroup) => {
@@ -850,37 +761,6 @@ async function executeBatch(entries, timeoutMs = 12000) {
     const rpcIds = [...new Set(entries.map(e => e[0]))];
     const url = buildBatchUrl(rpcIds);
     const fReq = JSON.stringify([entries]);
-
-    // Prefer CDN-cacheable GET transport for all batch types; fallback to POST.
-    const encoded = base64UrlEncode(fReq);
-    const params = new URLSearchParams({
-        rpcids: rpcIds.join(','),
-        f_req: encoded
-    });
-    const getUrl = `${url}?${params.toString()}`;
-
-    if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
-        markEdgeGetEligibleBatch();
-        markEdgeGetExecutedBatch();
-        const getResponse = await fetch(getUrl, {
-            method: 'GET',
-            signal: AbortSignal.timeout?.(timeoutMs),
-        });
-        if (getResponse.ok) {
-            recordEdgeResponse(getResponse.headers, entries, getUrl);
-            return {
-                text: await getResponse.text(),
-                responseTtlMs: getRemainingEdgeTtlMs(getResponse.headers)
-            };
-        }
-        markEdgeGetFailure();
-        if (IS_DEV) {
-            console.warn(`[PriceService] Edge GET batch failed (${getResponse.status}), falling back to POST`);
-        }
-    } else {
-        markEdgeUrlTooLongSkip();
-        maybeWarnEdgeUrlTooLong(getUrl.length, entries.length);
-    }
 
     // Fallback path: AES-256-GCM encrypted POST payload
     markPostFallback();
@@ -1078,12 +958,10 @@ async function fetchFromStrike(symbol) {
 
     try {
         let response;
-        if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
-            response = await fetch(getUrl, {
-                method: 'GET',
-                signal: AbortSignal.timeout?.(15000),
-            });
-        }
+        response = await fetch(getUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout?.(15000),
+        });
 
         if (!response || !response.ok) {
             const payload = await seal(rawBody);
@@ -1216,11 +1094,20 @@ const intervalWaitTimers = new Map(); // timeframe:window -> timer
  * Fetch interval change % for MANY symbols.
  * Consolidation: Merges multiple calls in the same tick into a single set of parallel batches.
  */
-export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
+export async function fetchBatchIntervalPerformance(symbols, interval = '1M', options = {}) {
     await ensureIntervalCacheHydrated();
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cacheKeyBase = `${interval}:${window}`;
+    const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
+    const emitProgress = (payload) => {
+        if (!onProgress) return;
+        try {
+            onProgress(payload);
+        } catch {
+            // swallow UI callback errors
+        }
+    };
     let callIdbHits = 0;
     let callSessionHits = 0;
     let callMemoryHits = 0;
@@ -1285,6 +1172,14 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                     if (c?.data) results.set(sym, c.data);
                 });
             }
+            emitProgress({
+                interval,
+                totalGroups: 0,
+                completedGroups: 0,
+                totalSymbols: 0,
+                completedSymbols: 0,
+                done: true
+            });
             resolve(results);
         });
     }
@@ -1308,6 +1203,14 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
         });
 
         if (allUncached.length === 0) {
+            emitProgress({
+                interval,
+                totalGroups: 0,
+                completedGroups: 0,
+                totalSymbols: 0,
+                completedSymbols: 0,
+                done: true
+            });
             resolveBatch();
             return;
         }
@@ -1333,18 +1236,28 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                     entry: [GOOGLE_RPC_CHART, rpcArgs, null, 'generic']
                 };
             });
-            splitItemsByUrlBudget(seededItems, (item) => item.entry).forEach((group) => {
-                transportGroups.push(group);
-            });
+            transportGroups.push(seededItems);
         });
 
         if (IS_DEV) {
             console.debug(`[PriceService] Interval ${interval} transport groups: ${transportGroups.length}`);
         }
 
+        let completedGroups = 0;
+        let completedSymbols = 0;
+        emitProgress({
+            interval,
+            totalGroups: transportGroups.length,
+            completedGroups: 0,
+            totalSymbols: allUncached.length,
+            completedSymbols: 0,
+            done: false
+        });
+
         await runWithConcurrency(transportGroups, INTERVAL_CHUNK_CONCURRENCY, async (group) => {
             const entries = group.map((item) => item.entry);
             const groupSymbols = group.map((item) => item.symbol);
+            const partialData = {};
             try {
                 const batchResult = await executeBatch(entries);
                 const frames = parseAllFrames(batchResult.text).filter(f => f.rpcId === GOOGLE_RPC_CHART);
@@ -1360,6 +1273,7 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                             idbHydratedIntervalKeys.delete(cacheKey);
                             sessionHydratedIntervalKeys.delete(cacheKey);
                         }
+                        partialData[extracted.symbol] = extracted.data;
                         returned.add(extracted.symbol);
                     }
                 });
@@ -1378,6 +1292,18 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                 });
             } catch (err) {
                 console.warn(`[PriceService] Parallel chunk failed:`, err.message);
+            } finally {
+                completedGroups += 1;
+                completedSymbols += groupSymbols.length;
+                emitProgress({
+                    interval,
+                    totalGroups: transportGroups.length,
+                    completedGroups,
+                    totalSymbols: allUncached.length,
+                    completedSymbols: Math.min(allUncached.length, completedSymbols),
+                    partialData,
+                    done: completedGroups >= transportGroups.length
+                });
             }
         });
 

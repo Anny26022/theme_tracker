@@ -648,7 +648,7 @@ const Legend = React.memo(() => (
 ));
 
 export const MarketMapView = ({ hierarchy }) => {
-    const [hideBSE, setHideBSE] = useState(true);
+    const [hideBSE, setHideBSE] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [highlightedTheme, setHighlightedTheme] = useState(null);
@@ -768,11 +768,25 @@ export const MarketMapView = ({ hierarchy }) => {
         }
     };
 
-    const { heatmapData, stockPerfMap, loading } = useThematicHeatmap(THEMATIC_MAP, filteredHierarchy);
+    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress } = useThematicHeatmap(THEMATIC_MAP, filteredHierarchy);
+    const hasHeatmapData = Object.keys(heatmapData || {}).length > 0;
+    const pendingLabel = pendingIntervals
+        .map((interval) => {
+            const status = intervalProgress?.[interval];
+            if (!status) return interval;
+            if (Number.isFinite(status.totalGroups) && status.totalGroups > 0) {
+                return `${interval} ${status.completedGroups || 0}/${status.totalGroups}`;
+            }
+            if (Number.isFinite(status.totalSymbols) && status.totalSymbols > 0) {
+                return `${interval} ${status.completedSymbols || 0}/${status.totalSymbols}`;
+            }
+            return interval;
+        })
+        .join(' | ');
 
     return (
         <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 !overflow-visible relative">
-            {loading && <UniverseLoader />}
+            {loading && !hasHeatmapData && <UniverseLoader />}
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60] !overflow-visible">
                 <div className="space-y-1 relative z-10 w-full md:w-auto">
@@ -782,6 +796,11 @@ export const MarketMapView = ({ hierarchy }) => {
                     <p className="text-[7px] md:text-[10px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
                         {hideBSE ? 'Deep Thematic Mapping (NSE Only)' : 'Deep Thematic Mapping (Full Universe)'}
                     </p>
+                    {pendingIntervals?.length > 0 && (
+                        <p className="text-[6px] md:text-[8px] font-black uppercase tracking-[0.2em] text-[var(--text-muted)] opacity-70 mt-2">
+                            Loading Intervals: {pendingLabel}
+                        </p>
+                    )}
                 </div>
 
                 {/* Visual Flair (Hidden on mobile to prevent overflow) */}

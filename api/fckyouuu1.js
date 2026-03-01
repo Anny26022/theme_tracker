@@ -1,8 +1,5 @@
 import { unseal } from './_unseal.js';
 
-const CDN_CACHE_CONTROL = 'public, max-age=0, s-maxage=300, stale-while-revalidate=60';
-const CDN_S_MAXAGE = 's-maxage=300, stale-while-revalidate=60';
-
 function firstQueryValue(value) {
     if (Array.isArray(value)) return value[0];
     return value;
@@ -24,13 +21,8 @@ export default async function handler(req, res) {
     }
 
     res.setHeader('Access-Control-Allow-Origin', '*');
-    if (isGet) {
-        res.setHeader('Cache-Control', CDN_CACHE_CONTROL);
-        res.setHeader('Vercel-CDN-Cache-Control', CDN_S_MAXAGE);
-    } else {
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
-    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
 
     try {
         const rawBody = isGet ? decodeBase64Url(firstQueryValue(req.query?.f_req)) : unseal(req.body);

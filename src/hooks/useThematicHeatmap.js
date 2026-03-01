@@ -1,5 +1,4 @@
-import { useMemo, useCallback, useEffect } from 'react';
-import { useAsync } from './useAsync';
+import { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchBatchIntervalPerformance, cleanSymbol, recordCacheMetric } from '../services/priceService';
 
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
@@ -53,6 +52,40 @@ if (initialPersisted?.cache) {
     });
 }
 
+function buildHeatmap(themeToSymbols, intervalResults) {
+    const heatmap = {};
+
+    themeToSymbols.forEach((symbols, themeName) => {
+        heatmap[themeName] = {};
+        HEATMAP_INTERVALS.forEach((interval) => {
+            const perfMap = intervalResults.get(interval);
+            if (!perfMap) {
+                heatmap[themeName][interval] = null;
+                return;
+            }
+
+            let sum = 0;
+            let validCount = 0;
+            symbols.forEach((symbol) => {
+                const data = perfMap.get(cleanSymbol(symbol));
+                if (data && typeof data.changePct === 'number') {
+                    sum += data.changePct;
+                    validCount += 1;
+                }
+            });
+            heatmap[themeName][interval] = validCount > 0 ? (sum / validCount) : null;
+        });
+    });
+
+    return heatmap;
+}
+
+function hasAnyHeatmapValues(heatmap) {
+    return Object.values(heatmap || {}).some((intervalMap) =>
+        Object.values(intervalMap || {}).some((value) => Number.isFinite(value))
+    );
+}
+
 export function useThematicHeatmap(thematicMap, hierarchy) {
     const themeMappings = useMemo(() => {
         const themeToSymbols = new Map();
@@ -95,12 +128,26 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
 
     const { themeToSymbols, allSymbols } = themeMappings;
 
-    const fetchFunc = useCallback(async () => {
-        if (allSymbols.length === 0) return {};
+    const [heatmapData, setHeatmapData] = useState({});
+    const [loading, setLoading] = useState(false);
+    const [intervalProgress, setIntervalProgress] = useState({});
+    const requestIdRef = useRef(0);
+
+    const execute = useCallback(async () => {
+        const requestId = ++requestIdRef.current;
+        if (allSymbols.length === 0) {
+            setHeatmapData({});
+            setLoading(false);
+            setIntervalProgress({});
+            return {};
+        }
+
+        setLoading(true);
 
         const now = Date.now();
         const isCacheValid = (now - globalPriceDataTimestamp < HEATMAP_CACHE_TTL_MS);
         const normalizedSymbols = Array.from(new Set(allSymbols.map((symbol) => cleanSymbol(symbol))));
+        const intervalResults = new Map();
 
         const hasFullCoverage = HEATMAP_INTERVALS.every((interval) => {
             if (!globalPriceDataCache.has(interval)) return false;
@@ -117,33 +164,95 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             if (cachedHeatmapEntry?.timestamp === globalPriceDataTimestamp) {
                 recordCacheMetric('heatmapMemoHits');
                 recordCacheMetric('heatmapFreshServes');
+                if (requestId === requestIdRef.current) {
+                    setHeatmapData(cachedHeatmapEntry.heatmap);
+                    setLoading(false);
+                    setIntervalProgress({});
+                }
                 return cachedHeatmapEntry.heatmap;
             }
             recordCacheMetric('heatmapMemoMisses');
         }
 
-        // 1. Fetch raw performance data for all unique symbols across intervals
+        // Seed UI with any already-available interval data to avoid full-screen blocking.
+        HEATMAP_INTERVALS.forEach((interval) => {
+            const existing = globalPriceDataCache.get(interval);
+            if (existing) intervalResults.set(interval, existing);
+        });
+
+        if (requestId === requestIdRef.current) {
+            // Always seed the UI shape immediately so MarketMap renders while data streams in.
+            const seededHeatmap = buildHeatmap(themeToSymbols, intervalResults);
+            setHeatmapData(seededHeatmap);
+            if (hasAnyHeatmapValues(seededHeatmap)) setLoading(false);
+        }
+
+        // Fetch raw performance data across intervals and stream partial results.
         let wasRefetched = false;
-        const results = await Promise.all(
-            HEATMAP_INTERVALS.map(async (interval) => {
-                const hasCacheForInterval = globalPriceDataCache.has(interval);
-                const coverage = globalPriceCoverage.get(interval) || new Set();
-                const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
+        const intervalsToFetch = [];
+        HEATMAP_INTERVALS.forEach((interval) => {
+            const hasCacheForInterval = globalPriceDataCache.has(interval);
+            const coverage = globalPriceCoverage.get(interval) || new Set();
+            const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
+            const shouldFetch = !(isCacheValid && hasCacheForInterval && missingSymbols.length === 0);
+            if (shouldFetch) intervalsToFetch.push(interval);
+        });
+        if (requestId === requestIdRef.current) {
+            const nextProgress = {};
+            intervalsToFetch.forEach((interval) => {
+                nextProgress[interval] = {
+                    interval,
+                    totalGroups: 0,
+                    completedGroups: 0,
+                    totalSymbols: 0,
+                    completedSymbols: 0,
+                    done: false
+                };
+            });
+            setIntervalProgress(nextProgress);
+        }
 
-                // Return cached raw data only if cache is valid and fully covers the current symbol universe.
-                if (isCacheValid && hasCacheForInterval && missingSymbols.length === 0) {
-                    recordCacheMetric('externalCacheHits');
-                    return { interval, perfMap: globalPriceDataCache.get(interval) };
-                }
+        await Promise.all(HEATMAP_INTERVALS.map(async (interval) => {
+            const hasCacheForInterval = globalPriceDataCache.has(interval);
+            const coverage = globalPriceCoverage.get(interval) || new Set();
+            const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
+
+            if (isCacheValid && hasCacheForInterval && missingSymbols.length === 0) {
+                recordCacheMetric('externalCacheHits');
+                intervalResults.set(interval, globalPriceDataCache.get(interval));
+            } else {
                 recordCacheMetric('externalCacheMisses');
-
                 const symbolsToFetch = isCacheValid ? missingSymbols : normalizedSymbols;
-                const fetchedPerf = symbolsToFetch.length > 0
-                    ? await fetchBatchIntervalPerformance(symbolsToFetch, interval)
-                    : new Map();
-
                 const nextPerfMap = (isCacheValid && hasCacheForInterval)
                     ? new Map(globalPriceDataCache.get(interval))
+                    : new Map();
+                intervalResults.set(interval, nextPerfMap);
+
+                const fetchedPerf = symbolsToFetch.length > 0
+                    ? await fetchBatchIntervalPerformance(symbolsToFetch, interval, {
+                        onProgress: (progress) => {
+                            if (requestId !== requestIdRef.current) return;
+                            if (progress?.partialData && typeof progress.partialData === 'object') {
+                                Object.entries(progress.partialData).forEach(([symbol, value]) => {
+                                    if (value && typeof value.changePct === 'number') {
+                                        nextPerfMap.set(symbol, value);
+                                    }
+                                });
+                                globalPriceDataCache.set(interval, nextPerfMap);
+                                const chunkHeatmap = buildHeatmap(themeToSymbols, intervalResults);
+                                setHeatmapData(chunkHeatmap);
+                                if (hasAnyHeatmapValues(chunkHeatmap)) setLoading(false);
+                            }
+                            setIntervalProgress((prev) => ({
+                                ...prev,
+                                [interval]: {
+                                    ...(prev?.[interval] || {}),
+                                    ...progress,
+                                    done: Boolean(progress?.done)
+                                }
+                            }));
+                        }
+                    })
                     : new Map();
 
                 fetchedPerf.forEach((value, symbol) => {
@@ -153,10 +262,15 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
                 symbolsToFetch.forEach((symbol) => coverage.add(symbol));
                 globalPriceCoverage.set(interval, coverage);
                 globalPriceDataCache.set(interval, nextPerfMap);
+                intervalResults.set(interval, nextPerfMap);
                 wasRefetched = true;
-                return { interval, perfMap: nextPerfMap };
-            })
-        );
+            }
+
+            if (requestId !== requestIdRef.current) return;
+            const partialHeatmap = buildHeatmap(themeToSymbols, intervalResults);
+            setHeatmapData(partialHeatmap);
+            if (hasAnyHeatmapValues(partialHeatmap)) setLoading(false);
+        }));
 
         if (wasRefetched) {
             globalPriceDataTimestamp = Date.now();
@@ -165,24 +279,7 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             recordCacheMetric('heatmapFreshServes');
         }
 
-        // 2. Perform aggregation (always runs to respect current filtering)
-        const heatmap = {}; // themeName -> { interval -> avgPerf }
-
-        themeToSymbols.forEach((symbols, themeName) => {
-            heatmap[themeName] = {};
-            results.forEach(({ interval, perfMap }) => {
-                let sum = 0;
-                let validCount = 0;
-                symbols.forEach(s => {
-                    const data = perfMap.get(cleanSymbol(s));
-                    if (data && typeof data.changePct === 'number') {
-                        sum += data.changePct;
-                        validCount++;
-                    }
-                });
-                heatmap[themeName][interval] = validCount > 0 ? (sum / validCount) : null;
-            });
-        });
+        const heatmap = buildHeatmap(themeToSymbols, intervalResults);
 
         if (hierarchy) {
             globalHeatmapByHierarchy.set(hierarchy, {
@@ -191,23 +288,44 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             });
         }
 
+        if (requestId === requestIdRef.current) {
+            setHeatmapData(heatmap);
+            setLoading(false);
+            setIntervalProgress({});
+        }
+
         return heatmap;
     }, [allSymbols, hierarchy, themeToSymbols]);
 
-    const { data: heatmapData, loading, execute } = useAsync(fetchFunc, [allSymbols, themeToSymbols]);
+    useEffect(() => {
+        void execute();
+        return () => {
+            requestIdRef.current += 1;
+            setIntervalProgress({});
+        };
+    }, [execute]);
 
     useEffect(() => {
         if (!allSymbols.length) return;
         const timer = setInterval(() => {
             recordCacheMetric('heatmapScheduledRefreshes');
-            execute();
+            void execute();
         }, HEATMAP_REFRESH_INTERVAL_MS);
         return () => clearInterval(timer);
-    }, [allSymbols, execute]);
+    }, [allSymbols.length, execute]);
+
+    const pendingIntervals = useMemo(
+        () => Object.entries(intervalProgress)
+            .filter(([, status]) => status && status.done !== true)
+            .map(([interval]) => interval),
+        [intervalProgress]
+    );
 
     return {
         heatmapData: heatmapData || {},
         stockPerfMap: globalPriceDataCache,
-        loading: loading && !heatmapData
+        loading: loading && !hasAnyHeatmapValues(heatmapData),
+        pendingIntervals,
+        intervalProgress
     };
 }

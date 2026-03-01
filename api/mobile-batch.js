@@ -2,7 +2,7 @@
  * Mobile Proxy — Google Finance batchexecute relay.
  * 
  * Accepts plain POST bodies from the React Native app (no AES encryption).
- * Also accepts cacheable GET requests with query params:
+ * Also accepts GET requests with query params:
  *   /api/mobile-batch?rpcids=...&f_req=<base64url-json>
  * Forwards to Google Finance with proper server-side headers.
  * 
@@ -26,13 +26,8 @@ export default async function handler(req, res) {
 
     try {
         const isGet = req.method === 'GET';
-        if (isGet) {
-            res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=60');
-            res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=300, stale-while-revalidate=60');
-        } else {
-            res.setHeader('Cache-Control', 'no-store');
-            res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
-        }
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
 
         const rpcIds = (isGet ? req.query?.rpcids : req.headers['x-rpc-ids']) || 'xh8wxf';
         const normalizedRpcIds = Array.isArray(rpcIds) ? rpcIds.join(',') : String(rpcIds);

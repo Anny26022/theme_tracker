@@ -34,8 +34,15 @@ const pendingUnifiedRequests = new Map();
 const PRICE_CACHE_TTL = 300_000; // 5m
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
-const MAX_PERSISTED_INTERVAL_ENTRIES = 6000;
+const MAX_PERSISTED_INTERVAL_ENTRIES_IDB = 30000;
+const MAX_PERSISTED_INTERVAL_ENTRIES_SESSION = 500;
+const MAX_INTERVAL_MEMORY_ENTRIES = 40000;
 const MAX_PERSISTED_FUNDA_ENTRIES = 1500;
+const INTERVAL_CACHE_DB_NAME = 'tt_cache_db';
+const INTERVAL_CACHE_DB_VERSION = 1;
+const INTERVAL_CACHE_STORE = 'kv';
+const INTERVAL_CACHE_IDB_KEY = 'interval_cache_v1';
+const HAS_INDEXED_DB = typeof indexedDB !== 'undefined';
 
 function pruneCacheEntries(cache, maxEntries) {
     if (cache.size <= maxEntries) return cache;
@@ -70,9 +77,132 @@ function saveCache(cache, storageKey, maxEntries) {
     } catch { /* storage full — ignore */ }
 }
 
+function getSortedCacheEntries(cache) {
+    return [...cache.entries()].sort((a, b) => {
+        const aTs = a?.[1]?.timestamp || 0;
+        const bTs = b?.[1]?.timestamp || 0;
+        return bTs - aTs;
+    });
+}
+
+let intervalCacheDbPromise = null;
+let intervalCacheHydrated = false;
+let intervalCacheHydrationPromise = null;
+
+function openIntervalCacheDb() {
+    if (!HAS_INDEXED_DB) return Promise.resolve(null);
+    if (intervalCacheDbPromise) return intervalCacheDbPromise;
+
+    intervalCacheDbPromise = new Promise((resolve) => {
+        try {
+            const request = indexedDB.open(INTERVAL_CACHE_DB_NAME, INTERVAL_CACHE_DB_VERSION);
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(INTERVAL_CACHE_STORE)) {
+                    db.createObjectStore(INTERVAL_CACHE_STORE);
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(null);
+        } catch {
+            resolve(null);
+        }
+    });
+
+    return intervalCacheDbPromise;
+}
+
+async function readIntervalCacheEntriesFromIndexedDb() {
+    const db = await openIntervalCacheDb();
+    if (!db) return null;
+
+    return new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readonly');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            const request = store.get(INTERVAL_CACHE_IDB_KEY);
+            request.onsuccess = () => {
+                const value = request.result;
+                resolve(Array.isArray(value?.entries) ? value.entries : null);
+            };
+            request.onerror = () => resolve(null);
+        } catch {
+            resolve(null);
+        }
+    });
+}
+
+async function writeIntervalCacheEntriesToIndexedDb(entries) {
+    const db = await openIntervalCacheDb();
+    if (!db) return;
+
+    await new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            store.put({ entries, updatedAt: Date.now() }, INTERVAL_CACHE_IDB_KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        } catch {
+            resolve();
+        }
+    });
+}
+
+async function clearIntervalCacheFromIndexedDb() {
+    const db = await openIntervalCacheDb();
+    if (!db) return;
+
+    await new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            store.delete(INTERVAL_CACHE_IDB_KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        } catch {
+            resolve();
+        }
+    });
+}
+
 const priceCache = loadCache(PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
-const intervalCache = loadCache(INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES);
+const intervalCache = loadCache(INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES_SESSION);
 const fundaCache = loadCache(FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES);
+
+async function hydrateIntervalCacheFromIndexedDb() {
+    const startedAt = Date.now();
+    let hydratedEntries = 0;
+    try {
+        const entries = await readIntervalCacheEntriesFromIndexedDb();
+        if (Array.isArray(entries)) {
+            hydratedEntries = entries.length;
+            entries.forEach(([key, row]) => {
+                if (!key || !row || typeof row.timestamp !== 'number') return;
+                const existing = intervalCache.get(key);
+                const existingTs = existing?.timestamp || 0;
+                if (!existing || row.timestamp > existingTs) {
+                    intervalCache.set(key, row);
+                }
+            });
+            pruneCacheEntries(intervalCache, MAX_INTERVAL_MEMORY_ENTRIES);
+        }
+    } finally {
+        cacheMetrics.idbHydrationMs = Math.max(0, Date.now() - startedAt);
+        cacheMetrics.idbHydrationEntries = hydratedEntries;
+        intervalCacheHydrated = true;
+    }
+}
+
+function ensureIntervalCacheHydrated() {
+    if (intervalCacheHydrated) return Promise.resolve();
+    if (!intervalCacheHydrationPromise) {
+        intervalCacheHydrationPromise = hydrateIntervalCacheFromIndexedDb();
+    }
+    return intervalCacheHydrationPromise;
+}
+
+ensureIntervalCacheHydrated();
 
 // Debug: log hydration on module load
 if (IS_DEV) {
@@ -91,7 +221,13 @@ function schedulePriceSave() {
 
 function scheduleIntervalSave() {
     if (intervalSaveTimer) clearTimeout(intervalSaveTimer);
-    intervalSaveTimer = setTimeout(() => saveCache(intervalCache, INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES), 500);
+    intervalSaveTimer = setTimeout(() => {
+        pruneCacheEntries(intervalCache, MAX_INTERVAL_MEMORY_ENTRIES);
+        const idbEntries = getSortedCacheEntries(intervalCache).slice(0, MAX_PERSISTED_INTERVAL_ENTRIES_IDB);
+        void writeIntervalCacheEntriesToIndexedDb(idbEntries);
+        const sessionMirror = new Map(idbEntries.slice(0, MAX_PERSISTED_INTERVAL_ENTRIES_SESSION));
+        saveCache(sessionMirror, INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES_SESSION);
+    }, 500);
 }
 
 function scheduleFundaSave() {
@@ -173,6 +309,8 @@ const cacheMetrics = {
     heatmapMemoMisses: 0,
     heatmapFreshServes: 0,
     heatmapScheduledRefreshes: 0,
+    idbHydrationMs: 0,
+    idbHydrationEntries: 0,
     appLoads: 0,
 };
 
@@ -1007,7 +1145,8 @@ const intervalWaitTimers = new Map(); // timeframe:window -> timer
  * Fetch interval change % for MANY symbols.
  * Consolidation: Merges multiple calls in the same tick into a single set of parallel batches.
  */
-export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
+export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
+    await ensureIntervalCacheHydrated();
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cacheKeyBase = `${interval}:${window}`;
@@ -1391,6 +1530,7 @@ export function clearPriceCache() {
     sessionStorage.removeItem(PRICE_CACHE_KEY);
     sessionStorage.removeItem(INTERVAL_CACHE_KEY);
     sessionStorage.removeItem(FUNDA_CACHE_KEY);
+    void clearIntervalCacheFromIndexedDb();
 }
 
 /**

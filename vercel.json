@@ -15,6 +15,18 @@
     ],
     "rewrites": [
         {
+            "source": "/api/v1/fuckyouuuu",
+            "destination": "/api/fuckyouuuu"
+        },
+        {
+            "source": "/api/v1/fckyouuu1",
+            "destination": "/api/fckyouuu1"
+        },
+        {
+            "source": "/api/v1/fckyouuu2",
+            "destination": "/api/scanx"
+        },
+        {
             "source": "/((?!api/).*)",
             "destination": "/index.html"
         }

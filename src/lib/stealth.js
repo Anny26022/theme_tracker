@@ -23,9 +23,9 @@ function _d(hex) {
 //  ENCODED CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-export const EP_GOOGLE = _d('753b2a33752c6b753c2f393123352f2f2f2f');
-export const EP_STRIKE = _d('753b2a33752c6b753c393123352f2f2f6b');
-export const EP_SCANX = _d('753b2a33752c6b753c393123352f2f2f68');
+export const EP_GOOGLE = _d('753b2a33753c2f393123352f2f2f2f');
+export const EP_STRIKE = _d('753b2a33753c393123352f2f2f6b');
+export const EP_SCANX = _d('753b2a337529393b3422');
 
 export const RPC_PRICE = _d('2232622d223c');
 export const RPC_CHART = _d('1b33192d293e');

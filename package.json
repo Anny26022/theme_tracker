@@ -7,6 +7,8 @@
         "dev": "vite --host",
         "build": "vite build",
         "preview": "vite preview",
+        "cf:dev": "npx wrangler dev",
+        "cf:deploy": "npx wrangler deploy",
         "mobile:start": "npm --prefix \"./android-app\" run start",
         "mobile:android": "npm --prefix \"./android-app\" run android",
         "mobile:ios": "npm --prefix \"./android-app\" run ios",

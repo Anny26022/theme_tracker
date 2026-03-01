@@ -1,6 +1,6 @@
-name = "theme-tracker-edge-proxy"
+name = "themetracker"
 main = "cloudflare/worker.mjs"
-compatibility_date = "2026-03-02"
+compatibility_date = "2026-03-01"
 workers_dev = true
 
 [assets]

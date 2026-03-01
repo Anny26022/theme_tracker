@@ -7,6 +7,8 @@
         "dev": "vite --host",
         "build": "vite build",
         "preview": "vite preview",
+        "cf:dev": "wrangler dev",
+        "cf:deploy": "npm run build && wrangler deploy",
         "mobile:start": "npm --prefix \"./android-app\" run start",
         "mobile:android": "npm --prefix \"./android-app\" run android",
         "mobile:ios": "npm --prefix \"./android-app\" run ios",
@@ -31,6 +33,7 @@
         "javascript-obfuscator": "^5.3.0",
         "rollup-plugin-obfuscator": "^1.1.0",
         "tailwindcss": "^4.2.1",
-        "vite": "^8.0.0-beta.15"
+        "vite": "^8.0.0-beta.15",
+        "wrangler": "^4.5.0"
     }
 }

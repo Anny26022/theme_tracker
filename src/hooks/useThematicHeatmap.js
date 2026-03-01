@@ -5,6 +5,7 @@ import { fetchBatchIntervalPerformance, cleanSymbol, recordCacheMetric } from '.
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
 const HEATMAP_CACHE_TTL_MS = 300_000; // 5 minutes freshness budget
 const HEATMAP_REFRESH_INTERVAL_MS = 240_000; // 4 minutes scheduled refresh
+const HEATMAP_INTERVAL_FETCH_CONCURRENCY = 2;
 const RAW_DATA_KEY = 'tt_raw_price_data:v1';
 
 // ─── Persistence Helpers ───────────────────────────────────────────
@@ -38,6 +39,24 @@ function savePersistedRawData(cache, timestamp) {
             timestamp
         }));
     } catch { /* ignore */ }
+}
+
+async function runWithConcurrencyLimit(items, worker, concurrency = 2) {
+    const limit = Math.max(1, Math.min(concurrency, items.length || 1));
+    const results = new Array(items.length);
+    let cursor = 0;
+
+    await Promise.all(
+        Array.from({ length: limit }, async () => {
+            while (cursor < items.length) {
+                const index = cursor;
+                cursor += 1;
+                results[index] = await worker(items[index], index);
+            }
+        })
+    );
+
+    return results;
 }
 
 // Module-level memory cache for instant tab switching
@@ -124,8 +143,9 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
 
         // 1. Fetch raw performance data for all unique symbols across intervals
         let wasRefetched = false;
-        const results = await Promise.all(
-            HEATMAP_INTERVALS.map(async (interval) => {
+        const results = await runWithConcurrencyLimit(
+            HEATMAP_INTERVALS,
+            async (interval) => {
                 const hasCacheForInterval = globalPriceDataCache.has(interval);
                 const coverage = globalPriceCoverage.get(interval) || new Set();
                 const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
@@ -169,7 +189,8 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
                     wasRefetched = true;
                 }
                 return { interval, perfMap: nextPerfMap };
-            })
+            },
+            HEATMAP_INTERVAL_FETCH_CONCURRENCY
         );
 
         if (wasRefetched) {

@@ -1136,9 +1136,11 @@ function extractPriceFromFrame(payload) {
 
     if (!Array.isArray(priceTuple) || typeof priceTuple[0] !== 'number') return null;
     if (!Array.isArray(symbolInfo)) return null;
+    const symbol = cleanSymbol(symbolInfo[0]);
+    if (!symbol) return null;
 
     return {
-        symbol: symbolInfo[0],
+        symbol,
         data: {
             price: priceTuple[0],
             change: priceTuple[1] || 0,
@@ -1164,6 +1166,8 @@ function extractChartFromFrame(payload, interval) {
     }
 
     if (!Array.isArray(symbolInfo) || !Array.isArray(points) || points.length === 0) return null;
+    const symbol = cleanSymbol(symbolInfo[0]);
+    if (!symbol) return null;
 
     const lastPoint = points[points.length - 1];
     const close = lastPoint?.[1]?.[0];
@@ -1182,7 +1186,7 @@ function extractChartFromFrame(payload, interval) {
     if (typeof changePct !== 'number' || !isFinite(changePct)) return null;
 
     return {
-        symbol: symbolInfo[0],
+        symbol,
         data: { changePct: changePct * 100, close }
     };
 }
@@ -1195,6 +1199,8 @@ function extractWideChartFromFrame(payload) {
     if (!Array.isArray(root)) return null;
 
     const symbolInfo = root[0];
+    const symbol = cleanSymbol(symbolInfo?.[0]);
+    if (!symbol) return null;
 
     // Robustly find the points array. Google structure varies.
     // 1D: root[3][0][1]
@@ -1234,7 +1240,7 @@ function extractWideChartFromFrame(payload) {
     }
 
     return {
-        symbol: symbolInfo[0],
+        symbol,
         series
     };
 }

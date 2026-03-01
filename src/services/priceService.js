@@ -520,9 +520,23 @@ function rememberEdgeSuccess(entries, getUrl) {
     });
 }
 
+function getEdgeCacheState(headers) {
+    const vercel = (headers.get('x-vercel-cache') || '').toUpperCase();
+    if (vercel) return vercel;
+
+    const cloudflare = (headers.get('cf-cache-status') || '').toUpperCase();
+    if (!cloudflare) return '';
+
+    // Normalize common Cloudflare states to existing metric buckets.
+    if (cloudflare.includes('HIT')) return 'HIT';
+    if (cloudflare.includes('MISS') || cloudflare.includes('EXPIRED')) return 'MISS';
+    if (cloudflare.includes('STALE') || cloudflare.includes('REVALIDATED') || cloudflare.includes('UPDATING')) return 'STALE';
+    return cloudflare; // BYPASS / DYNAMIC / NONE -> OTHER bucket
+}
+
 function recordEdgeResponse(headers, entries, getUrl) {
     incrementMetric('edgeGetSuccess');
-    const edgeCache = (headers.get('x-vercel-cache') || '').toUpperCase();
+    const edgeCache = getEdgeCacheState(headers);
     if (edgeCache.includes('HIT')) {
         incrementMetric('edgeServedHit');
     } else if (edgeCache.includes('MISS')) {

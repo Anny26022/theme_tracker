@@ -53,15 +53,11 @@ function withCors(headers = new Headers(), allowMethods = "GET, POST, PATCH, DEL
 
 function withNoStore(headers = new Headers()) {
   headers.set("Cache-Control", "no-store");
-  headers.set("x-vercel-cache", "BYPASS");
-  headers.delete("Age");
   return headers;
 }
 
 function withCache(headers = new Headers(), cacheControl) {
   headers.set("Cache-Control", cacheControl);
-  headers.set("x-vercel-cache", "MISS");
-  headers.set("Age", "0");
   return headers;
 }
 
@@ -81,11 +77,10 @@ function cloneResponseWithHeaders(response, mutateHeaders) {
   });
 }
 
-function applyEdgeCompatHeaders(headers, cacheStatus, ageSec) {
+function applyEdgeAgeHeader(headers, ageSec) {
   headers.delete(EDGE_META_CACHED_AT);
   headers.delete(EDGE_META_TTL);
   headers.delete(EDGE_META_SWR);
-  headers.set("x-vercel-cache", cacheStatus);
   if (Number.isFinite(ageSec) && ageSec >= 0) {
     headers.set("Age", String(Math.floor(ageSec)));
   } else {
@@ -119,7 +114,7 @@ async function fetchWithEdgeCache({ cacheKeyUrl, ttlSec, swrSec, cacheControl, c
     const freshForClient = fresh.clone();
     const out = cloneResponseWithHeaders(freshForClient, (headers) => {
       headers.set("Cache-Control", cacheControl);
-      applyEdgeCompatHeaders(headers, "MISS", 0);
+      applyEdgeAgeHeader(headers, 0);
     });
 
     if (fresh.ok) {
@@ -142,7 +137,7 @@ async function fetchWithEdgeCache({ cacheKeyUrl, ttlSec, swrSec, cacheControl, c
   if (ageSec <= maxFresh) {
     return cloneResponseWithHeaders(cached, (headers) => {
       headers.set("Cache-Control", cacheControl);
-      applyEdgeCompatHeaders(headers, "HIT", ageSec);
+      applyEdgeAgeHeader(headers, ageSec);
     });
   }
 
@@ -156,7 +151,7 @@ async function fetchWithEdgeCache({ cacheKeyUrl, ttlSec, swrSec, cacheControl, c
 
     return cloneResponseWithHeaders(cached, (headers) => {
       headers.set("Cache-Control", cacheControl);
-      applyEdgeCompatHeaders(headers, "STALE", ageSec);
+      applyEdgeAgeHeader(headers, ageSec);
     });
   }
 
@@ -260,8 +255,6 @@ function applyTvNoStoreHeaders(headers) {
     "Content-Type, x-tv-sessionid, x-tv-sessionid-sign",
   );
   headers.set("Cache-Control", "no-store");
-  headers.set("x-vercel-cache", "BYPASS");
-  headers.delete("Age");
   headers.set("Vary", "x-tv-sessionid, x-tv-sessionid-sign, Cookie");
 }
 

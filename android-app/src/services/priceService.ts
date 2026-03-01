@@ -16,12 +16,17 @@ const STRIKE_PROXY_URL = getMobileProxyUrl('/api/mobile-strike');
 
 const MAX_BATCH_SIZE = 550;
 const BATCH_AGGREGATION_WINDOW = 16; // 16ms (frame-sync) for instant feel
+const EDGE_CACHE_MAX_URL_LENGTH = 7000;
+const EDGE_REALTIME_GROUP_SIZE = 20;
+const EDGE_BATCH_TTL_MS = 300_000;
+const IS_PROD = typeof __DEV__ !== 'undefined' ? !__DEV__ : true;
+const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
 
 const PRICE_CACHE_KEY = 'tt_price_cache:v1';
 const INTERVAL_CACHE_KEY = 'tt_interval_cache:v1';
 const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
 
-const PRICE_CACHE_TTL = 15_000;
+const PRICE_CACHE_TTL = 300_000;
 const FUNDA_CACHE_TTL = 3_600_000;
 
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
@@ -44,6 +49,7 @@ type IntervalData = {
 type CacheRow<T> = {
     data: T;
     timestamp: number;
+    ttlMs?: number;
 };
 
 type UnifiedData = {
@@ -62,8 +68,8 @@ type UnifiedData = {
     };
 };
 
-const comparisonCacheMap = new Map<string, { series: any[]; timestamp: number }>();
-const unifiedResultCache = new Map<string, { data: UnifiedData; timestamp: number }>();
+const comparisonCacheMap = new Map<string, { series: any[]; timestamp: number; ttlMs?: number }>();
+const unifiedResultCache = new Map<string, { data: UnifiedData; timestamp: number; ttlMs?: number }>();
 const priceCache = new Map<string, CacheRow<PriceData>>();
 const intervalCache = new Map<string, CacheRow<IntervalData | null>>();
 const fundaCache = new Map<string, CacheRow<any>>();
@@ -190,6 +196,160 @@ const INTERVAL_CACHE_TTL: Record<string, number> = {
     MAX: 600_000,
 };
 
+function resolveEffectiveTtl(row: { ttlMs?: number } | undefined, fallbackTtl: number) {
+    if (row && Number.isFinite(row.ttlMs)) {
+        return Math.max(0, Math.min(fallbackTtl, row.ttlMs as number));
+    }
+    return fallbackTtl;
+}
+
+function isCacheRowFresh(row: { timestamp: number; ttlMs?: number } | undefined, fallbackTtl: number) {
+    if (!row) return false;
+    const ttl = resolveEffectiveTtl(row, fallbackTtl);
+    return Date.now() - row.timestamp < ttl;
+}
+
+function buildCacheRow<T>(data: T, responseTtlMs: number | null, fallbackTtl: number): CacheRow<T> | null {
+    const ttlMs = Number.isFinite(responseTtlMs)
+        ? Math.max(0, Math.min(fallbackTtl, responseTtlMs as number))
+        : fallbackTtl;
+    if (ttlMs <= 0) return null;
+    return { data, timestamp: Date.now(), ttlMs };
+}
+
+function getRemainingEdgeTtlMs(headers: Headers) {
+    const ageHeader = headers.get('age');
+    const ageSec = Number.parseFloat(ageHeader || '0');
+    const safeAgeSec = Number.isFinite(ageSec) && ageSec > 0 ? ageSec : 0;
+    return Math.max(0, EDGE_BATCH_TTL_MS - safeAgeSec * 1000);
+}
+
+function base64UrlEncode(value: string) {
+    const bytes = new TextEncoder().encode(value);
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let out = '';
+    let i = 0;
+
+    for (; i + 2 < bytes.length; i += 3) {
+        const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+        out += chars[(n >> 18) & 63];
+        out += chars[(n >> 12) & 63];
+        out += chars[(n >> 6) & 63];
+        out += chars[n & 63];
+    }
+
+    if (i < bytes.length) {
+        let n = bytes[i] << 16;
+        out += chars[(n >> 18) & 63];
+        if (i + 1 < bytes.length) {
+            n |= bytes[i + 1] << 8;
+            out += chars[(n >> 12) & 63];
+            out += chars[(n >> 6) & 63];
+        } else {
+            out += chars[(n >> 12) & 63];
+        }
+    }
+
+    return out;
+}
+
+const cacheMetrics: Record<string, number> = {
+    localHits: 0,
+    localMisses: 0,
+    edgeGetRequests: 0,
+    edgeGetSuccess: 0,
+    edgeGetFailures: 0,
+    edgeServedHit: 0,
+    edgeServedMiss: 0,
+    edgeServedStale: 0,
+    edgeServedOther: 0,
+    edgeAgeSamples: 0,
+    edgeAgeMsTotal: 0,
+    edgeGetUrlTooLongSkips: 0,
+    postFallbacks: 0,
+};
+
+let cacheMetricsLoggerStarted = false;
+
+function incrementMetric(key: string, value = 1) {
+    cacheMetrics[key] = (cacheMetrics[key] || 0) + value;
+}
+
+function markLocalCacheHit() {
+    incrementMetric('localHits');
+}
+
+function markLocalCacheMiss() {
+    incrementMetric('localMisses');
+}
+
+function markEdgeGetRequest() {
+    incrementMetric('edgeGetRequests');
+}
+
+function markEdgeGetFailure() {
+    incrementMetric('edgeGetFailures');
+}
+
+function markEdgeUrlTooLongSkip() {
+    incrementMetric('edgeGetUrlTooLongSkips');
+}
+
+function markPostFallback() {
+    incrementMetric('postFallbacks');
+}
+
+function recordEdgeResponse(headers: Headers) {
+    incrementMetric('edgeGetSuccess');
+    const edgeCache = (headers.get('x-vercel-cache') || '').toUpperCase();
+    if (edgeCache.includes('HIT')) {
+        incrementMetric('edgeServedHit');
+    } else if (edgeCache.includes('MISS')) {
+        incrementMetric('edgeServedMiss');
+    } else if (edgeCache.includes('STALE')) {
+        incrementMetric('edgeServedStale');
+    } else {
+        incrementMetric('edgeServedOther');
+    }
+
+    const ageSec = Number.parseFloat(headers.get('age') || '0');
+    if (Number.isFinite(ageSec) && ageSec >= 0) {
+        incrementMetric('edgeAgeSamples');
+        incrementMetric('edgeAgeMsTotal', ageSec * 1000);
+    }
+}
+
+function logCacheMetricsSnapshot() {
+    const edgeAgeAvgMs = cacheMetrics.edgeAgeSamples > 0
+        ? Math.round(cacheMetrics.edgeAgeMsTotal / cacheMetrics.edgeAgeSamples)
+        : 0;
+
+    console.info('[CacheMetrics][MobilePriceService]', {
+        localHits: cacheMetrics.localHits,
+        localMisses: cacheMetrics.localMisses,
+        edgeGetRequests: cacheMetrics.edgeGetRequests,
+        edgeGetSuccess: cacheMetrics.edgeGetSuccess,
+        edgeGetFailures: cacheMetrics.edgeGetFailures,
+        edgeServedHit: cacheMetrics.edgeServedHit,
+        edgeServedMiss: cacheMetrics.edgeServedMiss,
+        edgeServedStale: cacheMetrics.edgeServedStale,
+        edgeServedOther: cacheMetrics.edgeServedOther,
+        edgeAgeAvgMs,
+        edgeGetUrlTooLongSkips: cacheMetrics.edgeGetUrlTooLongSkips,
+        postFallbacks: cacheMetrics.postFallbacks,
+    });
+}
+
+function initProdCacheMetricsLogging() {
+    if (!IS_PROD || cacheMetricsLoggerStarted) return;
+    cacheMetricsLoggerStarted = true;
+
+    (globalThis as any).__TT_MOBILE_CACHE_METRICS__ = cacheMetrics;
+    setInterval(logCacheMetricsSnapshot, CACHE_METRICS_LOG_INTERVAL_MS);
+}
+
+initProdCacheMetricsLogging();
+
 // ─── Transport: All requests go through proxy ─────────────────────
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
@@ -207,13 +367,47 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
  * The proxy forwards to Google Finance with proper Origin/Referer headers.
  */
 async function executeBatch(entries: any[], timeoutMs = 12_000) {
-    if (!entries.length) return '';
+    if (!entries.length) return { text: '', responseTtlMs: null as number | null };
 
     const rpcIds = [...new Set(entries.map((entry) => entry[0]))] as string[];
     const fReq = JSON.stringify([entries]);
     const body = new URLSearchParams({ 'f.req': fReq }).toString();
 
     if (BATCH_PROXY_URL) {
+        const encodedReq = base64UrlEncode(fReq);
+        const getQuery = new URLSearchParams({
+            rpcids: rpcIds.join(','),
+            f_req: encodedReq,
+        });
+        const getUrl = `${BATCH_PROXY_URL}?${getQuery.toString()}`;
+
+        if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
+            markEdgeGetRequest();
+            try {
+                const getResponse = await fetchWithTimeout(
+                    getUrl,
+                    {
+                        method: 'GET',
+                    },
+                    timeoutMs,
+                );
+
+                if (getResponse.ok) {
+                    recordEdgeResponse(getResponse.headers);
+                    return {
+                        text: await getResponse.text(),
+                        responseTtlMs: getRemainingEdgeTtlMs(getResponse.headers),
+                    };
+                }
+                markEdgeGetFailure();
+            } catch {
+                markEdgeGetFailure();
+                // fall back to POST proxy path below
+            }
+        } else {
+            markEdgeUrlTooLongSkip();
+        }
+
         try {
             const response = await fetchWithTimeout(
                 BATCH_PROXY_URL,
@@ -232,7 +426,8 @@ async function executeBatch(entries: any[], timeoutMs = 12_000) {
                 throw new Error(`Proxy batch failed: ${response.status}`);
             }
 
-            return response.text();
+            markPostFallback();
+            return { text: await response.text(), responseTtlMs: null as number | null };
         } catch {
             if (!warnedBatchFallback) {
                 console.warn('[PriceService] mobile-batch proxy unavailable, using direct Google endpoint.');
@@ -262,7 +457,8 @@ async function executeBatch(entries: any[], timeoutMs = 12_000) {
         throw new Error(`Direct batch failed: ${directResponse.status}`);
     }
 
-    return directResponse.text();
+    markPostFallback();
+    return { text: await directResponse.text(), responseTtlMs: null as number | null };
 }
 
 
@@ -442,21 +638,52 @@ async function flushBatch() {
 
     await Promise.all(
         chunks.map(async (chunk) => {
-            const entries = chunk.map((item) => item.entry);
-            try {
-                const text = await executeBatch(entries);
-                const frames = parseAllFrames(text);
+            const realtime: QueueItem[] = [];
+            const cacheable: QueueItem[] = [];
 
-                chunk.forEach((item, idx) => {
-                    if (idx < frames.length && frames[idx]) {
-                        item.resolve(frames[idx].payload);
-                    } else {
-                        item.reject(new Error(`Missing frame for index ${idx} (got ${frames.length})`));
-                    }
-                });
-            } catch (err: any) {
-                chunk.forEach((item) => item.reject(err));
-            }
+            chunk.forEach((item) => {
+                if (item.entry[0] === GOOGLE_RPC_PRICE) {
+                    realtime.push(item);
+                } else {
+                    cacheable.push(item);
+                }
+            });
+
+            const runGroup = async (group: QueueItem[]) => {
+                if (!group.length) return;
+
+                const isRealtimeGroup = group[0]?.entry?.[0] === GOOGLE_RPC_PRICE;
+                const transportChunkSize = isRealtimeGroup ? EDGE_REALTIME_GROUP_SIZE : group.length;
+                const transportGroups: QueueItem[][] = [];
+                for (let i = 0; i < group.length; i += transportChunkSize) {
+                    transportGroups.push(group.slice(i, i + transportChunkSize));
+                }
+
+                await Promise.all(
+                    transportGroups.map(async (transportGroup) => {
+                        const entries = transportGroup.map((item) => item.entry);
+                        try {
+                            const batchResult = await executeBatch(entries);
+                            const frames = parseAllFrames(batchResult.text);
+
+                            transportGroup.forEach((item, idx) => {
+                                if (idx < frames.length && frames[idx]) {
+                                    item.resolve({
+                                        payload: frames[idx].payload,
+                                        responseTtlMs: batchResult.responseTtlMs,
+                                    });
+                                } else {
+                                    item.reject(new Error(`Missing frame for index ${idx} (got ${frames.length})`));
+                                }
+                            });
+                        } catch (err: any) {
+                            transportGroup.forEach((item) => item.reject(err));
+                        }
+                    }),
+                );
+            };
+
+            await Promise.all([runGroup(realtime), runGroup(cacheable)]);
         }),
     );
 }
@@ -581,9 +808,11 @@ export async function fetchLivePrices(symbols: string[]) {
 
     keys.forEach((key) => {
         const cached = priceCache.get(key);
-        if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL) {
+        if (isCacheRowFresh(cached, PRICE_CACHE_TTL) && cached) {
+            markLocalCacheHit();
             results.set(key, cached.data);
         } else {
+            markLocalCacheMiss();
             uncached.push(key);
         }
     });
@@ -594,11 +823,12 @@ export async function fetchLivePrices(symbols: string[]) {
         const exchange = getExchange(symbol);
         const rpcArgs = JSON.stringify([[[null, [symbol, exchange]]], 1]);
 
-        return queueRpc(GOOGLE_RPC_PRICE, rpcArgs).then((payload) => {
+        return queueRpc(GOOGLE_RPC_PRICE, rpcArgs).then(({ payload, responseTtlMs }) => {
             const extracted = extractPriceFromFrame(payload);
             if (!extracted) return;
             results.set(extracted.symbol, extracted.data);
-            priceCache.set(extracted.symbol, { data: extracted.data, timestamp: Date.now() });
+            const row = buildCacheRow(extracted.data, responseTtlMs, PRICE_CACHE_TTL);
+            if (row) priceCache.set(extracted.symbol, row);
         });
     });
 
@@ -617,7 +847,8 @@ export async function fetchLivePrices(symbols: string[]) {
                 const fallback = await fetchFromStrike(symbol);
                 if (fallback && !results.has(symbol)) {
                     results.set(symbol, fallback);
-                    priceCache.set(symbol, { data: fallback, timestamp: Date.now() });
+                    const row = buildCacheRow(fallback, null, PRICE_CACHE_TTL);
+                    if (row) priceCache.set(symbol, row);
                 }
             }),
         );
@@ -653,9 +884,11 @@ export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M'
         const cacheKey = `${symbol}:${window}`;
         const cached = intervalCache.get(cacheKey);
 
-        if (cached && Date.now() - cached.timestamp < ttl) {
+        if (isCacheRowFresh(cached, ttl) && cached) {
+            markLocalCacheHit();
             if (cached.data) results.set(symbol, cached.data);
         } else if (!currentPending.has(symbol)) {
+            markLocalCacheMiss();
             uncached.push(symbol);
         }
     });
@@ -695,7 +928,7 @@ export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M'
 
             const allUncached = [...currentPending.keys()].filter((symbol) => {
                 const cached = intervalCache.get(`${symbol}:${window}`);
-                return !(cached && Date.now() - cached.timestamp < ttl);
+                return !isCacheRowFresh(cached, ttl);
             });
 
             if (!allUncached.length) {
@@ -718,20 +951,22 @@ export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M'
                     });
 
                     try {
-                        const text = await executeBatch(entries);
-                        const frames = parseAllFrames(text).filter((frame) => frame.rpcId === GOOGLE_RPC_CHART);
+                        const batchResult = await executeBatch(entries);
+                        const frames = parseAllFrames(batchResult.text).filter((frame) => frame.rpcId === GOOGLE_RPC_CHART);
                         const returned = new Set<string>();
 
                         frames.forEach((frame) => {
                             const extracted = extractChartFromFrame(frame.payload);
                             if (!extracted) return;
-                            intervalCache.set(`${extracted.symbol}:${window}`, { data: extracted.data, timestamp: Date.now() });
+                            const row = buildCacheRow(extracted.data, batchResult.responseTtlMs, ttl);
+                            if (row) intervalCache.set(`${extracted.symbol}:${window}`, row);
                             returned.add(extracted.symbol);
                         });
 
                         chunk.forEach((symbol) => {
                             if (!returned.has(symbol)) {
-                                intervalCache.set(`${symbol}:${window}`, { data: null, timestamp: Date.now() });
+                                const row = buildCacheRow(null, batchResult.responseTtlMs, ttl);
+                                if (row) intervalCache.set(`${symbol}:${window}`, row);
                             }
                         });
                     } catch {
@@ -769,9 +1004,11 @@ export async function fetchComparisonCharts(symbols: string[], interval = '1D') 
         const cacheKey = `${symbol}:${window}:full`;
         const cached = comparisonCacheMap.get(cacheKey);
 
-        if (cached && Date.now() - cached.timestamp < 120_000) {
+        if (isCacheRowFresh(cached, 120_000) && cached) {
+            markLocalCacheHit();
             results.set(symbol, cached.series);
         } else {
+            markLocalCacheMiss();
             uncached.push(symbol);
         }
     });
@@ -782,11 +1019,12 @@ export async function fetchComparisonCharts(symbols: string[], interval = '1D') 
         const exchange = getExchange(symbol);
         const rpcArgs = JSON.stringify([[[null, [symbol, exchange]]], window, null, null, null, null, null, 0]);
 
-        return queueRpc(GOOGLE_RPC_CHART, rpcArgs).then((payload) => {
+        return queueRpc(GOOGLE_RPC_CHART, rpcArgs).then(({ payload, responseTtlMs }) => {
             const extracted = extractWideChartFromFrame(payload);
             if (!extracted) return;
             const cacheKey = `${extracted.symbol}:${window}:full`;
-            comparisonCacheMap.set(cacheKey, { series: extracted.series, timestamp: Date.now() });
+            const row = buildCacheRow(extracted.series, responseTtlMs, 120_000);
+            if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
             results.set(extracted.symbol, extracted.series);
         });
     });
@@ -810,9 +1048,11 @@ export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M'
     keys.forEach((symbol) => {
         const cacheKey = `${interval}:${symbol}`;
         const cached = unifiedResultCache.get(cacheKey);
-        if (cached && Date.now() - cached.timestamp < 300_000) {
+        if (isCacheRowFresh(cached, 300_000) && cached) {
+            markLocalCacheHit();
             results.set(symbol, cached.data);
         } else {
+            markLocalCacheMiss();
             uncachedKeys.push(symbol);
         }
     });
@@ -858,7 +1098,8 @@ export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M'
             },
         };
 
-        unifiedResultCache.set(`${interval}:${symbol}`, { data, timestamp: Date.now() });
+        const row = buildCacheRow(data, null, 300_000);
+        if (row) unifiedResultCache.set(`${interval}:${symbol}`, row);
         results.set(symbol, data);
     });
 
@@ -874,9 +1115,11 @@ export async function fetchFundamentals(symbols: string[]) {
 
     keys.forEach((key) => {
         const cached = fundaCache.get(key);
-        if (cached && Date.now() - cached.timestamp < FUNDA_CACHE_TTL) {
+        if (isCacheRowFresh(cached, FUNDA_CACHE_TTL) && cached) {
+            markLocalCacheHit();
             results.set(key, cached.data);
         } else {
+            markLocalCacheMiss();
             uncached.push(key);
         }
     });
@@ -892,8 +1135,8 @@ export async function fetchFundamentals(symbols: string[]) {
         });
 
         try {
-            const text = await executeBatch(entries);
-            const frames = parseAllFrames(text).filter((frame) => frame.rpcId === GOOGLE_RPC_FUNDAMENTALS);
+            const batchResult = await executeBatch(entries);
+            const frames = parseAllFrames(batchResult.text).filter((frame) => frame.rpcId === GOOGLE_RPC_FUNDAMENTALS);
 
             for (let j = 0; j < chunk.length; j++) {
                 const frame = frames[j];
@@ -904,7 +1147,8 @@ export async function fetchFundamentals(symbols: string[]) {
                 if (!extracted) continue;
 
                 results.set(symbol, extracted);
-                fundaCache.set(symbol, { data: extracted, timestamp: Date.now() });
+                const row = buildCacheRow(extracted, batchResult.responseTtlMs, FUNDA_CACHE_TTL);
+                if (row) fundaCache.set(symbol, row);
             }
             scheduleFundaSave();
         } catch {
@@ -936,18 +1180,22 @@ export function getCachedInterval(symbol: string, interval: string) {
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cached = intervalCache.get(cacheKey);
 
-    if (cached && Date.now() - cached.timestamp < ttl) {
+    if (isCacheRowFresh(cached, ttl) && cached) {
+        markLocalCacheHit();
         return cached.data;
     }
+    markLocalCacheMiss();
     return null;
 }
 
 export function getCachedPrice(symbol: string) {
     const key = cleanSymbol(symbol);
     const cached = priceCache.get(key);
-    if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL) {
+    if (isCacheRowFresh(cached, PRICE_CACHE_TTL) && cached) {
+        markLocalCacheHit();
         return cached.data;
     }
+    markLocalCacheMiss();
     return null;
 }
 

@@ -1,6 +1,8 @@
 import { unseal } from './_unseal.js';
 
 export default async function handler(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
     if (req.method !== 'POST') return res.status(405).end();
 
     try {

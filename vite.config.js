@@ -1,8 +1,18 @@
 import { defineConfig } from 'vite'
 import obfuscatorPlugin from 'rollup-plugin-obfuscator'
 
+const BUILD_ID =
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    process.env.GITHUB_SHA ||
+    process.env.CI_COMMIT_SHA ||
+    process.env.npm_package_version ||
+    'dev';
+
 // https://vitejs.dev/config/
 export default defineConfig({
+    define: {
+        __APP_BUILD_ID__: JSON.stringify(BUILD_ID),
+    },
     optimizeDeps: {
         entries: ['index.html'],
     },

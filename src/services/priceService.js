@@ -12,7 +12,12 @@ const GOOGLE_RPC_FUNDAMENTALS = RPC_FUNDA;
 const GOOGLE_BATCH_PATH = EP_GOOGLE;
 const MAX_BATCH_SIZE = 550; // Massively batched for maximum efficiency
 const BATCH_AGGREGATION_WINDOW = 16; // 16ms (1 frame) aggregation window for instant feel
+const EDGE_CACHE_MAX_URL_LENGTH = 7000;
+const EDGE_REALTIME_GROUP_SIZE = 20;
+const EDGE_BATCH_TTL_MS = 300_000;
 const IS_DEV = import.meta.env?.DEV;
+const IS_PROD = import.meta.env?.PROD === true;
+const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
 
@@ -23,7 +28,7 @@ const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
 const comparisonCacheMap = new Map();
 const unifiedResultCache = new Map(); // timeframe:symbol -> result
 const pendingUnifiedRequests = new Map();
-const PRICE_CACHE_TTL = 15_000; // 15s
+const PRICE_CACHE_TTL = 300_000; // 5m
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
 const MAX_PERSISTED_INTERVAL_ENTRIES = 6000;
@@ -108,6 +113,138 @@ const INTERVAL_CACHE_TTL = {
     'MAX': 600_000,    // 10 min
 };
 
+function resolveEffectiveTtl(row, fallbackTtl) {
+    if (row && Number.isFinite(row.ttlMs)) {
+        return Math.max(0, Math.min(fallbackTtl, row.ttlMs));
+    }
+    return fallbackTtl;
+}
+
+function isCacheRowFresh(row, fallbackTtl) {
+    if (!row) return false;
+    const ttl = resolveEffectiveTtl(row, fallbackTtl);
+    return Date.now() - row.timestamp < ttl;
+}
+
+function buildCacheRow(data, responseTtlMs, fallbackTtl) {
+    const ttlMs = Number.isFinite(responseTtlMs)
+        ? Math.max(0, Math.min(fallbackTtl, responseTtlMs))
+        : fallbackTtl;
+    if (ttlMs <= 0) return null;
+    return { data, timestamp: Date.now(), ttlMs };
+}
+
+function getRemainingEdgeTtlMs(headers) {
+    const ageHeader = headers.get('age');
+    const ageSec = Number.parseFloat(ageHeader || '0');
+    const safeAgeSec = Number.isFinite(ageSec) && ageSec > 0 ? ageSec : 0;
+    return Math.max(0, EDGE_BATCH_TTL_MS - (safeAgeSec * 1000));
+}
+
+const cacheMetrics = {
+    localHits: 0,
+    localMisses: 0,
+    edgeGetRequests: 0,
+    edgeGetSuccess: 0,
+    edgeGetFailures: 0,
+    edgeServedHit: 0,
+    edgeServedMiss: 0,
+    edgeServedStale: 0,
+    edgeServedOther: 0,
+    edgeAgeSamples: 0,
+    edgeAgeMsTotal: 0,
+    edgeGetUrlTooLongSkips: 0,
+    postFallbacks: 0,
+};
+
+let cacheMetricsLoggerStarted = false;
+
+function incrementMetric(key, value = 1) {
+    cacheMetrics[key] = (cacheMetrics[key] || 0) + value;
+}
+
+function markLocalCacheHit() {
+    incrementMetric('localHits');
+}
+
+function markLocalCacheMiss() {
+    incrementMetric('localMisses');
+}
+
+function markEdgeGetRequest() {
+    incrementMetric('edgeGetRequests');
+}
+
+function markEdgeGetFailure() {
+    incrementMetric('edgeGetFailures');
+}
+
+function markEdgeUrlTooLongSkip() {
+    incrementMetric('edgeGetUrlTooLongSkips');
+}
+
+function markPostFallback() {
+    incrementMetric('postFallbacks');
+}
+
+function recordEdgeResponse(headers) {
+    incrementMetric('edgeGetSuccess');
+    const edgeCache = (headers.get('x-vercel-cache') || '').toUpperCase();
+    if (edgeCache.includes('HIT')) {
+        incrementMetric('edgeServedHit');
+    } else if (edgeCache.includes('MISS')) {
+        incrementMetric('edgeServedMiss');
+    } else if (edgeCache.includes('STALE')) {
+        incrementMetric('edgeServedStale');
+    } else {
+        incrementMetric('edgeServedOther');
+    }
+
+    const ageSec = Number.parseFloat(headers.get('age') || '0');
+    if (Number.isFinite(ageSec) && ageSec >= 0) {
+        incrementMetric('edgeAgeSamples');
+        incrementMetric('edgeAgeMsTotal', ageSec * 1000);
+    }
+}
+
+function logCacheMetricsSnapshot() {
+    const edgeAgeAvgMs = cacheMetrics.edgeAgeSamples > 0
+        ? Math.round(cacheMetrics.edgeAgeMsTotal / cacheMetrics.edgeAgeSamples)
+        : 0;
+
+    console.info('[CacheMetrics][PriceService]', {
+        localHits: cacheMetrics.localHits,
+        localMisses: cacheMetrics.localMisses,
+        edgeGetRequests: cacheMetrics.edgeGetRequests,
+        edgeGetSuccess: cacheMetrics.edgeGetSuccess,
+        edgeGetFailures: cacheMetrics.edgeGetFailures,
+        edgeServedHit: cacheMetrics.edgeServedHit,
+        edgeServedMiss: cacheMetrics.edgeServedMiss,
+        edgeServedStale: cacheMetrics.edgeServedStale,
+        edgeServedOther: cacheMetrics.edgeServedOther,
+        edgeAgeAvgMs,
+        edgeGetUrlTooLongSkips: cacheMetrics.edgeGetUrlTooLongSkips,
+        postFallbacks: cacheMetrics.postFallbacks,
+    });
+}
+
+function initProdCacheMetricsLogging() {
+    if (!IS_PROD || cacheMetricsLoggerStarted) return;
+    cacheMetricsLoggerStarted = true;
+
+    if (typeof globalThis === 'object') {
+        globalThis.__TT_CACHE_METRICS__ = cacheMetrics;
+    }
+
+    setInterval(logCacheMetricsSnapshot, CACHE_METRICS_LOG_INTERVAL_MS);
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('beforeunload', logCacheMetricsSnapshot);
+    }
+}
+
+initProdCacheMetricsLogging();
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function getExchange(symbol) {
@@ -122,7 +259,7 @@ function buildBatchUrl(rpcIds) {
 
 /**
  * Global Request Aggregator
- * Coalesces ALL rpc calls (price, chart, funda) into ONE single HTTP POST.
+ * Coalesces ALL rpc calls (price, chart, funda) into one transport flush.
  */
 let batchQueue = [];
 let batchTimeout = null;
@@ -142,21 +279,50 @@ async function flushBatch() {
 
     // Fire ALL chunks in parallel — browser handles HTTP/2 multiplexing
     await Promise.all(chunks.map(async (chunk) => {
-        const entries = chunk.map(q => q.entry);
-        try {
-            const text = await executeBatch(entries);
-            const frames = parseAllFrames(text);
+        const realtime = [];
+        const cacheable = [];
 
-            chunk.forEach((q, idx) => {
-                if (idx < frames.length && frames[idx]) {
-                    q.resolve(frames[idx].payload);
-                } else {
-                    q.reject(new Error(`Missing frame for index ${idx} (got ${frames.length} frames)`));
+        chunk.forEach((q, idx) => {
+            if (q.entry[0] === GOOGLE_RPC_PRICE) {
+                realtime.push({ q, idx });
+            } else {
+                cacheable.push({ q, idx });
+            }
+        });
+
+        const runGroup = async (group) => {
+            if (group.length === 0) return;
+
+            const isRealtimeGroup = group[0]?.q?.entry?.[0] === GOOGLE_RPC_PRICE;
+            const transportGroups = [];
+            const transportChunkSize = isRealtimeGroup ? EDGE_REALTIME_GROUP_SIZE : group.length;
+
+            for (let i = 0; i < group.length; i += transportChunkSize) {
+                transportGroups.push(group.slice(i, i + transportChunkSize));
+            }
+
+            await Promise.all(transportGroups.map(async (transportGroup) => {
+                const entries = transportGroup.map(item => item.q.entry);
+                try {
+                    const batchResult = await executeBatch(entries);
+                    const frames = parseAllFrames(batchResult.text);
+                    transportGroup.forEach((item, idx) => {
+                        if (idx < frames.length && frames[idx]) {
+                            item.q.resolve({
+                                payload: frames[idx].payload,
+                                responseTtlMs: batchResult.responseTtlMs
+                            });
+                        } else {
+                            item.q.reject(new Error(`Missing frame for index ${item.idx} (got ${frames.length} frames)`));
+                        }
+                    });
+                } catch (err) {
+                    transportGroup.forEach(item => item.q.reject(err));
                 }
-            });
-        } catch (err) {
-            chunk.forEach(q => q.reject(err));
-        }
+            }));
+        };
+
+        await Promise.all([runGroup(realtime), runGroup(cacheable)]);
     }));
 }
 
@@ -193,16 +359,48 @@ function queueRpc(rpcId, rpcArgs) {
 
 /**
  * Execute a raw batchexecute call with arbitrary entries.
- * Returns raw response text.
+ * Returns raw response text and optional CDN freshness budget.
  */
 async function executeBatch(entries, timeoutMs = 12000) {
-    if (entries.length === 0) return '';
+    if (entries.length === 0) return { text: '', responseTtlMs: null };
 
     const rpcIds = [...new Set(entries.map(e => e[0]))];
     const url = buildBatchUrl(rpcIds);
     const fReq = JSON.stringify([entries]);
 
-    // AES-256-GCM encrypt — completely unreadable in DevTools
+    // Prefer CDN-cacheable GET transport for all batch types; fallback to POST.
+    const encoded = base64UrlEncode(fReq);
+    const params = new URLSearchParams({
+        rpcids: rpcIds.join(','),
+        f_req: encoded
+    });
+    const getUrl = `${url}?${params.toString()}`;
+
+    if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
+        markEdgeGetRequest();
+        const getResponse = await fetch(getUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout?.(timeoutMs),
+        });
+        if (getResponse.ok) {
+            recordEdgeResponse(getResponse.headers);
+            return {
+                text: await getResponse.text(),
+                responseTtlMs: getRemainingEdgeTtlMs(getResponse.headers)
+            };
+        }
+        markEdgeGetFailure();
+        if (IS_DEV) {
+            console.warn(`[PriceService] Edge GET batch failed (${getResponse.status}), falling back to POST`);
+        }
+    } else if (IS_DEV) {
+        console.warn(`[PriceService] Edge GET skipped: URL too long (${getUrl.length})`);
+    } else {
+        markEdgeUrlTooLongSkip();
+    }
+
+    // Fallback path: AES-256-GCM encrypted POST payload
+    markPostFallback();
     const entropy = await seal(fReq);
 
     const response = await fetch(url, {
@@ -216,7 +414,17 @@ async function executeBatch(entries, timeoutMs = 12000) {
     });
 
     if (!response.ok) throw new Error(`Batch failed: ${response.status}`);
-    return response.text();
+    return { text: await response.text(), responseTtlMs: null };
+}
+
+function base64UrlEncode(value) {
+    const bytes = new TextEncoder().encode(value);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
@@ -429,9 +637,11 @@ export async function fetchLivePrices(symbols) {
     const uncached = [];
     for (const key of keys) {
         const cached = priceCache.get(key);
-        if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL) {
+        if (isCacheRowFresh(cached, PRICE_CACHE_TTL)) {
+            markLocalCacheHit();
             results.set(key, cached.data);
         } else {
+            markLocalCacheMiss();
             uncached.push(key);
         }
     }
@@ -446,11 +656,12 @@ export async function fetchLivePrices(symbols) {
     const requests = uncached.map(sym => {
         const ex = getExchange(sym);
         const rpcArgs = JSON.stringify([[[null, [sym, ex]]], 1]);
-        return queueRpc(GOOGLE_RPC_PRICE, rpcArgs).then(payload => {
+        return queueRpc(GOOGLE_RPC_PRICE, rpcArgs).then(({ payload, responseTtlMs }) => {
             const extracted = extractPriceFromFrame(payload);
             if (extracted) {
                 results.set(extracted.symbol, extracted.data);
-                priceCache.set(extracted.symbol, { data: extracted.data, timestamp: Date.now() });
+                const row = buildCacheRow(extracted.data, responseTtlMs, PRICE_CACHE_TTL);
+                if (row) priceCache.set(extracted.symbol, row);
             }
         });
     });
@@ -472,7 +683,8 @@ export async function fetchLivePrices(symbols) {
             const data = await fetchFromStrike(sym);
             if (data && !results.has(sym)) {
                 results.set(sym, data);
-                priceCache.set(sym, { data, timestamp: Date.now() });
+                const row = buildCacheRow(data, null, PRICE_CACHE_TTL);
+                if (row) priceCache.set(sym, row);
                 schedulePriceSave();
             }
         }));
@@ -525,9 +737,11 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
         const cacheKey = `${sym}:${window}`;
         const cached = intervalCache.get(cacheKey);
 
-        if (cached && Date.now() - cached.timestamp < ttl) {
+        if (isCacheRowFresh(cached, ttl)) {
+            markLocalCacheHit();
             if (cached.data !== null) results.set(sym, cached.data);
         } else if (!currentPending.has(sym)) {
+            markLocalCacheMiss();
             uncached.push(sym);
         }
     }
@@ -566,7 +780,7 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
         const allUncached = Array.from(currentPending.keys()).filter(s => {
             const cacheKey = `${s}:${window}`;
             const c = intervalCache.get(cacheKey);
-            return !(c && Date.now() - c.timestamp < ttl);
+            return !isCacheRowFresh(c, ttl);
         });
 
         if (allUncached.length === 0) {
@@ -594,15 +808,16 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
             });
 
             try {
-                const text = await executeBatch(entries);
-                const frames = parseAllFrames(text).filter(f => f.rpcId === GOOGLE_RPC_CHART);
+                const batchResult = await executeBatch(entries);
+                const frames = parseAllFrames(batchResult.text).filter(f => f.rpcId === GOOGLE_RPC_CHART);
                 const returned = new Set();
 
                 frames.forEach(frame => {
                     const extracted = extractChartFromFrame(frame.payload, interval);
                     if (extracted) {
                         const cacheKey = `${extracted.symbol}:${window}`;
-                        intervalCache.set(cacheKey, { data: extracted.data, timestamp: Date.now() });
+                        const row = buildCacheRow(extracted.data, batchResult.responseTtlMs, ttl);
+                        if (row) intervalCache.set(cacheKey, row);
                         returned.add(extracted.symbol);
                     }
                 });
@@ -610,7 +825,8 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                 // Negative cache
                 chunk.forEach(sym => {
                     if (!returned.has(sym)) {
-                        intervalCache.set(`${sym}:${window}`, { data: null, timestamp: Date.now() });
+                        const row = buildCacheRow(null, batchResult.responseTtlMs, ttl);
+                        if (row) intervalCache.set(`${sym}:${window}`, row);
                     }
                 });
             } catch (err) {
@@ -655,9 +871,11 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
             const cacheKey = `${interval}:${sym}`;
             const cached = unifiedResultCache.get(cacheKey);
             // Unified results expire every 5 mins
-            if (cached && Date.now() - cached.timestamp < 300_000) {
+            if (isCacheRowFresh(cached, 300_000)) {
+                markLocalCacheHit();
                 results.set(sym, cached.data);
             } else {
+                markLocalCacheMiss();
                 uncachedKeys.push(sym);
             }
         });
@@ -708,7 +926,8 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
                 }
             };
 
-            unifiedResultCache.set(`${interval}:${sym}`, { data, timestamp: Date.now() });
+            const row = buildCacheRow(data, null, 300_000);
+            if (row) unifiedResultCache.set(`${interval}:${sym}`, row);
             results.set(sym, data);
         });
 
@@ -764,9 +983,11 @@ export async function fetchFundamentals(symbols) {
 
     for (const key of keys) {
         const cached = fundaCache.get(key);
-        if (cached && Date.now() - cached.timestamp < FUNDA_CACHE_TTL) {
+        if (isCacheRowFresh(cached, FUNDA_CACHE_TTL)) {
+            markLocalCacheHit();
             results.set(key, cached.data);
         } else {
+            markLocalCacheMiss();
             uncached.push(key);
         }
     }
@@ -782,8 +1003,8 @@ export async function fetchFundamentals(symbols) {
         });
 
         try {
-            const text = await executeBatch(entries);
-            const frames = parseAllFrames(text).filter(f => f.rpcId === GOOGLE_RPC_FUNDAMENTALS);
+            const batchResult = await executeBatch(entries);
+            const frames = parseAllFrames(batchResult.text).filter(f => f.rpcId === GOOGLE_RPC_FUNDAMENTALS);
 
             // Google returns frames in request order for the same RPC ID
             for (let j = 0; j < chunk.length; j++) {
@@ -794,7 +1015,8 @@ export async function fetchFundamentals(symbols) {
                 const extracted = extractFundaFromFrame(frame.payload);
                 if (extracted) {
                     results.set(symbol, extracted);
-                    fundaCache.set(symbol, { data: extracted, timestamp: Date.now() });
+                    const row = buildCacheRow(extracted, batchResult.responseTtlMs, FUNDA_CACHE_TTL);
+                    if (row) fundaCache.set(symbol, row);
                 }
             }
             scheduleFundaSave();
@@ -821,9 +1043,11 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
         const cacheKey = `${sym}:${window}:full`;
         const cached = comparisonCacheMap.get(cacheKey);
         // Full charts expire faster (2 min)
-        if (cached && Date.now() - cached.timestamp < 120_000) {
+        if (isCacheRowFresh(cached, 120_000)) {
+            markLocalCacheHit();
             results.set(sym, cached.series);
         } else {
+            markLocalCacheMiss();
             uncached.push(sym);
         }
     }
@@ -834,11 +1058,12 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
     const requests = uncached.map(sym => {
         const ex = getExchange(sym);
         const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
-        return queueRpc(GOOGLE_RPC_CHART, rpcArgs).then(payload => {
+        return queueRpc(GOOGLE_RPC_CHART, rpcArgs).then(({ payload, responseTtlMs }) => {
             const extracted = extractWideChartFromFrame(payload);
             if (extracted) {
                 const cacheKey = `${extracted.symbol}:${window}:full`;
-                comparisonCacheMap.set(cacheKey, { series: extracted.series, timestamp: Date.now() });
+                const row = buildCacheRow(extracted.series, responseTtlMs, 120_000);
+                if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
                 results.set(extracted.symbol, extracted.series);
             }
         });
@@ -875,9 +1100,11 @@ export function getCachedInterval(symbol, interval) {
     const cacheKey = `${key}:${window}`;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cached = intervalCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < ttl) {
+    if (isCacheRowFresh(cached, ttl)) {
+        markLocalCacheHit();
         return cached.data;
     }
+    markLocalCacheMiss();
     return null;
 }
 
@@ -887,9 +1114,11 @@ export function getCachedInterval(symbol, interval) {
 export function getCachedPrice(symbol) {
     const key = cleanSymbol(symbol);
     const cached = priceCache.get(key);
-    if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL) {
+    if (isCacheRowFresh(cached, PRICE_CACHE_TTL)) {
+        markLocalCacheHit();
         return cached.data;
     }
+    markLocalCacheMiss();
     return null;
 }
 // ─── Technical Breadth & Indicators ────────────────────────────────

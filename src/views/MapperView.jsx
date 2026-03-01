@@ -448,7 +448,7 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
                                                     return acc;
                                                 }, {})}
                                                 allIndustries={processedData.watchlistData.map(g => ({ name: g.label, sector: g.label }))}
-                                                defaultExpanded={true}
+                                                defaultExpanded={false}
                                             />
 
                                             <div className="flex flex-col gap-2 relative">

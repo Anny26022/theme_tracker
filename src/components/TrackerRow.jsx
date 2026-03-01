@@ -49,29 +49,29 @@ export const TrackerRow = ({ name, count, perf, leaders = EMPTY_ITEMS, laggards 
                     tooltipOpen && "bg-[var(--accent-primary)]/[0.05] border-b-[var(--accent-primary)]/30"
                 )}
             >
-                <div className="w-5/12 min-w-0 relative">
-                    <div className="flex items-center gap-4 min-w-0">
+                <div className="w-[42%] md:w-5/12 min-w-0 relative">
+                    <div className="flex items-center gap-2 md:gap-4 min-w-0">
                         <div className={cn(
-                            "w-1.5 h-1.5 rounded-full transition-all duration-300 shrink-0",
+                            "w-1 h-1 md:w-1.5 md:h-1.5 rounded-full transition-all duration-300 shrink-0",
                             tooltipOpen ? "bg-[var(--accent-primary)] shadow-[0_0_10px_var(--accent-primary)] scale-125" : "bg-[var(--ui-muted)] group-hover/row:bg-[var(--accent-primary)]/50"
                         )} />
-                        <div className="flex items-baseline gap-1.5 min-w-0">
+                        <div className="flex items-baseline gap-1 md:gap-1.5 min-w-0">
                             <span className={cn(
-                                "text-[10px] font-bold uppercase tracking-[0.2em] truncate transition-all duration-300",
+                                "text-[10.5px] md:text-[12px] font-bold uppercase tracking-[0.15em] md:tracking-[0.2em] truncate transition-all duration-300",
                                 tooltipOpen ? "text-[var(--accent-primary)]" : "text-[var(--text-muted)] group-hover/row:text-[var(--text-main)]"
                             )}>
                                 {name}
                             </span>
                             {count !== undefined && (
-                                <span className="text-[8px] font-mono opacity-40 shrink-0 tracking-tighter">({count})</span>
+                                <span className="text-[7.5px] md:text-[8.5px] font-mono opacity-40 shrink-0 tracking-tighter">({count})</span>
                             )}
                         </div>
                     </div>
                 </div>
 
-                <div className="flex-1 px-4 md:px-12 relative h-4 flex items-center">
+                <div className="flex-1 px-2 md:px-12 relative h-4 flex items-center">
                     <div className="absolute left-1/2 w-[1px] h-4 bg-[var(--ui-divider)] -translate-x-1/2 opacity-20" />
-                    <div className="w-full h-[5px] bg-[var(--ui-divider)]/40 rounded-full overflow-hidden relative">
+                    <div className="w-full h-[3px] md:h-[5px] bg-[var(--ui-divider)]/40 rounded-full overflow-hidden relative">
                         {loading ? (
                             <div className="h-full w-24 bg-[var(--accent-primary)]/20 rounded-full animate-marquee absolute" />
                         ) : hasData ? (
@@ -89,19 +89,19 @@ export const TrackerRow = ({ name, count, perf, leaders = EMPTY_ITEMS, laggards 
                     </div>
                 </div>
 
-                <div className="w-24 text-right shrink-0">
+                <div className="w-16 md:w-24 text-right shrink-0">
                     {loading ? (
-                        <div className="h-3 w-14 bg-[var(--ui-divider)] rounded animate-pulse ml-auto opacity-30" />
+                        <div className="h-2 w-10 md:h-3 md:w-14 bg-[var(--ui-divider)] rounded animate-pulse ml-auto opacity-30" />
                     ) : hasData ? (
                         <span className={cn(
-                            "text-[11px] font-bold tabular-nums tracking-[0.1em] transition-colors",
+                            "text-[11.5px] md:text-[13px] font-bold tabular-nums tracking-[0.05em] md:tracking-[0.1em] transition-colors",
                             isPos ? "text-[var(--accent-primary)]" : "text-rose-500",
                             !tooltipOpen && "opacity-80 group-hover/row:opacity-100"
                         )}>
-                            {isPos ? '+' : ''}{perf.toFixed(2)}%
+                            {isPos ? '+' : ''}{perf.toFixed(1)}%
                         </span>
                     ) : (
-                        <span className="text-[10px] text-[var(--text-muted)] tracking-widest opacity-30">—</span>
+                        <span className="text-[9px] md:text-[10px] text-[var(--text-muted)] tracking-widest opacity-30">—</span>
                     )}
                 </div>
             </button>

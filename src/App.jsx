@@ -164,7 +164,7 @@ RouterView.displayName = 'RouterView';
 const App = () => {
     const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
     const { hierarchy, rawData, loading, error } = useMarketData();
-    const [insightsCompany, setInsightsCompany] = React.useState(null); 
+    const [insightsCompany, setInsightsCompany] = React.useState(null);
     const [hasVisitedMarketMap, setHasVisitedMarketMap] = React.useState(view === VIEWS.MARKET_MAP);
 
     // Source of truth from hierarchy to avoid drift between lists and lookup map.
@@ -231,7 +231,7 @@ const App = () => {
                     <Navbar view={normalizedView} navigate={navigate} />
 
                     <main className={cn(
-                        "pt-24 md:pt-32 pb-20 px-4 md:px-8 mx-auto relative z-10 !overflow-visible",
+                        "pt-24 md:pt-32 pb-20 px-3 md:px-8 mx-auto relative z-10 !overflow-visible",
                         normalizedView === VIEWS.MARKET_MAP ? "max-w-[1800px]" : "max-w-7xl"
                     )}>
                         <AnimatePresence mode="wait">

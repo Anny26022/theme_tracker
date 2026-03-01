@@ -30,9 +30,9 @@ export const CompanyCardLite = ({ item, index, onClick }) => {
                     )}
                 </div>
                 <div className="space-y-1">
-                    <h4 className="text-[10px] font-bold tracking-[0.1em] text-[var(--text-main)] uppercase group-hover:text-[var(--accent-primary)] transition-colors">{item.name}</h4>
+                    <h4 className="text-[12px] font-black tracking-[0.1em] text-[var(--text-main)] uppercase group-hover:text-[var(--accent-primary)] transition-colors">{item.name}</h4>
                     <div className="flex items-center gap-2">
-                        <span className="text-[8px] font-bold text-[var(--text-muted)] uppercase tracking-[0.2em]">{item.symbol}</span>
+                        <span className="text-[9.5px] font-bold text-[var(--text-muted)] uppercase tracking-[0.2em]">{item.symbol}</span>
                     </div>
                 </div>
             </div>
@@ -46,14 +46,14 @@ export const CompanyCardLite = ({ item, index, onClick }) => {
                             <div className="h-2 w-8 bg-[var(--ui-divider)] rounded animate-pulse mt-1" />
                         </div>
                     ) : price ? (
-                        <div className="flex flex-col items-end gap-0.5">
+                        <div className="flex flex-col items-end gap-1">
                             <AnimatedPrice
                                 value={price}
-                                className="text-[11px] font-bold tracking-wide text-[var(--text-main)]"
+                                className="text-[13px] font-bold tracking-wide text-[var(--text-main)]"
                             />
                             <AnimatedChange
                                 value={changePct}
-                                className="text-[8px] font-bold tracking-wider"
+                                className="text-[10px] font-bold tracking-wider"
                             />
                         </div>
                     ) : null}

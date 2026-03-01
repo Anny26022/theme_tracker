@@ -28,12 +28,12 @@ UniverseGridComponents.List.displayName = 'UniverseGridList';
 export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, timeframe, setTimeframe, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
     const colors = [
-        'border-blue-500/40 text-blue-300 text-glow-blue',
-        'border-amber-500/40 text-amber-300 text-glow-gold',
-        'border-emerald-500/40 text-emerald-300',
-        'border-purple-500/20 text-purple-400',
-        'border-rose-500/20 text-rose-400',
-        'border-cyan-500/20 text-cyan-400'
+        'border-blue-500/60 text-blue-500',
+        'border-amber-500/60 text-amber-500',
+        'border-emerald-500/60 text-emerald-500',
+        'border-purple-500/60 text-purple-500',
+        'border-rose-500/60 text-rose-500',
+        'border-cyan-500/60 text-cyan-500'
     ];
 
     const sectorSearchIndex = useMemo(() => {
@@ -92,7 +92,7 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)] pb-6">
                     <div className="space-y-1">
                         <div className="flex items-center gap-4 mb-3">
-                            <h2 className="text-xl font-light tracking-[0.5em] uppercase opacity-90 text-glow-gold">
+                            <h2 className="text-2xl font-light tracking-[0.5em] uppercase opacity-90 text-glow-gold">
                                 Index
                             </h2>
                             <WatchlistCopyButton
@@ -100,7 +100,7 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
                                 className="opacity-40 hover:opacity-100"
                             />
                         </div>
-                        <p className="text-[9px] font-bold leading-relaxed tracking-[0.2em] text-[var(--accent-primary)] uppercase">
+                        <p className="text-[11px] font-bold leading-relaxed tracking-[0.2em] text-[var(--accent-primary)] uppercase">
                             Market Architecture Overview
                         </p>
                     </div>
@@ -110,7 +110,7 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
                             placeholder="Find Sectors, Stocks or Symbols..."
                             value={filter}
                             onChange={(e) => setFilter(e.target.value)}
-                            className="glass-card py-2 px-4 text-[9px] uppercase tracking-widest font-bold focus:outline-none focus:border-[var(--accent-primary)] transition-all w-full bg-transparent text-[var(--text-main)]"
+                            className="glass-card py-2.5 px-4 text-[11px] uppercase tracking-widest font-bold focus:outline-none focus:border-[var(--accent-primary)] transition-all w-full bg-transparent text-[var(--text-main)]"
                         />
                     </div>
                 </div>

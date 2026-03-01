@@ -28,7 +28,7 @@ export const BaseNode = ({
             whileHover={{ scale: 1.01 }}
             onClick={onClick}
             className={cn(
-                "gpu-accel p-4 md:p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
+                "gpu-accel p-3 md:p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
                 !disableContentVisibility && "cv-auto",
                 accentClass?.split(' ').find(c => c.startsWith('border-')) || "border-[var(--ui-divider)]",
                 className
@@ -37,12 +37,12 @@ export const BaseNode = ({
             {/* Header info */}
             <div className="flex items-center justify-between">
                 <span className={cn(
-                    "text-[8px] font-bold tracking-[0.4em] uppercase transition-colors text-[var(--text-muted)] group-hover:text-[var(--accent-primary)]",
+                    "text-[9px] font-bold tracking-[0.4em] uppercase transition-colors text-[var(--view-muted)] group-hover:text-[var(--accent-primary)]",
                     accentClass?.includes('text-') && accentClass.split(' ').find(c => c.startsWith('text-'))
                 )}>
                     {label}
                 </span>
-                <span className="text-[8px] font-bold text-[var(--text-main)] uppercase tracking-[0.3em]">
+                <span className="text-[9px] font-bold text-[var(--text-main)] uppercase tracking-[0.3em]">
                     {value}
                 </span>
             </div>
@@ -50,7 +50,7 @@ export const BaseNode = ({
             {/* Title / Main Content */}
             {title && (
                 <h3 className={cn(
-                    "text-[10px] font-bold tracking-[0.2em] uppercase opacity-80 transition-colors truncate leading-relaxed group-hover:text-[var(--accent-primary)]",
+                    "text-[11px] md:text-[13px] font-bold tracking-[0.2em] uppercase opacity-95 transition-colors truncate leading-relaxed group-hover:text-[var(--accent-primary)]",
                     accentClass?.includes('text-') && accentClass.split(' ').find(c => c.startsWith('text-'))
                 )}>
                     {title}

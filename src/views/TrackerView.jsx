@@ -163,14 +163,13 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                     </p>
                 </div>
 
-                <div className="flex flex-nowrap items-center gap-4 xl:justify-end shrink-0 max-w-full overflow-x-auto no-scrollbar pb-2 md:pb-0">
-
+                <div className="flex flex-wrap items-center gap-3 md:gap-4 xl:justify-end w-full">
                     <div className="flex bg-[var(--nav-bg)]/80 p-0.5 rounded-lg border border-[var(--ui-divider)] shrink-0">
                         {['INDUSTRY', 'THEMATIC'].map(mode => (
                             <button
                                 key={mode}
                                 onClick={() => setTrackingType(mode)}
-                                className={`px-3 py-1.5 text-[8px] font-bold uppercase tracking-widest rounded transition-all ${trackingType === mode ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+                                className={`px-2.5 py-1.5 text-[8px] md:text-[9px] font-bold uppercase tracking-widest rounded transition-all ${trackingType === mode ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
                             >
                                 {mode}
                             </button>
@@ -180,19 +179,19 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                     <div className="flex bg-[var(--nav-bg)]/80 p-0.5 rounded-lg border border-[var(--ui-divider)] shrink-0">
                         <button
                             onClick={() => setViewMode('performance')}
-                            className={`px-3 py-1.5 text-[8px] font-bold uppercase tracking-widest rounded transition-all ${viewMode === 'performance' ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+                            className={`px-2.5 py-1.5 text-[8px] md:text-[9px] font-bold uppercase tracking-widest rounded transition-all ${viewMode === 'performance' ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
                         >
                             Perf
                         </button>
                         <button
                             onClick={() => setViewMode('breadth')}
-                            className={`px-3 py-1.5 text-[8px] font-bold uppercase tracking-widest rounded transition-all ${viewMode === 'breadth' ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+                            className={`px-2.5 py-1.5 text-[8px] md:text-[9px] font-bold uppercase tracking-widest rounded transition-all ${viewMode === 'breadth' ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
                         >
                             Breadth
                         </button>
                     </div>
 
-                    <div className="flex items-center gap-1 text-[8px] font-bold text-[var(--text-muted)] uppercase tracking-widest bg-[var(--nav-bg)]/50 p-1 rounded-lg border border-[var(--ui-divider)] overflow-x-auto no-scrollbar w-full lg:w-auto">
+                    <div className="flex items-center gap-1 text-[8px] font-bold text-[var(--text-muted)] uppercase tracking-widest bg-[var(--nav-bg)]/50 p-1 rounded-lg border border-[var(--ui-divider)] overflow-x-auto no-scrollbar min-w-0">
                         {INTERVALS.map(tf => (
                             <button
                                 type="button"
@@ -226,8 +225,8 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                     className="flex items-center gap-0.5 text-[7px] font-bold tracking-wider uppercase px-2 py-1 rounded border border-[var(--ui-divider)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] transition-all text-[var(--text-muted)] whitespace-nowrap"
                                 >
                                     {sectorSortDesc ? <ArrowDown className="w-2.5 h-2.5" /> : <ArrowUp className="w-2.5 h-2.5" />}
-                                    <span className="hidden xs:inline">{sectorSortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}</span>
-                                    <span className="xs:hidden">{sectorSortDesc ? 'High' : 'Low'}</span>
+                                    <span className="hidden sm:inline">{sectorSortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}</span>
+                                    <span className="sm:hidden">{sectorSortDesc ? 'High' : 'Low'}</span>
                                 </button>
                             </div>
                         </div>
@@ -270,8 +269,8 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                     className="flex items-center gap-0.5 text-[7px] font-bold tracking-wider uppercase px-2 py-1 rounded border border-[var(--ui-divider)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] transition-all text-[var(--text-muted)] whitespace-nowrap"
                                 >
                                     {industrySortDesc ? <ArrowDown className="w-2.5 h-2.5" /> : <ArrowUp className="w-2.5 h-2.5" />}
-                                    <span className="hidden xs:inline">{industrySortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}</span>
-                                    <span className="xs:hidden">{industrySortDesc ? 'High' : 'Low'}</span>
+                                    <span className="hidden sm:inline">{industrySortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}</span>
+                                    <span className="sm:hidden">{industrySortDesc ? 'High' : 'Low'}</span>
                                 </button>
                             </div>
                         </div>

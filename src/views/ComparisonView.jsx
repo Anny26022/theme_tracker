@@ -20,15 +20,9 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
     const [selectedSymbols, setSelectedSymbols] = useState(() => {
         try {
             const saved = localStorage.getItem(COMPARISON_STORAGE_KEY) || localStorage.getItem(LEGACY_COMPARISON_STORAGE_KEY);
-            return saved ? JSON.parse(saved) : [
-                { id: 'RELIANCE', type: 'STOCK' },
-                { id: 'HDFCBANK', type: 'STOCK' }
-            ];
+            return saved ? JSON.parse(saved) : [];
         } catch {
-            return [
-                { id: 'RELIANCE', type: 'STOCK' },
-                { id: 'HDFCBANK', type: 'STOCK' }
-            ];
+            return [];
         }
     });
 
@@ -220,7 +214,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
             </div>
 
             {/* Selection Area */}
-            <div className="flex flex-wrap gap-3 items-center">
+            <div className="flex flex-wrap gap-2 md:gap-3 items-center">
                 <AnimatePresence mode="popLayout">
                     {selectedSymbols.map((item, idx) => {
                         return (
@@ -230,129 +224,109 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
                                 initial={{ opacity: 0, scale: 0.8 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 exit={{ opacity: 0, scale: 0.8 }}
-                                className={`flex items-center gap-2 px-3 py-1.5 glass-card border-[3px] rounded-full transition-all ${item.type === 'STOCK' ? 'cursor-pointer hover:border-[var(--accent-primary)]' : ''}`}
+                                className={`flex items-center gap-2 px-2.5 py-1 md:px-3 md:py-1.5 glass-card border-[2px] md:border-[3px] rounded-full transition-all ${item.type === 'STOCK' ? 'cursor-pointer hover:border-[var(--accent-primary)]' : ''}`}
                                 style={{ borderColor: COLORS[idx % COLORS.length] + '44' }}
                                 onClick={() => item.type === 'STOCK' && onOpenInsights?.({ symbol: item.id, name: item.name })}
                             >
-                                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                                <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
                                 <div className="flex flex-col min-w-0">
-                                    <span className="text-[9px] font-bold tracking-widest max-w-[80px] truncate leading-tight">
+                                    <span className="text-[8px] md:text-[9px] font-bold tracking-widest max-w-[60px] md:max-w-[80px] truncate leading-tight">
                                         {item.type === 'STOCK' ? item.name : item.id}
                                     </span>
-                                    {(item.type === 'INDUSTRY' || item.type === 'THEMATIC') && (
-                                        <span className="text-[6px] font-bold text-[var(--accent-primary)] uppercase tracking-tighter">
-                                            {item.type === 'INDUSTRY' ? 'Industry Index' : 'Thematic Cluster'}
-                                        </span>
-                                    )}
                                 </div>
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         toggleSymbol({ symbol: item.id });
                                     }}
-                                    className="hover:text-rose-500 transition-colors ml-1 flex-shrink-0"
+                                    className="hover:text-rose-500 transition-colors ml-0.5 md:ml-1 flex-shrink-0"
                                 >
-                                    <X className="w-3 h-3" />
+                                    <X className="w-2.5 h-2.5 md:w-3 md:h-3" />
                                 </button>
                             </m.div>
                         );
                     })}
                 </AnimatePresence>
 
-                <div className="flex items-center gap-1.5 glass-card p-1 border border-[var(--ui-divider)] rounded-full relative">
-                    {['INDUSTRY', 'THEMATIC'].map(mode => (
-                        <button
-                            key={mode}
-                            onClick={() => {
-                                // Batch these updates to prevent flicker/race conditions
-                                if (searchMode !== mode) {
-                                    setSearchMode(mode);
-                                    setSelectedSymbols([]);
-                                    setSearchQuery('');
-                                }
-                            }}
-                            className={`px-3 py-1 rounded-full text-[7px] font-bold tracking-widest transition-all ${searchMode === mode
-                                ? "bg-[var(--accent-primary)] text-black shadow-[0_0_10px_var(--accent-primary)]"
-                                : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                                }`}
-                        >
-                            {mode}
-                        </button>
-                    ))}
+                {/* Left/Center Toggles */}
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 glass-card p-1 border border-[var(--ui-divider)] rounded-full relative">
+                        {['INDUSTRY', 'THEMATIC'].map(mode => (
+                            <button
+                                key={mode}
+                                onClick={() => {
+                                    if (searchMode !== mode) {
+                                        setSearchMode(mode);
+                                        setSelectedSymbols([]);
+                                        setSearchQuery('');
+                                    }
+                                }}
+                                className={`px-2 md:px-3 py-1 rounded-full text-[7px] font-bold tracking-widest transition-all ${searchMode === mode
+                                    ? "bg-[var(--accent-primary)] text-black shadow-[0_0_10px_var(--accent-primary)]"
+                                    : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                                    }`}
+                            >
+                                {mode}
+                            </button>
+                        ))}
+                    </div>
 
-                    <div className="px-1.5 cursor-help opacity-40 hover:opacity-100 transition-opacity group">
-                        <Info className="w-3 h-3" />
-                        {/* Info Tooltip */}
-                        <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-64 p-4 glass-card border border-[var(--accent-primary)]/20 shadow-2xl transition-all opacity-0 invisible group-hover:opacity-100 group-hover:visible z-[100] pointer-events-none">
-                            <div className="space-y-3">
-                                <div>
-                                    <h4 className="text-[9px] font-bold text-[var(--accent-primary)] uppercase tracking-widest mb-1 border-b border-[var(--accent-primary)]/10 pb-1">Industry Mode</h4>
-                                    <p className="text-[8px] text-[var(--text-muted)] leading-relaxed">Refined industry classifications mapped from market data. Best for tracking traditional vertical segments.</p>
-                                </div>
-                                <div>
-                                    <h4 className="text-[9px] font-bold text-[var(--accent-primary)] uppercase tracking-widest mb-1 border-b border-[var(--accent-primary)]/10 pb-1">Thematic Mode</h4>
-                                    <p className="text-[8px] text-[var(--text-muted)] leading-relaxed">Curated Alpha-Clusters spanning multiple industries. Best for tracking high-conviction trends (e.g. Defense, EV, Rural Cons).</p>
-                                </div>
-                            </div>
-                        </div>
+                    <div className="flex items-center gap-1 glass-card p-1 border border-[var(--ui-divider)] rounded-full">
+                        {['ALL', 'NSE', 'BSE'].map(ex => (
+                            <button
+                                key={ex}
+                                onClick={() => setExchangePreference(ex)}
+                                className={`px-2 md:px-3 py-1 rounded-full text-[7px] font-bold tracking-widest transition-all ${exchangePreference === ex
+                                    ? "bg-[var(--accent-primary)] text-black shadow-[0_0_10px_var(--accent-primary)]"
+                                    : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                                    }`}
+                            >
+                                {ex}
+                            </button>
+                        ))}
                     </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 glass-card p-1 border border-[var(--ui-divider)] rounded-full">
-                    {['ALL', 'NSE', 'BSE'].map(ex => (
-                        <button
-                            key={ex}
-                            onClick={() => setExchangePreference(ex)}
-                            className={`px-3 py-1 rounded-full text-[7px] font-bold tracking-widest transition-all ${exchangePreference === ex
-                                ? "bg-[var(--accent-primary)] text-black shadow-[0_0_10px_var(--accent-primary)]"
-                                : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                                }`}
-                        >
-                            {ex}
-                        </button>
-                    ))}
-                </div>
-
-                <div className="relative flex-grow md:flex-grow-0">
-                    <div className="flex items-center gap-2 px-4 py-1.5 glass-card border-dashed border-[var(--ui-divider)] rounded-full hover:border-[var(--accent-primary)] transition-all">
+                {/* Right Aligned Search */}
+                <div className="relative flex-grow md:flex-grow-0 ml-0 md:ml-auto w-full md:w-auto mt-2 md:mt-0">
+                    <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 glass-card border-dashed border-[var(--ui-divider)] rounded-full hover:border-[var(--accent-primary)] transition-all">
                         <Search className="w-3 h-3 text-[var(--text-muted)]" />
                         <input
                             type="text"
-                            placeholder="COMPARE SYMBOL..."
+                            placeholder="SEARCH..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="bg-transparent border-none outline-none text-[9px] font-bold tracking-widest w-full md:w-32 uppercase placeholder:text-[var(--ui-muted)]"
+                            className="bg-transparent border-none outline-none text-[8px] md:text-[9px] font-bold tracking-widest w-full md:w-44 uppercase placeholder:text-[var(--ui-muted)]"
                         />
                     </div>
 
-                    {/* Search Results Dropdown */}
                     <AnimatePresence>
                         {searchResults.length > 0 && (
                             <m.div
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 10 }}
-                                className="absolute top-full left-0 mt-2 w-64 glass-card border border-[var(--ui-divider)] z-50 p-2 shadow-2xl overflow-hidden"
+                                className="absolute top-full right-0 mt-3 w-72 md:w-80 glass-card border border-[var(--accent-primary)]/20 z-[200] p-2 shadow-[0_20px_50px_rgba(0,0,0,0.9)] bg-[var(--bg-main)] backdrop-blur-3xl overflow-y-auto max-h-[320px] custom-scrollbar"
                             >
                                 {searchResults.map(res => (
                                     <button
                                         type="button"
                                         key={res.symbol + res.type}
                                         onClick={() => toggleSymbol(res)}
-                                        className="w-full flex items-center justify-between p-2 hover:bg-[var(--accent-primary)]/10 rounded cursor-pointer group text-left"
+                                        className="w-full flex items-center justify-between p-2.5 hover:bg-[var(--accent-primary)]/10 rounded cursor-pointer group text-left transition-colors"
                                     >
-                                        <div className="flex flex-col">
+                                        <div className="flex flex-col min-w-0">
                                             <div className="flex items-center gap-2">
-                                                <span className="text-[9px] font-bold tracking-widest text-[var(--text-main)]">{res.symbol}</span>
+                                                <span className="text-[10px] font-black tracking-widest text-[var(--accent-primary)] uppercase truncate">{res.symbol}</span>
                                                 {(res.type === 'INDUSTRY' || res.type === 'THEMATIC') && (
-                                                    <span className="text-[6px] px-1 bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] rounded h-fit">
-                                                        {res.type === 'INDUSTRY' ? 'INDUSTRY' : 'THEMATIC'}
+                                                    <span className="text-[6px] px-1 font-bold bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] border border-[var(--accent-primary)]/20 rounded uppercase">
+                                                        {res.type === 'INDUSTRY' ? 'Sector' : 'Theme'}
                                                     </span>
                                                 )}
                                             </div>
-                                            <span className="text-[7px] text-[var(--text-muted)] uppercase tracking-tighter truncate max-w-[150px]">{res.name}</span>
+                                            <span className="text-[8px] text-[var(--text-muted)] font-bold uppercase tracking-tighter truncate opacity-70">{res.name}</span>
                                         </div>
-                                        <Plus className="w-3 h-3 text-[var(--text-muted)] group-hover:text-[var(--accent-primary)]" />
+                                        <Plus className="w-3.5 h-3.5 text-[var(--text-muted)] group-hover:text-[var(--accent-primary)] transition-transform group-hover:scale-110" />
                                     </button>
                                 ))}
                             </m.div>

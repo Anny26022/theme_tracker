@@ -232,9 +232,9 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
             )}
 
             {/* Price Y-Axis */}
-            <div className="absolute left-0 top-0 h-full flex flex-col justify-between pointer-events-none z-10 py-2">
+            <div className="absolute left-0 top-0 h-full flex flex-col justify-between pointer-events-none z-10 py-6 md:py-10">
                 {gridY.slice().reverse().map((entry) => (
-                    <span key={`y-axis-${entry.id}`} className="text-[8px] font-mono text-[var(--text-muted)] translate-x-[-110%] bg-[var(--bg-main)]/50 px-1">
+                    <span key={`y-axis-${entry.id}`} className="text-[7.5px] font-mono text-[var(--text-muted)] ml-2 bg-[var(--bg-main)]/80 px-2 py-0.5 backdrop-blur-xl border border-white/5 rounded-sm shadow-2xl">
                         {entry.value > 0 ? '+' : ''}{entry.value.toFixed(1)}%
                     </span>
                 ))}
@@ -309,20 +309,19 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
                 })}
             </svg>
 
-            {/* X-Axis Real-Time Labels */}
-            <div className="absolute bottom-0 left-0 w-full flex justify-between translate-y-full pt-4 px-2 opacity-50">
+            {/* X-Axis Real-Time Labels — Positioned inside for edge protection */}
+            <div className="absolute bottom-2 left-0 w-full px-2 md:px-6 pointer-events-none z-10 flex justify-between opacity-50">
                 {timeLabels.map((t) => (
                     <div
                         key={`x-label-${t.pos}`}
-                        className="flex flex-col items-center"
+                        className="flex flex-col items-center bg-[var(--bg-main)]/70 px-2 py-0.5 backdrop-blur-md rounded border border-white/5 shadow-xl"
                         style={{
                             position: 'absolute',
                             left: `${t.pos * 100}%`,
-                            transform: t.pos === 0 ? 'none' : t.pos === 1 ? 'translateX(-100%)' : 'translateX(-50%)'
+                            transform: t.pos === 0 ? 'translateX(0%)' : t.pos === 1 ? 'translateX(-100%)' : 'translateX(-50%)'
                         }}
                     >
-                        <div className="w-[1px] h-1.5 bg-[var(--ui-divider)] mb-1" />
-                        <span className="text-[8px] font-mono tracking-tighter whitespace-nowrap uppercase">{t.label}</span>
+                        <span className="text-[7.5px] font-mono tracking-tighter whitespace-nowrap uppercase">{t.label}</span>
                     </div>
                 ))}
             </div>

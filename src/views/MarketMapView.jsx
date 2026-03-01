@@ -102,6 +102,19 @@ const buildThemeCompaniesMap = (industryMap, symbolNameMap) => {
     return next;
 };
 
+const buildNseThemeCompaniesMap = (allThemeCompaniesMap) => {
+    const next = {};
+
+    Object.keys(allThemeCompaniesMap || {}).forEach((themeName) => {
+        const allCompanies = allThemeCompaniesMap[themeName] || EMPTY_ARRAY;
+        const filtered = allCompanies.filter((company) => !isBSESymbol(company.symbol));
+        // Preserve referential identity when no BSE symbols were present.
+        next[themeName] = filtered.length === allCompanies.length ? allCompanies : filtered;
+    });
+
+    return next;
+};
+
 const buildSearchIndex = (mapSource, themeCompaniesMap) => {
     const index = [];
 
@@ -160,8 +173,8 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
         <div className="flex flex-col gap-3">
             <div className="border-b border-[var(--ui-divider)]/40 pb-2 mb-1 flex justify-between items-end">
                 <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">Thematic Composition</span>
-                    <span className="text-[8.5px] font-black text-[var(--text-main)] uppercase tracking-tight">{theme.name}</span>
+                    <span className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">Thematic Composition</span>
+                    <span className="text-[10px] font-black text-[var(--text-main)] uppercase tracking-tight">{theme.name}</span>
                 </div>
                 <div className="flex flex-col items-end gap-2">
                     {isMobile && (
@@ -208,7 +221,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                                     </div>
                                 </div>
                                 <div className="flex flex-col min-w-0">
-                                    <span className="text-[7.5px] font-black uppercase tracking-tight text-[var(--text-main)] whitespace-normal leading-tight flex items-center gap-1">
+                                    <span className="text-[9px] font-black uppercase tracking-tight text-[var(--text-main)] whitespace-normal leading-tight flex items-center gap-1">
                                         {stock.name}
                                         {(() => {
                                             const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
@@ -289,13 +302,13 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                         : "group-hover/row:bg-[var(--accent-primary)]/5"
                 )}>
                     <span className={cn(
-                        "text-[8.5px] font-black uppercase tracking-tight leading-tight transition-colors",
+                        "text-[10.5px] font-black uppercase tracking-tight leading-tight transition-colors",
                         isHighlighted ? "text-[var(--accent-primary)]" : "text-[var(--text-main)]/90"
                     )}>
                         {theme.name}
                     </span>
                     <span className={cn(
-                        "text-[7.5px] font-black flex-shrink-0 font-mono transition-colors",
+                        "text-[8.5px] font-black flex-shrink-0 font-mono transition-colors",
                         isHighlighted ? "text-[var(--accent-primary)]" : "text-[var(--text-main)]/60 group-hover/row:text-[var(--accent-primary)]"
                     )}>
                         ({count})
@@ -345,7 +358,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                 return (
                     <td key={col.key} className="p-0 pl-1">
                         <div className={cn(
-                            "h-5.5 flex items-center justify-center text-[7px] border rounded-[4px] transition-all duration-500",
+                            "h-5.5 flex items-center justify-center text-[8.5px] border rounded-[4px] transition-all duration-500",
                             loading ? "animate-pulse bg-[var(--ui-muted)]/5" : getHeatmapColor(numVal)
                         )}>
                             <span className="line-clamp-1">{displayVal}{numVal !== null && '%'}</span>
@@ -370,7 +383,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
     return (
         <div className="flex flex-col h-full group/block transition-all duration-700">
             <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2">
-                <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">
+                <h3 className="text-[12.5px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">
                     {block.title}
                 </h3>
             </div>
@@ -379,9 +392,9 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                 <table className="w-full text-left border-separate border-spacing-x-1 border-spacing-y-1.5 table-fixed">
                     <thead>
                         <tr className="opacity-40">
-                            <th className="px-1 text-[6.5px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] w-[40%]">Cluster</th>
+                            <th className="px-1 text-[8px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] w-[40%]">Cluster</th>
                             {COLUMNS.map(col => (
-                                <th key={col.key} className="px-0 text-[6.5px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] text-center w-[12%]">{col.label}</th>
+                                <th key={col.key} className="px-0 text-[8px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] text-center w-[12%]">{col.label}</th>
                             ))}
                         </tr>
                     </thead>
@@ -428,8 +441,13 @@ const ContextThemeBlock = React.memo(({ block }) => {
     );
 });
 
-const ThemeBlockSkeleton = () => (
-    <div className="h-[220px] rounded-xl border border-[var(--ui-divider)]/20 bg-[var(--bg-main)]/15" />
+const estimateBlockHeight = (themeCount) => Math.max(260, 84 + (Math.max(1, themeCount) * 30));
+
+const ThemeBlockSkeleton = ({ themeCount = 1 }) => (
+    <div
+        className="rounded-xl border border-[var(--ui-divider)]/20 bg-[var(--bg-main)]/15"
+        style={{ height: `${estimateBlockHeight(themeCount)}px` }}
+    />
 );
 
 const buildInitialVisibleIds = (mapSource) => {
@@ -460,24 +478,36 @@ const DeferredThemeBlock = React.memo(({
             {isVisible ? (
                 <ContextThemeBlock block={block} />
             ) : (
-                <ThemeBlockSkeleton />
+                <ThemeBlockSkeleton themeCount={block?.themes?.length || 1} />
             )}
         </div>
     );
 });
+DeferredThemeBlock.displayName = 'DeferredThemeBlock';
 
 const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) => {
     const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
+    const refCallbacks = useRef(new Map());
 
     useEffect(() => {
         const initialIds = buildInitialVisibleIds(mapSource);
+        const validIds = new Set();
         const nextVisibility = new Map();
         mapSource.forEach((block) => {
             const id = makeBlockId(block.title);
+            validIds.add(id);
             nextVisibility.set(id, initialIds.has(id));
         });
+
+        refCallbacks.current.forEach((_, id) => {
+            if (!validIds.has(id)) refCallbacks.current.delete(id);
+        });
+        nodeRefs.current.forEach((_, id) => {
+            if (!validIds.has(id)) nodeRefs.current.delete(id);
+        });
+
         visibilityRef.current = nextVisibility;
         setVisibleIds(initialIds);
     }, [mapSource]);
@@ -489,6 +519,15 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) 
             nodeRefs.current.delete(blockId);
         }
     }, []);
+
+    const getAttachRef = useCallback((blockId) => {
+        const existing = refCallbacks.current.get(blockId);
+        if (existing) return existing;
+
+        const callback = (node) => attachNodeRef(blockId, node);
+        refCallbacks.current.set(blockId, callback);
+        return callback;
+    }, [attachNodeRef]);
 
     useEffect(() => {
         if (!isActive) return undefined;
@@ -505,7 +544,8 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) 
                     const id = entry.target.getAttribute('data-block-id');
                     if (!id) return;
                     const prevValue = !!visibilityRef.current.get(id);
-                    const nextValue = isMobile ? (prevValue || entry.isIntersecting) : entry.isIntersecting;
+                    // Keep mounted once visible to prevent remount flicker and layout jumps while scrolling.
+                    const nextValue = prevValue || entry.isIntersecting;
                     if (prevValue === nextValue) return;
                     visibilityRef.current.set(id, nextValue);
                     hasChanges = true;
@@ -535,13 +575,14 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) 
                         block={block}
                         blockId={blockId}
                         isVisible={visibleIds.has(blockId)}
-                        attachRef={(node) => attachNodeRef(blockId, node)}
+                        attachRef={getAttachRef(blockId)}
                     />
                 );
             })}
         </div>
     );
 });
+ThemeGrid.displayName = 'ThemeGrid';
 
 const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, isMobile }) => {
     if (!isMounted) return null;
@@ -565,6 +606,7 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
     if (!prevProps.isActive && !nextProps.isActive) return true;
     return prevProps.gridContextValue === nextProps.gridContextValue;
 });
+ThematicGridPane.displayName = 'ThematicGridPane';
 
 const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue, isMobile }) => {
     if (!isMounted) return null;
@@ -589,6 +631,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
     if (!prevProps.isActive && !nextProps.isActive) return true;
     return prevProps.gridContextValue === nextProps.gridContextValue;
 });
+MacroGridPane.displayName = 'MacroGridPane';
 
 const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => {
     const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
@@ -626,6 +669,7 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
         </>
     );
 });
+ThemeGridSection.displayName = 'ThemeGridSection';
 
 const Legend = React.memo(() => (
     <div className="flex items-center gap-4 md:gap-8 px-4 md:px-6 py-2.5 glass-card border-[var(--ui-divider)]/20 rounded-full mb-10 w-fit mx-auto md:mx-0 bg-[var(--bg-main)]/40 shadow-xl">
@@ -692,18 +736,15 @@ export const MarketMapView = ({ hierarchy }) => {
     }, [hierarchy]);
 
     const allIndustryMap = useMemo(() => buildIndustryMap(hierarchy), [hierarchy]);
-    const nseIndustryMap = useMemo(() => buildIndustryMap(nseHierarchy), [nseHierarchy]);
-
     const allSymbolNameMap = useMemo(() => buildSymbolNameMap(allIndustryMap), [allIndustryMap]);
-    const nseSymbolNameMap = useMemo(() => buildSymbolNameMap(nseIndustryMap), [nseIndustryMap]);
 
     const allThemeCompaniesMap = useMemo(
         () => buildThemeCompaniesMap(allIndustryMap, allSymbolNameMap),
         [allIndustryMap, allSymbolNameMap]
     );
     const nseThemeCompaniesMap = useMemo(
-        () => buildThemeCompaniesMap(nseIndustryMap, nseSymbolNameMap),
-        [nseIndustryMap, nseSymbolNameMap]
+        () => buildNseThemeCompaniesMap(allThemeCompaniesMap),
+        [allThemeCompaniesMap]
     );
 
     const macroMap = useMemo(() => {
@@ -793,7 +834,7 @@ export const MarketMapView = ({ hierarchy }) => {
                     <h2 className="text-xl md:text-3xl font-light tracking-[0.15em] md:tracking-[0.5em] uppercase opacity-90 text-glow-gold leading-tight">
                         Market <span className="text-[var(--accent-primary)]">Architecture</span>
                     </h2>
-                    <p className="text-[7px] md:text-[10px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
+                    <p className="text-[8.5px] md:text-[11.5px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
                         {hideBSE ? 'Deep Thematic Mapping (NSE Only)' : 'Deep Thematic Mapping (Full Universe)'}
                     </p>
                     {pendingIntervals?.length > 0 && (

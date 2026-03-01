@@ -66,10 +66,10 @@ export const IndustryView = ({ sector, industry, companies, sectors, hierarchy, 
                             <ArrowLeft className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent-primary)] transition-colors" />
                         </button>
                         <div className="space-y-1">
-                            <span className="text-[8px] font-bold text-[var(--accent-primary)] opacity-40 uppercase tracking-[0.4em]">
+                            <span className="text-[10px] font-bold text-[var(--accent-primary)] opacity-40 uppercase tracking-[0.4em]">
                                 {sector}
                             </span>
-                            <h2 className="text-2xl font-light tracking-[0.2em] uppercase opacity-90 leading-none text-glow-gold">
+                            <h2 className="text-3xl font-light tracking-[0.2em] uppercase opacity-90 leading-none text-glow-gold">
                                 {industry}
                             </h2>
                         </div>
@@ -82,7 +82,7 @@ export const IndustryView = ({ sector, industry, companies, sectors, hierarchy, 
                             placeholder="FILTER COMPANIES..."
                             value={filter}
                             onChange={(e) => setFilter(e.target.value)}
-                            className="bg-transparent border-none outline-none text-[8px] uppercase tracking-widest font-bold w-full text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-50"
+                            className="bg-transparent border-none outline-none text-[9.5px] uppercase tracking-widest font-bold w-full text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-50"
                         />
                     </div>
                 </div>

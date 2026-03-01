@@ -12,6 +12,8 @@
  *   Body: URL-encoded f.req=... (standard batchexecute format)
  */
 
+import { sendCompressedText } from './_compression.js';
+
 export default async function handler(req, res) {
     // CORS headers for mobile clients
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -73,7 +75,7 @@ export default async function handler(req, res) {
         }
 
         const text = await response.text();
-        return res.status(200).send(text);
+        return sendCompressedText(req, res, text, 200);
     } catch (error) {
         console.error('[mobile-batch] Error:', error.message);
         return res.status(500).json({ error: 'Proxy error' });

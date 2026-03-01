@@ -1,4 +1,5 @@
 import { unseal } from './_unseal.js';
+import { sendCompressedText } from './_compression.js';
 
 function firstQueryValue(value) {
     if (Array.isArray(value)) return value[0];
@@ -56,7 +57,7 @@ export default async function handler(req, res) {
         if (!response.ok) return res.status(response.status).send(`Upstream Error: ${response.status}`);
 
         const text = await response.text();
-        return res.status(200).send(text);
+        return sendCompressedText(req, res, text, 200);
     } catch (error) {
         console.error('[fuckyouuuu] Error:', error.message);
         return res.status(500).json({ error: 'System Error' });

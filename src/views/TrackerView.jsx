@@ -5,6 +5,7 @@ import { TrackerRow } from '../components/TrackerRow';
 import { useUnifiedTracker } from '../hooks/useUnifiedTracker';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { Virtuoso } from 'react-virtuoso';
+import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 
 const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 
@@ -34,6 +35,7 @@ const RANGE_LABEL = {
 
 export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, timeframe, setTimeframe, onOpenInsights }) => {
     const [viewMode, setViewMode] = useState('performance'); // 'performance' | 'breadth'
+    const [trackingType, setTrackingType] = useState('TRADITIONAL'); // 'TRADITIONAL' | 'THEMATIC'
     const [sectorSortDesc, setSectorSortDesc] = useState(true);
     const [industrySortDesc, setIndustrySortDesc] = useState(true);
 
@@ -62,48 +64,77 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
 
     const industryNames = useMemo(() => allIndustries.map(i => i.name), [allIndustries]);
 
-    // Unified Data Hook: Fetched 1Y data once and derives both Perf and Breadth
-    const { trackerMap: sectorData, loading: sectorLoading } = useUnifiedTracker(
-        sectors, hierarchy, timeframe, 'sector'
+    // Derived Thematic Items
+    const thematicPillars = useMemo(() => MACRO_PILLARS.map(p => p.title), []);
+    const thematicThemes = useMemo(() => {
+        const themes = [];
+        THEMATIC_MAP.forEach(block => {
+            block.themes.forEach(theme => themes.push(theme.name));
+        });
+        return themes;
+    }, []);
+
+    // Unified Data Hook
+    const leftItems = trackingType === 'TRADITIONAL' ? sectors : thematicPillars;
+    const rightItems = trackingType === 'TRADITIONAL' ? industryNames : thematicThemes;
+
+    const { trackerMap: leftData, loading: leftLoading } = useUnifiedTracker(
+        leftItems, hierarchy, timeframe, trackingType === 'TRADITIONAL' ? 'sector' : 'thematic'
     );
-    const { trackerMap: industryData, loading: industryLoading } = useUnifiedTracker(
-        industryNames, hierarchy, timeframe, 'industry'
+    const { trackerMap: rightData, loading: rightLoading } = useUnifiedTracker(
+        rightItems, hierarchy, timeframe, trackingType === 'TRADITIONAL' ? 'industry' : 'thematic'
     );
 
     // Sorting Logic
-    const sortedSectors = useMemo(() => {
+    const sortedLeft = useMemo(() => {
         const dir = sectorSortDesc ? -1 : 1;
-        const getSectorCount = (s) => hierarchy[s] ? Object.values(hierarchy[s]).reduce((acc, comp) => acc + comp.length, 0) : 0;
+        const getCount = (name) => {
+            if (trackingType === 'TRADITIONAL') {
+                return hierarchy[name] ? Object.values(hierarchy[name]).reduce((acc, comp) => acc + comp.length, 0) : 0;
+            }
+            // For thematic pillars, sum their constituent themes' companies
+            const pillar = MACRO_PILLARS.find(p => p.title === name);
+            if (!pillar) return 0;
 
-        return [...sectors].sort((a, b) => {
-            const aIsSmall = getSectorCount(a) <= 3;
-            const bIsSmall = getSectorCount(b) <= 3;
-            if (aIsSmall && !bIsSmall) return 1;
-            if (!aIsSmall && bIsSmall) return -1;
+            let total = 0;
+            pillar.blocks.forEach(blockTitle => {
+                const mapBlock = THEMATIC_MAP.find(b => b.title === blockTitle);
+                if (mapBlock) {
+                    mapBlock.themes.forEach(theme => {
+                        total += rightData[theme.name]?.breadth?.total || 0;
+                    });
+                }
+            });
+            return total;
+        };
+
+        return [...leftItems].sort((a, b) => {
+            if (trackingType === 'TRADITIONAL') {
+                const aIsSmall = getCount(a) <= 3;
+                const bIsSmall = getCount(b) <= 3;
+                if (aIsSmall && !bIsSmall) return 1;
+                if (!aIsSmall && bIsSmall) return -1;
+            }
 
             if (viewMode === 'breadth') {
-                return dir * ((sectorData[a]?.breadth?.[activeEMAKey] || 0) - (sectorData[b]?.breadth?.[activeEMAKey] || 0));
+                return dir * ((leftData[a]?.breadth?.[activeEMAKey] || 0) - (leftData[b]?.breadth?.[activeEMAKey] || 0));
             }
-            return dir * ((sectorData[a]?.avgPerf || 0) - (sectorData[b]?.avgPerf || 0));
+            return dir * ((leftData[a]?.avgPerf || 0) - (leftData[b]?.avgPerf || 0));
         });
-    }, [sectors, sectorData, viewMode, sectorSortDesc, activeEMAKey, hierarchy]);
+    }, [leftItems, leftData, viewMode, sectorSortDesc, activeEMAKey, hierarchy, trackingType]);
 
-    const sortedIndustries = useMemo(() => {
+    const sortedRight = useMemo(() => {
         const dir = industrySortDesc ? -1 : 1;
-        return [...allIndustries].sort((a, b) => {
-            const aIsSmall = (a.count || 0) <= 3;
-            const bIsSmall = (b.count || 0) <= 3;
-            if (aIsSmall && !bIsSmall) return 1;
-            if (!aIsSmall && bIsSmall) return -1;
 
+        return [...rightItems].sort((a, b) => {
             if (viewMode === 'breadth') {
-                return dir * ((industryData[a.name]?.breadth?.[activeEMAKey] || 0) - (industryData[b.name]?.breadth?.[activeEMAKey] || 0));
+                return dir * ((rightData[a]?.breadth?.[activeEMAKey] || 0) - (rightData[b]?.breadth?.[activeEMAKey] || 0));
             }
-            return dir * ((industryData[a.name]?.avgPerf || 0) - (industryData[b.name]?.avgPerf || 0));
+            return dir * ((rightData[a]?.avgPerf || 0) - (rightData[b]?.avgPerf || 0));
         });
-    }, [allIndustries, industryData, viewMode, industrySortDesc, activeEMAKey]);
+    }, [rightItems, rightData, viewMode, industrySortDesc, activeEMAKey, trackingType]);
 
-    const isGlobalLoading = sectorLoading || industryLoading;
+    const isGlobalLoading = leftLoading || rightLoading;
 
     return (
         <ViewWrapper id="tracker">
@@ -111,7 +142,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                 <div className="space-y-1 max-w-full xl:max-w-xl shrink-0">
                     <div className="flex items-center gap-3 mb-2">
                         <h2 className="text-base md:text-lg xl:text-xl font-light tracking-[0.2em] xl:tracking-[0.4em] uppercase opacity-90 text-glow-gold">
-                            Traditional Industry & Sector Tracker
+                            {trackingType === 'TRADITIONAL' ? 'Traditional Industry & Sector Tracker' : 'Deep Thematic Cluster Tracker'}
                         </h2>
                         <div className="relative group flex items-center shrink-0">
                             <Info className="w-4 h-4 text-[var(--accent-primary)]/50 cursor-help hover:text-[var(--accent-primary)] transition-colors group-hover:opacity-100" />
@@ -131,6 +162,18 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                 </div>
 
                 <div className="flex flex-nowrap items-center gap-4 xl:justify-end shrink-0 max-w-full overflow-x-auto no-scrollbar pb-2 md:pb-0">
+
+                    <div className="flex bg-[var(--nav-bg)]/80 p-0.5 rounded-lg border border-[var(--ui-divider)] shrink-0">
+                        {['TRADITIONAL', 'THEMATIC'].map(mode => (
+                            <button
+                                key={mode}
+                                onClick={() => setTrackingType(mode)}
+                                className={`px-3 py-1.5 text-[8px] font-bold uppercase tracking-widest rounded transition-all ${trackingType === mode ? 'bg-[var(--accent-primary)] text-[var(--bg-main)] shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+                            >
+                                {mode}
+                            </button>
+                        ))}
+                    </div>
 
                     <div className="flex bg-[var(--nav-bg)]/80 p-0.5 rounded-lg border border-[var(--ui-divider)] shrink-0">
                         <button
@@ -171,7 +214,9 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                     <div className="space-y-8">
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
                             <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
-                            <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">Sector {viewMode === 'breadth' ? 'Health' : 'Rankings'}</h2>
+                            <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">
+                                {trackingType === 'TRADITIONAL' ? 'Sector' : 'Macro Pillar'} {viewMode === 'breadth' ? 'Health' : 'Rankings'}
+                            </h2>
                             <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
                                 <button
@@ -185,19 +230,21 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         </div>
                         <div className="h-[min(70vh,720px)]">
                             <Virtuoso
-                                data={sortedSectors}
-                                computeItemKey={(_, sector) => sector}
-                                itemContent={(_, sector) => {
-                                    const data = sectorData[sector];
+                                data={sortedLeft}
+                                computeItemKey={(_, item) => item}
+                                itemContent={(_, item) => {
+                                    const data = leftData[item];
+                                    const companies = (trackingType === 'TRADITIONAL') ? (hierarchy[item] ? Object.values(hierarchy[item]).flat() : []) : [];
+
                                     return (
                                         <TrackerRow
-                                            name={sector}
-                                            count={hierarchy[sector] ? Object.values(hierarchy[sector]).reduce((acc, comp) => acc + comp.length, 0) : 0}
+                                            name={item}
+                                            count={data?.breadth?.total || 0}
                                             perf={viewMode === 'breadth' ? (data?.breadth?.[activeEMAKey] ?? null) : (data?.avgPerf ?? null)}
                                             breadth={data?.breadth}
                                             leaders={data?.leaders}
                                             laggards={data?.laggards}
-                                            onClick={() => onSectorClick(sector)}
+                                            onClick={() => trackingType === 'TRADITIONAL' && onSectorClick(item)}
                                             loading={isGlobalLoading && !data}
                                         />
                                     );
@@ -210,7 +257,9 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                     <div className="space-y-8">
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
                             <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
-                            <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">Industry {viewMode === 'breadth' ? 'Breadth' : 'Alpha'}</h2>
+                            <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">
+                                {trackingType === 'TRADITIONAL' ? 'Industry' : 'Thematic Theme'} {viewMode === 'breadth' ? 'Breadth' : 'Alpha'}
+                            </h2>
                             <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
                                 <button
@@ -224,20 +273,25 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         </div>
                         <div className="h-[min(70vh,720px)]">
                             <Virtuoso
-                                data={sortedIndustries}
-                                computeItemKey={(_, ind) => ind.name}
-                                itemContent={(_, ind) => {
-                                    const data = industryData[ind.name];
+                                data={sortedRight}
+                                computeItemKey={(_, item) => item}
+                                itemContent={(_, item) => {
+                                    const data = rightData[item];
                                     return (
                                         <TrackerRow
-                                            name={ind.name.toLowerCase()}
-                                            count={ind.count}
+                                            name={item.toLowerCase()}
+                                            count={data?.breadth?.total || 0}
                                             perf={viewMode === 'breadth' ? (data?.breadth?.[activeEMAKey] ?? null) : (data?.avgPerf ?? null)}
                                             breadth={data?.breadth}
                                             leaders={data?.leaders}
                                             laggards={data?.laggards}
-                                            onClick={() => onIndustryClick(ind.sector, ind.name)}
                                             loading={isGlobalLoading && !data}
+                                            onClick={() => {
+                                                if (trackingType === 'TRADITIONAL') {
+                                                    const ind = allIndustries.find(i => i.name === item);
+                                                    if (ind) onIndustryClick(ind.sector, item);
+                                                }
+                                            }}
                                         />
                                     );
                                 }}

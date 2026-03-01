@@ -38,6 +38,7 @@ const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
 const comparisonCacheMap = new Map();
 const unifiedResultCache = new Map(); // timeframe:symbol -> result
 const pendingUnifiedRequests = new Map();
+const pendingComparisonRequests = new Map();
 const PRICE_CACHE_TTL = 300_000; // 5m
 const COMPARISON_CACHE_TTL = 300_000; // 5m
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
@@ -1631,49 +1632,69 @@ export async function fetchFundamentals(symbols) {
  */
 
 export async function fetchComparisonCharts(symbols, interval = '1D') {
-    await ensureComparisonCacheHydrated();
+    const keys = [...new Set((symbols || []).map(s => cleanSymbol(s)).filter(Boolean))].sort();
+    if (keys.length === 0) return new Map();
+
     const window = INTERVAL_WINDOWS[interval] || 1;
-    const results = new Map();
-    const uncached = [];
+    const requestKey = `${window}:${keys.join(',')}`;
+    const pending = pendingComparisonRequests.get(requestKey);
+    if (pending) return pending;
 
-    for (const raw of symbols) {
-        const sym = cleanSymbol(raw);
-        const cacheKey = `${sym}:${window}:full`;
-        const cached = comparisonCacheMap.get(cacheKey);
-        if (isCacheRowFresh(cached, COMPARISON_CACHE_TTL)) {
-            markLocalCacheHit();
-            results.set(sym, cached.series);
-        } else {
-            markLocalCacheMiss(cacheLookupMissReason(cached));
-            uncached.push(sym);
-        }
-    }
+    const requestPromise = (async () => {
+        await ensureComparisonCacheHydrated();
+        const results = new Map();
+        const uncached = [];
 
-    if (uncached.length === 0) return results;
-
-    // Use dispatcher for Comparison Charts
-    const requests = uncached.map(sym => {
-        const ex = getExchange(sym);
-        const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
-        return queueRpc(GOOGLE_RPC_CHART, rpcArgs).then(({ payload, responseTtlMs }) => {
-            const extracted = extractWideChartFromFrame(payload);
-            if (extracted) {
-                const cacheKey = `${extracted.symbol}:${window}:full`;
-                const row = buildCacheRow(extracted.series, responseTtlMs, COMPARISON_CACHE_TTL);
-                if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
-                results.set(extracted.symbol, extracted.series);
+        for (const sym of keys) {
+            const cacheKey = `${sym}:${window}:full`;
+            const cached = comparisonCacheMap.get(cacheKey);
+            if (isCacheRowFresh(cached, COMPARISON_CACHE_TTL)) {
+                markLocalCacheHit();
+                results.set(sym, cached.series);
+            } else {
+                markLocalCacheMiss(cacheLookupMissReason(cached));
+                uncached.push(sym);
             }
+        }
+
+        if (uncached.length === 0) return results;
+
+        // Use dispatcher for Comparison Charts
+        const requests = uncached.map(sym => {
+            const ex = getExchange(sym);
+            const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
+            return queueRpc(GOOGLE_RPC_CHART, rpcArgs).then(({ payload, responseTtlMs }) => {
+                const extracted = extractWideChartFromFrame(payload);
+                if (!extracted) return;
+
+                const extractedSymbol = cleanSymbol(extracted.symbol);
+                const cacheKey = `${extractedSymbol}:${window}:full`;
+                const row = buildCacheRow(extracted.series, responseTtlMs, COMPARISON_CACHE_TTL);
+                if (row) {
+                    comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
+                    results.set(extractedSymbol, row.data);
+                } else {
+                    results.set(extractedSymbol, extracted.series);
+                }
+            });
         });
-    });
 
-    try {
-        await Promise.all(requests);
+        const settled = await Promise.allSettled(requests);
+        const rejected = settled.filter(item => item.status === 'rejected');
+        if (rejected.length > 0) {
+            console.warn(`[PriceService] Comparison queue partial failures: ${rejected.length}/${requests.length}`);
+        }
         scheduleComparisonSave();
-    } catch (err) {
-        console.warn('[PriceService] Comparison queue failed:', err.message);
-    }
 
-    return results;
+        return results;
+    })();
+
+    pendingComparisonRequests.set(requestKey, requestPromise);
+    try {
+        return await requestPromise;
+    } finally {
+        pendingComparisonRequests.delete(requestKey);
+    }
 }
 
 /**

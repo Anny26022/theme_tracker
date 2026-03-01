@@ -4,7 +4,7 @@ import { useAsync } from './useAsync';
 import { buildComparisonMap } from '../../packages/core/src/comparison/buildComparisonMap';
 
 function normalizeSymbols(symbols) {
-    return Array.from(new Set((symbols || []).filter(Boolean).map((s) => String(s).trim().toUpperCase())));
+    return Array.from(new Set((symbols || []).filter(Boolean).map((s) => String(s).trim().toUpperCase()))).sort();
 }
 
 /**

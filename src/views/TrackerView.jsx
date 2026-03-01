@@ -80,10 +80,10 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     const rightItems = trackingType === 'INDUSTRY' ? industryNames : thematicThemes;
 
     const { trackerMap: leftData, loading: leftLoading } = useUnifiedTracker(
-        leftItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'sector' : 'thematic'
+        leftItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'sector' : 'thematic', { includeBreadth: viewMode === 'breadth' }
     );
     const { trackerMap: rightData, loading: rightLoading } = useUnifiedTracker(
-        rightItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'industry' : 'thematic'
+        rightItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'industry' : 'thematic', { includeBreadth: viewMode === 'breadth' }
     );
 
     // Sorting Logic
@@ -243,7 +243,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                             name={item}
                                             count={data?.breadth?.total || 0}
                                             perf={viewMode === 'breadth' ? (data?.breadth?.[activeEMAKey] ?? null) : (data?.avgPerf ?? null)}
-                                            breadth={data?.breadth}
+                                            breadth={viewMode === 'breadth' ? data?.breadth : null}
                                             leaders={data?.leaders}
                                             laggards={data?.laggards}
                                             onClick={() => trackingType === 'INDUSTRY' && onSectorClick(item)}
@@ -284,7 +284,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                             name={item.toLowerCase()}
                                             count={data?.breadth?.total || 0}
                                             perf={viewMode === 'breadth' ? (data?.breadth?.[activeEMAKey] ?? null) : (data?.avgPerf ?? null)}
-                                            breadth={data?.breadth}
+                                            breadth={viewMode === 'breadth' ? data?.breadth : null}
                                             leaders={data?.leaders}
                                             laggards={data?.laggards}
                                             loading={isGlobalLoading && !data}

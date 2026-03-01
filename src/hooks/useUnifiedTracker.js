@@ -4,7 +4,8 @@ import { useAsync } from './useAsync';
 import { buildItemToCompanies, collectUniqueSymbols, computeTrackerUpdates } from '../../packages/core/src/tracker/aggregation';
 import { THEMATIC_MAP } from '../data/thematicMap';
 
-export function useUnifiedTracker(items, hierarchy, interval, type = 'sector') {
+export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', options = {}) {
+    const includeBreadth = options?.includeBreadth !== false;
     const itemToSymbols = useMemo(() => {
         if (type === 'thematic') {
             const map = new Map();
@@ -72,12 +73,12 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector') {
     const fetchFunc = useCallback(async () => {
         if (symbolsArray.length === 0) return {};
 
-        // Fetch unified 1Y data (performance + breadth in one payload)
-        const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval);
+        // Performance mode can reuse interval cache and skip 1Y chart fetches.
+        const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval, { includeBreadth });
         return computeTrackerUpdates(items, itemToSymbols, rawResults);
-    }, [symbolsArray, itemToSymbols, interval, items]);
+    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth]);
 
-    const { data: trackerMap, loading, execute } = useAsync(fetchFunc, [symbolsArray, itemToSymbols, interval]);
+    const { data: trackerMap, loading, execute } = useAsync(fetchFunc, [symbolsArray, itemToSymbols, interval, includeBreadth]);
 
     // Handle background refreshes
     useEffect(() => {

@@ -1403,9 +1403,11 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
  * @param {string[]} symbols 
  * @param {string} interval 
  */
-export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
+export async function fetchUnifiedTrackerData(symbols, interval = '1M', options = {}) {
+    const includeBreadth = options?.includeBreadth !== false;
     const keys = [...new Set(symbols.map(s => cleanSymbol(s)))];
-    const requestKey = `${interval}:${[...keys].sort().join(',')}`;
+    const modeKey = includeBreadth ? 'withBreadth' : 'perfOnly';
+    const requestKey = `${modeKey}:${interval}:${[...keys].sort().join(',')}`;
     const pending = pendingUnifiedRequests.get(requestKey);
     if (pending) return pending;
 
@@ -1418,7 +1420,7 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
             const cacheKey = `${interval}:${sym}`;
             const cached = unifiedResultCache.get(cacheKey);
             // Unified results expire every 5 mins
-            if (isCacheRowFresh(cached, 300_000)) {
+            if (isCacheRowFresh(cached, 300_000) && (!includeBreadth || cached?.data?.hasBreadth === true)) {
                 markLocalCacheHit();
                 results.set(sym, cached.data);
             } else {
@@ -1428,6 +1430,25 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
         });
 
         if (uncachedKeys.length === 0) return results;
+
+        if (!includeBreadth) {
+            const perfMap = await fetchBatchIntervalPerformance(uncachedKeys, interval);
+            uncachedKeys.forEach(sym => {
+                const perf = perfMap.get(sym);
+                if (!perf || typeof perf.changePct !== 'number') return;
+
+                const data = {
+                    perf: { changePct: perf.changePct, close: perf.close },
+                    breadth: {},
+                    hasBreadth: false,
+                };
+
+                const row = buildCacheRow(data, null, 300_000);
+                if (row) unifiedResultCache.set(`${interval}:${sym}`, row);
+                results.set(sym, data);
+            });
+            return results;
+        }
 
         // 2. We reuse fetchComparisonCharts which already batches and caches 1Y data
         const charts = await fetchComparisonCharts(uncachedKeys, '1Y');
@@ -1470,7 +1491,8 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
                     ema50,
                     ema150,
                     ema200
-                }
+                },
+                hasBreadth: true,
             };
 
             const row = buildCacheRow(data, null, 300_000);

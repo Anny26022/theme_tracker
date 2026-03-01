@@ -144,6 +144,8 @@ function getRemainingEdgeTtlMs(headers) {
 const cacheMetrics = {
     localHits: 0,
     localMisses: 0,
+    cacheLookupMisses: 0,
+    networkMissBatches: 0,
     edgeGetRequests: 0,
     edgeGetSuccess: 0,
     edgeGetFailures: 0,
@@ -169,6 +171,11 @@ function markLocalCacheHit() {
 
 function markLocalCacheMiss() {
     incrementMetric('localMisses');
+    incrementMetric('cacheLookupMisses');
+}
+
+function markNetworkMissBatch() {
+    incrementMetric('networkMissBatches');
 }
 
 function markEdgeGetRequest() {
@@ -215,6 +222,8 @@ function logCacheMetricsSnapshot() {
     console.info('[CacheMetrics][PriceService]', {
         localHits: cacheMetrics.localHits,
         localMisses: cacheMetrics.localMisses,
+        cacheLookupMisses: cacheMetrics.cacheLookupMisses,
+        networkMissBatches: cacheMetrics.networkMissBatches,
         edgeGetRequests: cacheMetrics.edgeGetRequests,
         edgeGetSuccess: cacheMetrics.edgeGetSuccess,
         edgeGetFailures: cacheMetrics.edgeGetFailures,
@@ -363,6 +372,7 @@ function queueRpc(rpcId, rpcArgs) {
  */
 async function executeBatch(entries, timeoutMs = 12000) {
     if (entries.length === 0) return { text: '', responseTtlMs: null };
+    markNetworkMissBatch();
 
     const rpcIds = [...new Set(entries.map(e => e[0]))];
     const url = buildBatchUrl(rpcIds);

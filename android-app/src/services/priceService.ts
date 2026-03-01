@@ -256,6 +256,8 @@ function base64UrlEncode(value: string) {
 const cacheMetrics: Record<string, number> = {
     localHits: 0,
     localMisses: 0,
+    cacheLookupMisses: 0,
+    networkMissBatches: 0,
     edgeGetRequests: 0,
     edgeGetSuccess: 0,
     edgeGetFailures: 0,
@@ -281,6 +283,11 @@ function markLocalCacheHit() {
 
 function markLocalCacheMiss() {
     incrementMetric('localMisses');
+    incrementMetric('cacheLookupMisses');
+}
+
+function markNetworkMissBatch() {
+    incrementMetric('networkMissBatches');
 }
 
 function markEdgeGetRequest() {
@@ -327,6 +334,8 @@ function logCacheMetricsSnapshot() {
     console.info('[CacheMetrics][MobilePriceService]', {
         localHits: cacheMetrics.localHits,
         localMisses: cacheMetrics.localMisses,
+        cacheLookupMisses: cacheMetrics.cacheLookupMisses,
+        networkMissBatches: cacheMetrics.networkMissBatches,
         edgeGetRequests: cacheMetrics.edgeGetRequests,
         edgeGetSuccess: cacheMetrics.edgeGetSuccess,
         edgeGetFailures: cacheMetrics.edgeGetFailures,
@@ -368,6 +377,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
  */
 async function executeBatch(entries: any[], timeoutMs = 12_000) {
     if (!entries.length) return { text: '', responseTtlMs: null as number | null };
+    markNetworkMissBatch();
 
     const rpcIds = [...new Set(entries.map((entry) => entry[0]))] as string[];
     const fReq = JSON.stringify([entries]);

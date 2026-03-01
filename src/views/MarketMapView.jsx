@@ -551,7 +551,7 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
             <ThemeGridDataContext.Provider value={gridContextValue}>
                 <ThemeGrid
                     mapSource={THEMATIC_MAP}
-                    gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+                    gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 md:auto-rows-fr"
                     isActive={isActive}
                     isMobile={isMobile}
                 />
@@ -574,7 +574,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
             <ThemeGridDataContext.Provider value={gridContextValue}>
                 <ThemeGrid
                     mapSource={macroMap}
-                    gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3"
+                    gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 md:auto-rows-fr"
                     isActive={isActive}
                     isMobile={isMobile}
                 />

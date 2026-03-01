@@ -16,6 +16,7 @@ const EDGE_CACHE_MAX_URL_LENGTH = 7000;
 const EDGE_REALTIME_GROUP_SIZE = 20;
 const EDGE_CACHEABLE_GROUP_SIZE = 25;
 const EDGE_BATCH_TTL_MS = 300_000;
+const INTERVAL_CHUNK_CONCURRENCY = 4;
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
@@ -170,6 +171,8 @@ const cacheMetrics = {
 
 let cacheMetricsLoggerStarted = false;
 let previousLoggedCounters = null;
+let edgeUrlTooLongWarnCount = 0;
+let edgeUrlTooLongWarnLastAt = 0;
 
 function incrementMetric(key, value = 1) {
     cacheMetrics[key] = (cacheMetrics[key] || 0) + value;
@@ -208,6 +211,19 @@ function markEdgeGetFailure() {
 
 function markEdgeUrlTooLongSkip() {
     incrementMetric('edgeGetUrlTooLongSkips');
+}
+
+function maybeWarnEdgeUrlTooLong(urlLength, entriesLength) {
+    if (!IS_DEV) return;
+    const now = Date.now();
+    const shouldLog = edgeUrlTooLongWarnCount < 3 || (now - edgeUrlTooLongWarnLastAt) > 15_000;
+    if (!shouldLog) return;
+    edgeUrlTooLongWarnLastAt = now;
+    edgeUrlTooLongWarnCount += 1;
+    console.warn(`[PriceService] Edge GET skipped: URL too long (${urlLength}) [entries=${entriesLength}]`);
+    if (edgeUrlTooLongWarnCount === 3) {
+        console.warn('[PriceService] URL-too-long warnings are now throttled (15s window).');
+    }
 }
 
 function markPostFallback() {
@@ -357,6 +373,48 @@ function splitQueueItemsByUrlBudget(items, maxUrlLength = EDGE_CACHE_MAX_URL_LEN
     return chunks;
 }
 
+function splitItemsByUrlBudget(items, toEntry, maxUrlLength = EDGE_CACHE_MAX_URL_LENGTH) {
+    if (!Array.isArray(items) || items.length <= 1) return [items];
+
+    const chunks = [];
+    let current = [];
+
+    for (const item of items) {
+        if (current.length === 0) {
+            current.push(item);
+            continue;
+        }
+
+        const trial = [...current, item];
+        const trialEntries = trial.map(toEntry);
+        const trialLength = estimateEdgeGetUrlLengthFromEntries(trialEntries);
+
+        if (trialLength <= maxUrlLength) {
+            current.push(item);
+        } else {
+            chunks.push(current);
+            current = [item];
+        }
+    }
+
+    if (current.length > 0) chunks.push(current);
+    return chunks;
+}
+
+async function runWithConcurrency(items, concurrency, worker) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const poolSize = Math.max(1, Math.min(concurrency, items.length));
+    let cursor = 0;
+
+    await Promise.all(Array.from({ length: poolSize }, async () => {
+        while (cursor < items.length) {
+            const index = cursor;
+            cursor += 1;
+            await worker(items[index], index);
+        }
+    }));
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function getExchange(symbol) {
@@ -366,7 +424,8 @@ function getExchange(symbol) {
 export const cleanSymbol = sharedCleanSymbol;
 
 function buildBatchUrl(rpcIds) {
-    return GOOGLE_BATCH_PATH;
+    // Bypassing /v1/ rewrites to ensure Vercel doesn't choke on long GET query params
+    return '/api/fuckyouuuu';
 }
 
 /**
@@ -522,10 +581,9 @@ async function executeBatch(entries, timeoutMs = 12000) {
         if (IS_DEV) {
             console.warn(`[PriceService] Edge GET batch failed (${getResponse.status}), falling back to POST`);
         }
-    } else if (IS_DEV) {
-        console.warn(`[PriceService] Edge GET skipped: URL too long (${getUrl.length})`);
     } else {
         markEdgeUrlTooLongSkip();
+        maybeWarnEdgeUrlTooLong(getUrl.length, entries.length);
     }
 
     // Fallback path: AES-256-GCM encrypted POST payload
@@ -714,37 +772,52 @@ async function fetchFromStrike(symbol) {
     const toStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}%3A${pad(now.getMinutes())}%3A${pad(now.getSeconds())}%2B05%3A30`;
     const fromStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T09%3A15%3A00%2B05%3A30`;
 
-    for (const base of [EP_STRIKE]) {
-        try {
-            const payload = await seal(JSON.stringify({
-                fromStr, toStr, encoded,
-                path: '/v2/api/equity/priceticks'
-            }));
+    const rawBody = JSON.stringify({
+        fromStr, toStr, encoded,
+        path: '/v2/api/equity/priceticks'
+    });
 
-            const response = await fetch(base, {
+    const getParams = new URLSearchParams({ f_req: base64UrlEncode(rawBody) });
+    const getUrl = `/api/fckyouuu1?${getParams.toString()}`;
+
+    try {
+        let response;
+        if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
+            response = await fetch(getUrl, {
+                method: 'GET',
+                signal: AbortSignal.timeout?.(15000),
+            });
+        }
+
+        if (!response || !response.ok) {
+            const payload = await seal(rawBody);
+            response = await fetch('/api/fckyouuu1', {
                 method: 'POST',
                 headers: { 'Content-Type': CT_PLAIN },
                 body: payload,
                 signal: AbortSignal.timeout?.(15000),
             });
-            if (!response.ok) continue;
+        }
 
-            const data = await response.json();
-            const ticks = data?.data?.ticks?.[clean] || data?.data?.ticks?.[symbol.toUpperCase()];
-            if (!ticks?.length) continue;
+        if (!response.ok) return null;
 
-            const last = ticks[ticks.length - 1];
-            const close = last[4], open = last[1];
-            if (typeof close === 'number' && close > 0) {
-                return {
-                    price: close,
-                    change: close - open,
-                    changePct: open > 0 ? ((close - open) / open) * 100 : 0,
-                    prevClose: open,
-                    source: 'strike'
-                };
-            }
-        } catch { continue; }
+        const data = await response.json();
+        const ticks = data?.data?.ticks?.[clean] || data?.data?.ticks?.[symbol.toUpperCase()];
+        if (!ticks?.length) return null;
+
+        const last = ticks[ticks.length - 1];
+        const close = last[4], open = last[1];
+        if (typeof close === 'number' && close > 0) {
+            return {
+                price: close,
+                change: close - open,
+                changePct: open > 0 ? ((close - open) / open) * 100 : 0,
+                prevClose: open,
+                source: 'strike'
+            };
+        }
+    } catch (err) {
+        console.warn(`[PriceService] Strike fetch failed: ${err.message}`);
     }
     return null;
 }
@@ -921,21 +994,35 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
             console.debug(`[PriceService] Consolidating Interval ${interval} — Batching ${allUncached.length} symbols`);
         }
 
-        // Larger batch size for performance charts (small payload)
+        // Seed chunking keeps fanout bounded before URL-budget splitting.
         const CHUNK_SIZE = 550;
-        const chunks = [];
+        const seededChunks = [];
         for (let i = 0; i < allUncached.length; i += CHUNK_SIZE) {
-            chunks.push(allUncached.slice(i, i + CHUNK_SIZE));
+            seededChunks.push(allUncached.slice(i, i + CHUNK_SIZE));
         }
 
-        // Parallelize all chunks
-        await Promise.all(chunks.map(async (chunk) => {
-            const entries = chunk.map(sym => {
+        const transportGroups = [];
+        seededChunks.forEach((seededChunk) => {
+            const seededItems = seededChunk.map((sym) => {
                 const ex = getExchange(sym);
                 const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
-                return [GOOGLE_RPC_CHART, rpcArgs, null, 'generic'];
+                return {
+                    symbol: sym,
+                    entry: [GOOGLE_RPC_CHART, rpcArgs, null, 'generic']
+                };
             });
+            splitItemsByUrlBudget(seededItems, (item) => item.entry).forEach((group) => {
+                transportGroups.push(group);
+            });
+        });
 
+        if (IS_DEV) {
+            console.debug(`[PriceService] Interval ${interval} transport groups: ${transportGroups.length}`);
+        }
+
+        await runWithConcurrency(transportGroups, INTERVAL_CHUNK_CONCURRENCY, async (group) => {
+            const entries = group.map((item) => item.entry);
+            const groupSymbols = group.map((item) => item.symbol);
             try {
                 const batchResult = await executeBatch(entries);
                 const frames = parseAllFrames(batchResult.text).filter(f => f.rpcId === GOOGLE_RPC_CHART);
@@ -952,7 +1039,7 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                 });
 
                 // Negative cache
-                chunk.forEach(sym => {
+                groupSymbols.forEach(sym => {
                     if (!returned.has(sym)) {
                         const row = buildCacheRow(null, batchResult.responseTtlMs, ttl);
                         if (row) intervalCache.set(`${sym}:${window}`, row);
@@ -961,7 +1048,7 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
             } catch (err) {
                 console.warn(`[PriceService] Parallel chunk failed:`, err.message);
             }
-        }));
+        });
 
         scheduleIntervalSave();
         currentPending.clear(); // Clear pending map for this timeframe

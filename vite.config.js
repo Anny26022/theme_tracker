@@ -65,32 +65,41 @@ export default defineConfig({
 
                 server.middlewares.use(async (req, res, next) => {
                     const isApi = req.url.startsWith('/api/');
-                    if (isApi && req.method === 'POST') {
-                        // If body is already parsed by another middleware, skip
+                    if (!isApi) return next();
+
+                    const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+                    const isGet = req.method === 'GET';
+                    const isPost = req.method === 'POST';
+
+                    if (isGet) {
+                        const encoded = parsedUrl.searchParams.get('f_req');
+                        if (encoded) {
+                            try {
+                                const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+                                const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+                                req.rawBody = Buffer.from(padded, 'base64').toString('utf-8');
+                                req.isNuclear = true; // Mark as "pre-decoded" for proxy logic
+                            } catch (e) {
+                                console.error('[Stealth Middleware] GET Decode Failed:', e.message);
+                            }
+                        }
+                    } else if (isPost) {
                         if (req.body) return next();
 
                         const chunks = [];
                         try {
                             for await (const chunk of req) chunks.push(chunk);
                             const body = Buffer.concat(chunks).toString('utf-8');
-
-                            // Attach raw body for stealth/manual proxies
                             req.rawBody = body;
 
-                            // Try to parse as JSON for mobile-friendly proxies
-                            try {
-                                req.body = JSON.parse(body);
-                            } catch (e) {
-                                req.body = body; // Fallback to raw string
-                            }
-
-                            const nuclearPaths = ['/api/v1/fuckyouuuu', '/api/v1/fckyouuu1', '/api/v1/fckyouuu2'];
+                            const nuclearPaths = ['/api/v1/fuckyouuuu', '/api/v1/fckyouuu1', '/api/v1/fckyouuu2', '/api/fuckyouuuu', '/api/fckyouuu1', '/api/scanx'];
                             if (nuclearPaths.some(p => req.url.startsWith(p))) {
                                 try {
                                     req.rawBody = unseal(body);
                                     req.isNuclear = true;
                                 } catch (e) {
-                                    console.error('[Stealth Middleware] Decrypt Failed:', e.message);
+                                    // Maybe it's not sealed? (mobile-friendly fallback)
+                                    req.isNuclear = false;
                                 }
                             }
                         } catch (e) {
@@ -105,27 +114,32 @@ export default defineConfig({
     server: {
         host: true,
         proxy: {
-            '/api/v1/fuckyouuuu': {
+            '/api/fuckyouuuu': {
                 target: 'https://www.google.com',
                 changeOrigin: true,
                 configure: (proxy) => {
                     proxy.on('proxyReq', (proxyReq, req) => {
                         if (req.isNuclear && req.rawBody) {
-                            const cid = req.headers['x-app-entropy'] || 'AiCwsd';
-                            const googlePath = `/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=${cid}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
+                            const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+                            const rpcIds = parsedUrl.searchParams.get('rpcids') || req.headers['x-app-entropy'] || 'xh8wxf';
+                            const googlePath = `/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=${rpcIds}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
                             const newBody = new URLSearchParams({ 'f.req': req.rawBody }).toString();
 
                             proxyReq.setHeader('Content-Type', 'application/x-www-form-urlencoded;charset=utf-8');
                             proxyReq.setHeader('Content-Length', Buffer.byteLength(newBody));
+                            proxyReq.setHeader('Origin', 'https://www.google.com');
+                            proxyReq.setHeader('Referer', 'https://www.google.com/finance/');
+                            proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+                            proxyReq.method = 'POST'; // Google always expects POST
                             proxyReq.path = googlePath;
                             proxyReq.write(newBody);
                         }
-                        // Always end to prevent hangs if middleware consumed the body
                         if (!proxyReq.writableEnded) proxyReq.end();
                     });
                 }
             },
-            '/api/v1/fckyouuu1': {
+            '/api/fckyouuu1': {
                 target: 'https://api-v2.strike.money',
                 changeOrigin: true,
                 configure: (proxy) => {
@@ -135,13 +149,11 @@ export default defineConfig({
                                 const decoded = JSON.parse(req.rawBody);
                                 const strikePath = `${decoded.path}?candleInterval=1d&from=${decoded.fromStr}&to=${decoded.toStr}&securities=${decoded.encoded}`;
 
-                                // Scrub all identity headers
                                 proxyReq.removeHeader('origin');
                                 proxyReq.removeHeader('referer');
                                 proxyReq.removeHeader('content-type');
                                 proxyReq.removeHeader('content-length');
 
-                                // Spoof Strike identity
                                 proxyReq.setHeader('Host', 'api-v2.strike.money');
                                 proxyReq.setHeader('Origin', 'https://api-v2.strike.money');
                                 proxyReq.setHeader('Referer', 'https://api-v2.strike.money/');
@@ -157,14 +169,12 @@ export default defineConfig({
                     });
                 }
             },
-            '/api/v1/fckyouuu2': {
+            '/api/scanx': {
                 target: 'https://ow-static-scanx.dhan.co',
                 changeOrigin: true,
                 configure: (proxy) => {
                     proxy.on('proxyReq', (proxyReq, req) => {
-                        // Point to the correct endpoint path on Dhan
                         proxyReq.path = '/staticscanx/company_filings';
-
                         if (req.isNuclear && req.rawBody) {
                             proxyReq.setHeader('Origin', 'https://ow-static-scanx.dhan.co');
                             proxyReq.setHeader('Referer', 'https://ow-static-scanx.dhan.co/');

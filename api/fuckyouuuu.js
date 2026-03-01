@@ -15,12 +15,16 @@ function decodeBase64Url(value) {
 }
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST' && req.method !== 'GET') {
+    const isGet = req.method === 'GET';
+    const isPost = req.method === 'POST';
+
+    if (!isGet && !isPost) {
         res.setHeader('Allow', 'GET, POST');
         return res.status(405).end();
     }
 
-    const isGet = req.method === 'GET';
+    // CORS and Cache Headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
     if (isGet) {
         res.setHeader('Cache-Control', CDN_CACHE_CONTROL);
         res.setHeader('Vercel-CDN-Cache-Control', CDN_S_MAXAGE);
@@ -30,18 +34,21 @@ export default async function handler(req, res) {
     }
 
     try {
-        const encodedPayload = isGet ? firstQueryValue(req.query?.f_req) : null;
-        if (isGet && !encodedPayload) {
-            return res.status(400).json({ error: 'Missing f_req query param' });
+        let decoded;
+        let rpcIds;
+
+        if (isGet) {
+            const encoded = firstQueryValue(req.query?.f_req);
+            if (!encoded) return res.status(400).json({ error: 'Missing f_req' });
+            decoded = decodeBase64Url(encoded);
+            rpcIds = firstQueryValue(req.query?.rpcids) || 'xh8wxf';
+        } else {
+            decoded = unseal(req.body);
+            rpcIds = req.headers['x-app-entropy'] || 'xh8wxf';
         }
 
-        const decoded = isGet ? decodeBase64Url(encodedPayload) : unseal(req.body);
-        const cid = isGet
-            ? (firstQueryValue(req.query?.rpcids) || req.headers['x-app-entropy'] || 'xh8wxf')
-            : (req.headers['x-app-entropy'] || 'xh8wxf');
-        const normalizedCid = Array.isArray(cid) ? cid.join(',') : String(cid);
-
-        const googleUrl = `https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=${encodeURIComponent(normalizedCid)}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
+        const normalizedRpcIds = Array.isArray(rpcIds) ? rpcIds.join(',') : String(rpcIds);
+        const googleUrl = `https://www.google.com/finance/_/GoogleFinanceUi/data/batchexecute?rpcids=${encodeURIComponent(normalizedRpcIds)}&source-path=%2Ffinance%2F&f.sid=dummy&hl=en-US&soc-app=162&soc-platform=1&soc-device=1&rt=c`;
 
         const response = await fetch(googleUrl, {
             method: 'POST',
@@ -49,13 +56,17 @@ export default async function handler(req, res) {
                 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
                 'Origin': 'https://www.google.com',
                 'Referer': 'https://www.google.com/finance/',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
             body: new URLSearchParams({ 'f.req': decoded }).toString(),
         });
 
+        if (!response.ok) return res.status(response.status).send(`Upstream Error: ${response.status}`);
+
         const text = await response.text();
         return res.status(200).send(text);
     } catch (error) {
+        console.error('[fuckyouuuu] Error:', error.message);
         return res.status(500).json({ error: 'System Error' });
     }
 }

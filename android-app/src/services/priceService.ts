@@ -258,6 +258,8 @@ const cacheMetrics: Record<string, number> = {
     localMisses: 0,
     cacheLookupMisses: 0,
     networkMissBatches: 0,
+    edgeGetEligibleBatches: 0,
+    edgeGetExecutedBatches: 0,
     edgeGetRequests: 0,
     edgeGetSuccess: 0,
     edgeGetFailures: 0,
@@ -272,6 +274,7 @@ const cacheMetrics: Record<string, number> = {
 };
 
 let cacheMetricsLoggerStarted = false;
+let previousLoggedCounters: Record<string, number> | null = null;
 
 function incrementMetric(key: string, value = 1) {
     cacheMetrics[key] = (cacheMetrics[key] || 0) + value;
@@ -290,7 +293,12 @@ function markNetworkMissBatch() {
     incrementMetric('networkMissBatches');
 }
 
-function markEdgeGetRequest() {
+function markEdgeGetEligibleBatch() {
+    incrementMetric('edgeGetEligibleBatches');
+}
+
+function markEdgeGetExecutedBatch() {
+    incrementMetric('edgeGetExecutedBatches');
     incrementMetric('edgeGetRequests');
 }
 
@@ -331,22 +339,21 @@ function logCacheMetricsSnapshot() {
         ? Math.round(cacheMetrics.edgeAgeMsTotal / cacheMetrics.edgeAgeSamples)
         : 0;
 
-    console.info('[CacheMetrics][MobilePriceService]', {
-        localHits: cacheMetrics.localHits,
-        localMisses: cacheMetrics.localMisses,
-        cacheLookupMisses: cacheMetrics.cacheLookupMisses,
-        networkMissBatches: cacheMetrics.networkMissBatches,
-        edgeGetRequests: cacheMetrics.edgeGetRequests,
-        edgeGetSuccess: cacheMetrics.edgeGetSuccess,
-        edgeGetFailures: cacheMetrics.edgeGetFailures,
-        edgeServedHit: cacheMetrics.edgeServedHit,
-        edgeServedMiss: cacheMetrics.edgeServedMiss,
-        edgeServedStale: cacheMetrics.edgeServedStale,
-        edgeServedOther: cacheMetrics.edgeServedOther,
-        edgeAgeAvgMs,
-        edgeGetUrlTooLongSkips: cacheMetrics.edgeGetUrlTooLongSkips,
-        postFallbacks: cacheMetrics.postFallbacks,
+    const counters = { ...cacheMetrics };
+    const delta: Record<string, number> = {};
+    Object.keys(counters).forEach((key) => {
+        const prev = previousLoggedCounters?.[key] || 0;
+        delta[key] = counters[key] - prev;
     });
+    previousLoggedCounters = counters;
+
+    const payload = {
+        at: new Date().toISOString(),
+        snapshot: { ...counters, edgeAgeAvgMs },
+        delta,
+    };
+
+    console.info('[CacheMetrics][MobilePriceService]', payload);
 }
 
 function initProdCacheMetricsLogging() {
@@ -354,10 +361,53 @@ function initProdCacheMetricsLogging() {
     cacheMetricsLoggerStarted = true;
 
     (globalThis as any).__TT_MOBILE_CACHE_METRICS__ = cacheMetrics;
+    logCacheMetricsSnapshot();
     setInterval(logCacheMetricsSnapshot, CACHE_METRICS_LOG_INTERVAL_MS);
 }
 
 initProdCacheMetricsLogging();
+
+function estimateEdgeGetUrlLengthFromEntries(entries: any[]) {
+    if (!BATCH_PROXY_URL) return 0;
+    if (!Array.isArray(entries) || entries.length === 0) return 0;
+
+    const rpcIds = [...new Set(entries.map((entry) => entry[0]))] as string[];
+    const fReq = JSON.stringify([entries]);
+    const encodedReq = base64UrlEncode(fReq);
+    const getQuery = new URLSearchParams({
+        rpcids: rpcIds.join(','),
+        f_req: encodedReq,
+    });
+    return `${BATCH_PROXY_URL}?${getQuery.toString()}`.length;
+}
+
+function splitQueueItemsByUrlBudget(items: QueueItem[], maxUrlLength = EDGE_CACHE_MAX_URL_LENGTH) {
+    if (!Array.isArray(items) || items.length <= 1 || !BATCH_PROXY_URL) return [items];
+
+    const chunks: QueueItem[][] = [];
+    let current: QueueItem[] = [];
+
+    for (const item of items) {
+        if (current.length === 0) {
+            current.push(item);
+            continue;
+        }
+
+        const trial = [...current, item];
+        const trialEntries = trial.map((q) => q.entry);
+        const trialLength = estimateEdgeGetUrlLengthFromEntries(trialEntries);
+
+        if (trialLength <= maxUrlLength) {
+            current.push(item);
+        } else {
+            chunks.push(current);
+            current = [item];
+        }
+    }
+
+    if (current.length > 0) chunks.push(current);
+    return chunks;
+}
 
 // ─── Transport: All requests go through proxy ─────────────────────
 
@@ -392,7 +442,8 @@ async function executeBatch(entries: any[], timeoutMs = 12_000) {
         const getUrl = `${BATCH_PROXY_URL}?${getQuery.toString()}`;
 
         if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
-            markEdgeGetRequest();
+            markEdgeGetEligibleBatch();
+            markEdgeGetExecutedBatch();
             try {
                 const getResponse = await fetchWithTimeout(
                     getUrl,
@@ -666,7 +717,10 @@ async function flushBatch() {
                 const transportChunkSize = isRealtimeGroup ? EDGE_REALTIME_GROUP_SIZE : group.length;
                 const transportGroups: QueueItem[][] = [];
                 for (let i = 0; i < group.length; i += transportChunkSize) {
-                    transportGroups.push(group.slice(i, i + transportChunkSize));
+                    const seededGroup = group.slice(i, i + transportChunkSize);
+                    splitQueueItemsByUrlBudget(seededGroup).forEach((budgetGroup) => {
+                        transportGroups.push(budgetGroup);
+                    });
                 }
 
                 await Promise.all(

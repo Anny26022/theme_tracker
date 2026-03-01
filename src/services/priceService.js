@@ -14,6 +14,7 @@ const MAX_BATCH_SIZE = 550; // Massively batched for maximum efficiency
 const BATCH_AGGREGATION_WINDOW = 16; // 16ms (1 frame) aggregation window for instant feel
 const EDGE_CACHE_MAX_URL_LENGTH = 7000;
 const EDGE_REALTIME_GROUP_SIZE = 20;
+const EDGE_CACHEABLE_GROUP_SIZE = 25;
 const EDGE_BATCH_TTL_MS = 300_000;
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
@@ -341,7 +342,7 @@ function splitQueueItemsByUrlBudget(items, maxUrlLength = EDGE_CACHE_MAX_URL_LEN
         }
 
         const trial = [...current, item];
-        const trialEntries = trial.map(q => q.entry);
+        const trialEntries = trial.map(itm => itm.q.entry);
         const trialLength = estimateEdgeGetUrlLengthFromEntries(trialEntries);
 
         if (trialLength <= maxUrlLength) {
@@ -404,12 +405,24 @@ async function flushBatch() {
         const runGroup = async (group) => {
             if (group.length === 0) return;
 
-            const isRealtimeGroup = group[0]?.q?.entry?.[0] === GOOGLE_RPC_PRICE;
-            const transportGroups = [];
-            const transportChunkSize = isRealtimeGroup ? EDGE_REALTIME_GROUP_SIZE : group.length;
+            // Sort the group deterministically by RPC ID and arguments (stringified)
+            // This ensures that regardless of component mount order, same-content batches
+            // produce the same GET URL, maximizing Edge/CDN cache hits.
+            const sortedGroup = [...group].sort((a, b) => {
+                const keyA = `${a.q.entry[0]}:${a.q.entry[1]}`;
+                const keyB = `${b.q.entry[0]}:${b.q.entry[1]}`;
+                return keyA.localeCompare(keyB);
+            });
 
-            for (let i = 0; i < group.length; i += transportChunkSize) {
-                const seededGroup = group.slice(i, i + transportChunkSize);
+            const isRealtimeGroup = sortedGroup[0].q.entry[0] === GOOGLE_RPC_PRICE;
+            const transportGroups = [];
+            // Use fixed group sizes to ensure stable, repeatable cache keys.
+            // If we used sortedGroup.length, the cache key would change depending on 
+            // how many items were in the queue at that exact frame.
+            const transportChunkSize = isRealtimeGroup ? EDGE_REALTIME_GROUP_SIZE : EDGE_CACHEABLE_GROUP_SIZE;
+
+            for (let i = 0; i < sortedGroup.length; i += transportChunkSize) {
+                const seededGroup = sortedGroup.slice(i, i + transportChunkSize);
                 splitQueueItemsByUrlBudget(seededGroup).forEach((budgetGroup) => {
                     transportGroups.push(budgetGroup);
                 });

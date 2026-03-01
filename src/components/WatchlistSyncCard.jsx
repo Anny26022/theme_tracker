@@ -16,6 +16,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
         fetchColoredStatus,
         tvSessionId,
         tvSessionSign,
+        hasTvAuth,
         TV_SYMBOL_LIMIT,
         syncColors,
         showStatus,
@@ -36,7 +37,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
     const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
     const handleSyncAllIndustries = async () => {
-        if (!tvSessionId) {
+        if (!hasTvAuth) {
             showStatus('error', 'SESSION ID REQUIRED');
             return;
         }
@@ -98,7 +99,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
     };
 
     const handleSyncMasterList = async () => {
-        if (!tvSessionId) {
+        if (!hasTvAuth) {
             showStatus('error', 'SESSION ID REQUIRED');
             return;
         }
@@ -186,7 +187,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
     };
 
     const handleSyncColoredList = async (colorId) => {
-        if (!tvSessionId) {
+        if (!hasTvAuth) {
             showStatus('error', 'SESSION ID REQUIRED');
             return;
         }
@@ -257,7 +258,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
     };
 
     const handleClearColoredList = async (colorId) => {
-        if (!tvSessionId) {
+        if (!hasTvAuth) {
             showStatus('error', 'SESSION ID REQUIRED');
             return;
         }
@@ -288,7 +289,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
     };
 
     const handleCleanAllWatchlists = async () => {
-        if (!tvSessionId) {
+        if (!hasTvAuth) {
             showStatus('error', 'SESSION ID REQUIRED');
             return;
         }
@@ -382,7 +383,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
                     </p>
                 </div>
 
-                {!isExpanded && tvSessionId && (
+                {!isExpanded && hasTvAuth && (
                     <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
                         <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Connected</span>
@@ -401,7 +402,7 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
                     >
                         <div className="flex items-center justify-between w-full gap-6 pt-2 border-t border-[var(--ui-divider)]/30">
                             <div className="space-y-1 text-left">
-                                {tvSessionId && (
+                                {hasTvAuth && (
                                     <div className="flex flex-col gap-2">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); disconnectTV(); }}

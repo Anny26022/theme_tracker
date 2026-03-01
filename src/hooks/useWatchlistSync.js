@@ -8,6 +8,7 @@ export const useWatchlistSync = () => {
 
     const [tvSessionId, setTvSessionId] = useState(() => localStorage.getItem('tv_session_id') || '');
     const [tvSessionSign, setTvSessionSign] = useState(() => localStorage.getItem('tv_session_sign') || '');
+    const hasTvAuth = Boolean(tvSessionId && tvSessionSign);
     const TV_SYMBOL_LIMIT = 999;
 
     const disconnectTV = useCallback(() => {
@@ -38,7 +39,7 @@ export const useWatchlistSync = () => {
     ];
 
     const fetchColoredStatus = useCallback(async () => {
-        if (!tvSessionId) return;
+        if (!hasTvAuth) return;
         const counts = {};
         try {
             await Promise.all(syncColors.map(async (color) => {
@@ -54,10 +55,10 @@ export const useWatchlistSync = () => {
             }));
             setColoredCounts(counts);
         } catch (e) { }
-    }, [tvSessionId, tvSessionSign]);
+    }, [hasTvAuth, tvSessionId, tvSessionSign]);
 
     const fetchCustomLists = useCallback(async () => {
-        if (!tvSessionId) return;
+        if (!hasTvAuth) return;
         try {
             const res = await fetch('/api/tv/symbols_list/all/', {
                 headers: { 'x-tv-sessionid': tvSessionId, 'x-tv-sessionid-sign': tvSessionSign }
@@ -67,7 +68,7 @@ export const useWatchlistSync = () => {
                 setCustomLists(data.map(l => ({ id: l.id, name: l.name, count: l.symbols?.length || 0, symbols: l.symbols || [] })));
             }
         } catch (e) { }
-    }, [tvSessionId, tvSessionSign]);
+    }, [hasTvAuth, tvSessionId, tvSessionSign]);
 
     useEffect(() => {
         fetchColoredStatus();
@@ -81,7 +82,7 @@ export const useWatchlistSync = () => {
             setTvSessionId(newId);
             setTvSessionSign(newSign);
 
-            if (!newId) {
+            if (!newId || !newSign) {
                 setColoredCounts({});
                 setCustomLists([]);
             } else {
@@ -170,6 +171,7 @@ export const useWatchlistSync = () => {
         fetchColoredStatus,
         tvSessionId,
         tvSessionSign,
+        hasTvAuth,
         TV_SYMBOL_LIMIT,
         syncColors,
         showStatus,

@@ -14,10 +14,21 @@ const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
     'transfer-encoding',
 ]);
 
+function getFirstQueryValue(value) {
+    if (Array.isArray(value)) return value[0];
+    return value;
+}
+
 function buildUpstreamUrl(req) {
     const incomingUrl = new URL(req.url || '/api/tv', 'http://localhost');
-    const upstreamPath = incomingUrl.pathname.replace(/^\/api\/tv/, '') || '/';
-    return `${UPSTREAM_BASE}${upstreamPath}${incomingUrl.search}`;
+    const rewrittenPath = getFirstQueryValue(req.query?.tv_path);
+    const upstreamPath = rewrittenPath
+        ? `/${String(rewrittenPath).replace(/^\/+/, '')}`
+        : incomingUrl.pathname.replace(/^\/api\/tv/, '') || '/';
+
+    incomingUrl.searchParams.delete('tv_path');
+    const query = incomingUrl.searchParams.toString();
+    return `${UPSTREAM_BASE}${upstreamPath}${query ? `?${query}` : ''}`;
 }
 
 function buildCookieHeader(req) {
@@ -55,11 +66,8 @@ function buildUpstreamHeaders(req) {
     headers.set('X-Requested-With', 'XMLHttpRequest');
 
     const cookie = buildCookieHeader(req);
-    if (cookie) {
-        headers.set('Cookie', cookie);
-    } else {
-        headers.delete('Cookie');
-    }
+    if (cookie) headers.set('Cookie', cookie);
+    else headers.delete('Cookie');
 
     return headers;
 }
@@ -101,7 +109,6 @@ export default async function handler(req, res) {
         });
 
         res.status(upstream.status);
-
         const arrayBuffer = await upstream.arrayBuffer();
         return res.send(Buffer.from(arrayBuffer));
     } catch (error) {

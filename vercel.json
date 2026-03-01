@@ -15,6 +15,10 @@
     ],
     "rewrites": [
         {
+            "source": "/api/tv/(.*)",
+            "destination": "/api/tv?tv_path=$1"
+        },
+        {
             "source": "/api/v1/fuckyouuuu",
             "destination": "/api/fuckyouuuu"
         },

@@ -466,7 +466,7 @@ const DeferredThemeBlock = React.memo(({
     );
 });
 
-const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive }) => {
+const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) => {
     const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
@@ -504,8 +504,9 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive }) => {
                 entries.forEach((entry) => {
                     const id = entry.target.getAttribute('data-block-id');
                     if (!id) return;
-                    const nextValue = entry.isIntersecting;
-                    if (visibilityRef.current.get(id) === nextValue) return;
+                    const prevValue = !!visibilityRef.current.get(id);
+                    const nextValue = isMobile ? (prevValue || entry.isIntersecting) : entry.isIntersecting;
+                    if (prevValue === nextValue) return;
                     visibilityRef.current.set(id, nextValue);
                     hasChanges = true;
                 });
@@ -514,7 +515,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive }) => {
                 const nextIds = buildVisibleIdsFromMap(visibilityRef.current, mapSource);
                 setVisibleIds(nextIds.size > 0 ? nextIds : buildInitialVisibleIds(mapSource));
             },
-            { root: null, rootMargin: BLOCK_PREFETCH_ROOT_MARGIN, threshold: 0.01 }
+            { root: null, rootMargin: isMobile ? '800px 0px' : BLOCK_PREFETCH_ROOT_MARGIN, threshold: 0.01 }
         );
 
         nodeRefs.current.forEach((node) => {
@@ -522,7 +523,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive }) => {
         });
 
         return () => observer.disconnect();
-    }, [isActive, mapSource]);
+    }, [isActive, mapSource, isMobile]);
 
     return (
         <div className={gridClassName}>
@@ -542,7 +543,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive }) => {
     );
 });
 
-const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue }) => {
+const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, isMobile }) => {
     if (!isMounted) return null;
 
     return (
@@ -552,6 +553,7 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue }) 
                     mapSource={THEMATIC_MAP}
                     gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
                     isActive={isActive}
+                    isMobile={isMobile}
                 />
             </ThemeGridDataContext.Provider>
         </div>
@@ -559,11 +561,12 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue }) 
 }, (prevProps, nextProps) => {
     if (prevProps.isMounted !== nextProps.isMounted) return false;
     if (prevProps.isActive !== nextProps.isActive) return false;
+    if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (!prevProps.isActive && !nextProps.isActive) return true;
     return prevProps.gridContextValue === nextProps.gridContextValue;
 });
 
-const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue }) => {
+const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue, isMobile }) => {
     if (!isMounted) return null;
 
     return (
@@ -573,6 +576,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
                     mapSource={macroMap}
                     gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3"
                     isActive={isActive}
+                    isMobile={isMobile}
                 />
             </ThemeGridDataContext.Provider>
         </div>
@@ -580,6 +584,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
 }, (prevProps, nextProps) => {
     if (prevProps.isMounted !== nextProps.isMounted) return false;
     if (prevProps.isActive !== nextProps.isActive) return false;
+    if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (prevProps.macroMap !== nextProps.macroMap) return false;
     if (!prevProps.isActive && !nextProps.isActive) return true;
     return prevProps.gridContextValue === nextProps.gridContextValue;
@@ -609,12 +614,14 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
                 isActive={viewMode === 'THEMATIC'}
                 isMounted={true}
                 gridContextValue={gridContextValue}
+                isMobile={isMobile}
             />
             <MacroGridPane
                 isActive={viewMode === 'MACRO'}
                 isMounted={hasMountedMacro}
                 macroMap={macroMap}
                 gridContextValue={gridContextValue}
+                isMobile={isMobile}
             />
         </>
     );

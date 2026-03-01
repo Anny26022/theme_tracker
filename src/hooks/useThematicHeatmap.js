@@ -3,7 +3,8 @@ import { useAsync } from './useAsync';
 import { fetchBatchIntervalPerformance, cleanSymbol, recordCacheMetric } from '../services/priceService';
 
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
-const CACHE_TTL = 300_000; // 5 minutes
+const HEATMAP_CACHE_TTL_MS = 300_000; // 5 minutes freshness budget
+const HEATMAP_REFRESH_INTERVAL_MS = 240_000; // 4 minutes scheduled refresh
 const RAW_DATA_KEY = 'tt_raw_price_data:v1';
 
 // ─── Persistence Helpers ───────────────────────────────────────────
@@ -13,7 +14,7 @@ function loadPersistedRawData() {
         const raw = sessionStorage.getItem(RAW_DATA_KEY);
         if (raw) {
             const parsed = JSON.parse(raw);
-            if (parsed && Date.now() - parsed.timestamp < CACHE_TTL) {
+            if (parsed && Date.now() - parsed.timestamp < HEATMAP_CACHE_TTL_MS) {
                 // Convert plain objects back to Maps for our engine
                 const cache = new Map();
                 Object.keys(parsed.data).forEach(interval => {
@@ -98,7 +99,7 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
         if (allSymbols.length === 0) return {};
 
         const now = Date.now();
-        const isCacheValid = (now - globalPriceDataTimestamp < CACHE_TTL);
+        const isCacheValid = (now - globalPriceDataTimestamp < HEATMAP_CACHE_TTL_MS);
         const normalizedSymbols = Array.from(new Set(allSymbols.map((symbol) => cleanSymbol(symbol))));
 
         const hasFullCoverage = HEATMAP_INTERVALS.every((interval) => {
@@ -115,6 +116,7 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             const cachedHeatmapEntry = globalHeatmapByHierarchy.get(hierarchy);
             if (cachedHeatmapEntry?.timestamp === globalPriceDataTimestamp) {
                 recordCacheMetric('heatmapMemoHits');
+                recordCacheMetric('heatmapFreshServes');
                 return cachedHeatmapEntry.heatmap;
             }
             recordCacheMetric('heatmapMemoMisses');
@@ -159,6 +161,8 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
         if (wasRefetched) {
             globalPriceDataTimestamp = Date.now();
             savePersistedRawData(globalPriceDataCache, globalPriceDataTimestamp);
+        } else {
+            recordCacheMetric('heatmapFreshServes');
         }
 
         // 2. Perform aggregation (always runs to respect current filtering)
@@ -194,7 +198,10 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
 
     useEffect(() => {
         if (!allSymbols.length) return;
-        const timer = setInterval(execute, CACHE_TTL);
+        const timer = setInterval(() => {
+            recordCacheMetric('heatmapScheduledRefreshes');
+            execute();
+        }, HEATMAP_REFRESH_INTERVAL_MS);
         return () => clearInterval(timer);
     }, [allSymbols, execute]);
 

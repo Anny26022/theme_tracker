@@ -148,6 +148,11 @@ const cacheMetrics = {
     localHits: 0,
     localMisses: 0,
     cacheLookupMisses: 0,
+    missReasonCold: 0,
+    missReasonTtlExpired: 0,
+    missReasonKeyVariant: 0,
+    missReasonUrlTooLong: 0,
+    missReasonPostFallback: 0,
     networkMissBatches: 0,
     edgeGetEligibleBatches: 0,
     edgeGetExecutedBatches: 0,
@@ -166,6 +171,8 @@ const cacheMetrics = {
     externalCacheMisses: 0,
     heatmapMemoHits: 0,
     heatmapMemoMisses: 0,
+    heatmapFreshServes: 0,
+    heatmapScheduledRefreshes: 0,
     appLoads: 0,
 };
 
@@ -173,9 +180,34 @@ let cacheMetricsLoggerStarted = false;
 let previousLoggedCounters = null;
 let edgeUrlTooLongWarnCount = 0;
 let edgeUrlTooLongWarnLastAt = 0;
+const EDGE_REQUEST_FINGERPRINT_LIMIT = 30000;
+const EDGE_ENTRY_FINGERPRINT_LIMIT = 60000;
+const edgeRequestFingerprints = new Map();
+const edgeEntryFingerprints = new Map();
 
 function incrementMetric(key, value = 1) {
     cacheMetrics[key] = (cacheMetrics[key] || 0) + value;
+}
+
+function normalizeMissReason(reason) {
+    if (reason === 'ttl-expired') return 'ttl-expired';
+    if (reason === 'key-variant') return 'key-variant';
+    if (reason === 'url-too-long') return 'url-too-long';
+    if (reason === 'post-fallback') return 'post-fallback';
+    return 'cold';
+}
+
+function markMissReason(reason) {
+    const normalized = normalizeMissReason(reason);
+    if (normalized === 'cold') incrementMetric('missReasonCold');
+    if (normalized === 'ttl-expired') incrementMetric('missReasonTtlExpired');
+    if (normalized === 'key-variant') incrementMetric('missReasonKeyVariant');
+    if (normalized === 'url-too-long') incrementMetric('missReasonUrlTooLong');
+    if (normalized === 'post-fallback') incrementMetric('missReasonPostFallback');
+}
+
+function cacheLookupMissReason(cachedRow) {
+    return cachedRow ? 'ttl-expired' : 'cold';
 }
 
 export function recordCacheMetric(key, value = 1) {
@@ -187,9 +219,10 @@ function markLocalCacheHit() {
     incrementMetric('localHits');
 }
 
-function markLocalCacheMiss() {
+function markLocalCacheMiss(reason = 'cold') {
     incrementMetric('localMisses');
     incrementMetric('cacheLookupMisses');
+    markMissReason(reason);
 }
 
 function markNetworkMissBatch() {
@@ -211,6 +244,7 @@ function markEdgeGetFailure() {
 
 function markEdgeUrlTooLongSkip() {
     incrementMetric('edgeGetUrlTooLongSkips');
+    markMissReason('url-too-long');
 }
 
 function maybeWarnEdgeUrlTooLong(urlLength, entriesLength) {
@@ -228,20 +262,73 @@ function maybeWarnEdgeUrlTooLong(urlLength, entriesLength) {
 
 function markPostFallback() {
     incrementMetric('postFallbacks');
+    markMissReason('post-fallback');
 }
 
-function recordEdgeResponse(headers) {
+function hashString(input) {
+    const value = String(input ?? '');
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+function rememberFingerprint(map, key, limit) {
+    if (map.has(key)) map.delete(key);
+    map.set(key, Date.now());
+    if (map.size > limit) {
+        const oldestKey = map.keys().next().value;
+        map.delete(oldestKey);
+    }
+}
+
+function buildEdgeEntryFingerprint(entry) {
+    return `${entry?.[0] || 'rpc'}:${hashString(entry?.[1] || '')}`;
+}
+
+function buildEdgeRequestFingerprint(getUrl) {
+    return `req:${hashString(getUrl)}`;
+}
+
+function classifyEdgeMiss(entries, getUrl) {
+    const requestFingerprint = buildEdgeRequestFingerprint(getUrl);
+    if (edgeRequestFingerprints.has(requestFingerprint)) {
+        markMissReason('ttl-expired');
+        return;
+    }
+
+    const hasKnownEntry = entries.some((entry) => edgeEntryFingerprints.has(buildEdgeEntryFingerprint(entry)));
+    if (hasKnownEntry) {
+        markMissReason('key-variant');
+        return;
+    }
+
+    markMissReason('cold');
+}
+
+function rememberEdgeSuccess(entries, getUrl) {
+    rememberFingerprint(edgeRequestFingerprints, buildEdgeRequestFingerprint(getUrl), EDGE_REQUEST_FINGERPRINT_LIMIT);
+    entries.forEach((entry) => {
+        rememberFingerprint(edgeEntryFingerprints, buildEdgeEntryFingerprint(entry), EDGE_ENTRY_FINGERPRINT_LIMIT);
+    });
+}
+
+function recordEdgeResponse(headers, entries, getUrl) {
     incrementMetric('edgeGetSuccess');
     const edgeCache = (headers.get('x-vercel-cache') || '').toUpperCase();
     if (edgeCache.includes('HIT')) {
         incrementMetric('edgeServedHit');
     } else if (edgeCache.includes('MISS')) {
         incrementMetric('edgeServedMiss');
+        classifyEdgeMiss(entries || [], getUrl || '');
     } else if (edgeCache.includes('STALE')) {
         incrementMetric('edgeServedStale');
     } else {
         incrementMetric('edgeServedOther');
     }
+    rememberEdgeSuccess(entries || [], getUrl || '');
 
     const ageSec = Number.parseFloat(headers.get('age') || '0');
     if (Number.isFinite(ageSec) && ageSec >= 0) {
@@ -571,7 +658,7 @@ async function executeBatch(entries, timeoutMs = 12000) {
             signal: AbortSignal.timeout?.(timeoutMs),
         });
         if (getResponse.ok) {
-            recordEdgeResponse(getResponse.headers);
+            recordEdgeResponse(getResponse.headers, entries, getUrl);
             return {
                 text: await getResponse.text(),
                 responseTtlMs: getRemainingEdgeTtlMs(getResponse.headers)
@@ -843,7 +930,7 @@ export async function fetchLivePrices(symbols) {
             markLocalCacheHit();
             results.set(key, cached.data);
         } else {
-            markLocalCacheMiss();
+            markLocalCacheMiss(cacheLookupMissReason(cached));
             uncached.push(key);
         }
     }
@@ -943,7 +1030,7 @@ export function fetchBatchIntervalPerformance(symbols, interval = '1M') {
             markLocalCacheHit();
             if (cached.data !== null) results.set(sym, cached.data);
         } else if (!currentPending.has(sym)) {
-            markLocalCacheMiss();
+            markLocalCacheMiss(cacheLookupMissReason(cached));
             uncached.push(sym);
         }
     }
@@ -1091,7 +1178,7 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M') {
                 markLocalCacheHit();
                 results.set(sym, cached.data);
             } else {
-                markLocalCacheMiss();
+                markLocalCacheMiss(cacheLookupMissReason(cached));
                 uncachedKeys.push(sym);
             }
         });
@@ -1203,7 +1290,7 @@ export async function fetchFundamentals(symbols) {
             markLocalCacheHit();
             results.set(key, cached.data);
         } else {
-            markLocalCacheMiss();
+            markLocalCacheMiss(cacheLookupMissReason(cached));
             uncached.push(key);
         }
     }
@@ -1263,7 +1350,7 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
             markLocalCacheHit();
             results.set(sym, cached.series);
         } else {
-            markLocalCacheMiss();
+            markLocalCacheMiss(cacheLookupMissReason(cached));
             uncached.push(sym);
         }
     }
@@ -1320,7 +1407,7 @@ export function getCachedInterval(symbol, interval) {
         markLocalCacheHit();
         return cached.data;
     }
-    markLocalCacheMiss();
+    markLocalCacheMiss(cacheLookupMissReason(cached));
     return null;
 }
 
@@ -1334,7 +1421,7 @@ export function getCachedPrice(symbol) {
         markLocalCacheHit();
         return cached.data;
     }
-    markLocalCacheMiss();
+    markLocalCacheMiss(cacheLookupMissReason(cached));
     return null;
 }
 // ─── Technical Breadth & Indicators ────────────────────────────────

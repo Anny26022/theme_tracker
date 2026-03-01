@@ -27,6 +27,7 @@ const INTERVAL_CACHE_KEY = 'tt_interval_cache:v1';
 const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
 
 const PRICE_CACHE_TTL = 300_000;
+const COMPARISON_CACHE_TTL = 300_000;
 const FUNDA_CACHE_TTL = 3_600_000;
 
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
@@ -1038,7 +1039,7 @@ export async function fetchComparisonCharts(symbols: string[], interval = '1D') 
         const cacheKey = `${symbol}:${window}:full`;
         const cached = comparisonCacheMap.get(cacheKey);
 
-        if (isCacheRowFresh(cached, 120_000) && cached) {
+        if (isCacheRowFresh(cached, COMPARISON_CACHE_TTL) && cached) {
             markLocalCacheHit();
             results.set(symbol, cached.series);
         } else {
@@ -1057,7 +1058,7 @@ export async function fetchComparisonCharts(symbols: string[], interval = '1D') 
             const extracted = extractWideChartFromFrame(payload);
             if (!extracted) return;
             const cacheKey = `${extracted.symbol}:${window}:full`;
-            const row = buildCacheRow(extracted.series, responseTtlMs, 120_000);
+            const row = buildCacheRow(extracted.series, responseTtlMs, COMPARISON_CACHE_TTL);
             if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
             results.set(extracted.symbol, extracted.series);
         });

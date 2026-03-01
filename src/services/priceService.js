@@ -39,6 +39,7 @@ const comparisonCacheMap = new Map();
 const unifiedResultCache = new Map(); // timeframe:symbol -> result
 const pendingUnifiedRequests = new Map();
 const PRICE_CACHE_TTL = 300_000; // 5m
+const COMPARISON_CACHE_TTL = 300_000; // 5m
 const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
 const MAX_PERSISTED_INTERVAL_ENTRIES_IDB = 30000;
@@ -1639,8 +1640,7 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
         const sym = cleanSymbol(raw);
         const cacheKey = `${sym}:${window}:full`;
         const cached = comparisonCacheMap.get(cacheKey);
-        // Full charts expire faster (2 min)
-        if (isCacheRowFresh(cached, 120_000)) {
+        if (isCacheRowFresh(cached, COMPARISON_CACHE_TTL)) {
             markLocalCacheHit();
             results.set(sym, cached.series);
         } else {
@@ -1659,7 +1659,7 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
             const extracted = extractWideChartFromFrame(payload);
             if (extracted) {
                 const cacheKey = `${extracted.symbol}:${window}:full`;
-                const row = buildCacheRow(extracted.series, responseTtlMs, 120_000);
+                const row = buildCacheRow(extracted.series, responseTtlMs, COMPARISON_CACHE_TTL);
                 if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
                 results.set(extracted.symbol, extracted.series);
             }

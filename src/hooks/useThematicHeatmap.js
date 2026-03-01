@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useEffect } from 'react';
 import { useAsync } from './useAsync';
-import { fetchBatchIntervalPerformance, cleanSymbol } from '../services/priceService';
+import { fetchBatchIntervalPerformance, cleanSymbol, recordCacheMetric } from '../services/priceService';
 
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
 const CACHE_TTL = 300_000; // 5 minutes
@@ -114,8 +114,10 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
         if (isCacheValid && hierarchy && hasFullCoverage) {
             const cachedHeatmapEntry = globalHeatmapByHierarchy.get(hierarchy);
             if (cachedHeatmapEntry?.timestamp === globalPriceDataTimestamp) {
+                recordCacheMetric('heatmapMemoHits');
                 return cachedHeatmapEntry.heatmap;
             }
+            recordCacheMetric('heatmapMemoMisses');
         }
 
         // 1. Fetch raw performance data for all unique symbols across intervals
@@ -128,8 +130,10 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
 
                 // Return cached raw data only if cache is valid and fully covers the current symbol universe.
                 if (isCacheValid && hasCacheForInterval && missingSymbols.length === 0) {
+                    recordCacheMetric('externalCacheHits');
                     return { interval, perfMap: globalPriceDataCache.get(interval) };
                 }
+                recordCacheMetric('externalCacheMisses');
 
                 const symbolsToFetch = isCacheValid ? missingSymbols : normalizedSymbols;
                 const fetchedPerf = symbolsToFetch.length > 0

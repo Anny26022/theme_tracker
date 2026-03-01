@@ -18,6 +18,7 @@ const EDGE_BATCH_TTL_MS = 300_000;
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
+const CACHE_METRICS_STATE_KEY = 'tt_cache_metrics_state:v1';
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
 
@@ -159,6 +160,11 @@ const cacheMetrics = {
     edgeAgeMsTotal: 0,
     edgeGetUrlTooLongSkips: 0,
     postFallbacks: 0,
+    externalCacheHits: 0,
+    externalCacheMisses: 0,
+    heatmapMemoHits: 0,
+    heatmapMemoMisses: 0,
+    appLoads: 0,
 };
 
 let cacheMetricsLoggerStarted = false;
@@ -166,6 +172,11 @@ let previousLoggedCounters = null;
 
 function incrementMetric(key, value = 1) {
     cacheMetrics[key] = (cacheMetrics[key] || 0) + value;
+}
+
+export function recordCacheMetric(key, value = 1) {
+    if (!Object.prototype.hasOwnProperty.call(cacheMetrics, key)) return;
+    incrementMetric(key, value);
 }
 
 function markLocalCacheHit() {
@@ -237,16 +248,59 @@ function logCacheMetricsSnapshot() {
 
     const payload = {
         at: new Date().toISOString(),
-        snapshot: { ...counters, edgeAgeAvgMs },
+        snapshot: {
+            ...counters,
+            edgeAgeAvgMs,
+            edgeGetConversionPct: counters.edgeGetEligibleBatches > 0
+                ? Math.round((counters.edgeGetExecutedBatches / counters.edgeGetEligibleBatches) * 100)
+                : null
+        },
         delta
     };
 
     console.info('[CacheMetrics][PriceService]', payload);
+    persistCacheMetricsSnapshot(counters);
+}
+
+function loadPersistedCacheMetrics() {
+    if (typeof sessionStorage === 'undefined') return null;
+    try {
+        const raw = sessionStorage.getItem(CACHE_METRICS_STATE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.snapshot !== 'object') return null;
+        return parsed.snapshot;
+    } catch {
+        return null;
+    }
+}
+
+function persistCacheMetricsSnapshot(snapshot) {
+    if (typeof sessionStorage === 'undefined') return;
+    try {
+        sessionStorage.setItem(CACHE_METRICS_STATE_KEY, JSON.stringify({
+            at: Date.now(),
+            snapshot
+        }));
+    } catch {
+        // ignore storage failures
+    }
 }
 
 function initProdCacheMetricsLogging() {
     if (!IS_PROD || cacheMetricsLoggerStarted) return;
     cacheMetricsLoggerStarted = true;
+
+    const persisted = loadPersistedCacheMetrics();
+    if (persisted) {
+        Object.keys(cacheMetrics).forEach((key) => {
+            const value = persisted[key];
+            if (Number.isFinite(value)) {
+                cacheMetrics[key] = value;
+            }
+        });
+    }
+    incrementMetric('appLoads');
 
     if (typeof globalThis === 'object') {
         globalThis.__TT_CACHE_METRICS__ = cacheMetrics;

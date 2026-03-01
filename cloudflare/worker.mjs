@@ -116,13 +116,14 @@ async function fetchWithEdgeCache({ cacheKeyUrl, ttlSec, swrSec, cacheControl, c
 
   const cacheAndReturnFresh = async () => {
     const fresh = await fetchFresh();
-    const out = cloneResponseWithHeaders(fresh, (headers) => {
+    const freshForClient = fresh.clone();
+    const out = cloneResponseWithHeaders(freshForClient, (headers) => {
       headers.set("Cache-Control", cacheControl);
       applyEdgeCompatHeaders(headers, "MISS", 0);
     });
 
     if (fresh.ok) {
-      const stored = buildStoredResponse(fresh.clone());
+      const stored = buildStoredResponse(fresh);
       ctx.waitUntil(cache.put(cacheKey, stored));
     }
 

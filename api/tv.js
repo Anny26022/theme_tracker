@@ -86,6 +86,7 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-tv-sessionid, x-tv-sessionid-sign');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
+    res.setHeader('Vary', 'x-tv-sessionid, x-tv-sessionid-sign, Cookie');
 
     if (req.method === 'OPTIONS') return res.status(204).end();
 
@@ -107,6 +108,11 @@ export default async function handler(req, res) {
             if (HOP_BY_HOP_RESPONSE_HEADERS.has(key.toLowerCase())) return;
             res.setHeader(key, value);
         });
+
+        // Enforce no-store after copying upstream headers to prevent accidental cache leakage.
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
+        res.setHeader('Vary', 'x-tv-sessionid, x-tv-sessionid-sign, Cookie');
 
         res.status(upstream.status);
         const arrayBuffer = await upstream.arrayBuffer();

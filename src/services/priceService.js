@@ -20,6 +20,9 @@ const EDGE_BATCH_TIMEOUT_MS = 15_000;
 const EDGE_BATCH_RETRIES = 1;
 const EDGE_BATCH_RETRY_BACKOFF_MS = 180;
 const INTERVAL_CHUNK_CONCURRENCY = 4;
+const INTERVAL_RETRY_CHUNK_CONCURRENCY = 2;
+const INTERVAL_RETRY_CHUNK_SIZE = 120;
+const INTERVAL_NEGATIVE_CACHE_TTL_MS = 30_000;
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
@@ -328,6 +331,41 @@ const INTERVAL_CACHE_TTL = {
     '5Y': 600_000,     // 10 min
     'MAX': 600_000,    // 10 min
 };
+
+function getIntervalCacheKey(symbol, interval, window) {
+    return `${symbol}:${interval}:${window}`;
+}
+
+function getLegacyIntervalCacheKey(symbol, window) {
+    return `${symbol}:${window}`;
+}
+
+function getIntervalRowTtl(row, ttl) {
+    if (row?.data === null) {
+        return Math.min(ttl, INTERVAL_NEGATIVE_CACHE_TTL_MS);
+    }
+    return ttl;
+}
+
+function isIntervalRowFresh(row, ttl) {
+    return isCacheRowFresh(row, getIntervalRowTtl(row, ttl));
+}
+
+function resolveIntervalCacheRecord(symbol, interval, window) {
+    const primaryKey = getIntervalCacheKey(symbol, interval, window);
+    const primary = intervalCache.get(primaryKey);
+    if (primary) return { cacheKey: primaryKey, cached: primary };
+
+    const legacyKey = getLegacyIntervalCacheKey(symbol, window);
+    const legacy = intervalCache.get(legacyKey);
+    if (!legacy) return { cacheKey: primaryKey, cached: null };
+
+    intervalCache.set(primaryKey, legacy);
+    intervalCache.delete(legacyKey);
+    if (idbHydratedIntervalKeys.delete(legacyKey)) idbHydratedIntervalKeys.add(primaryKey);
+    if (sessionHydratedIntervalKeys.delete(legacyKey)) sessionHydratedIntervalKeys.add(primaryKey);
+    return { cacheKey: primaryKey, cached: legacy };
+}
 
 function resolveEffectiveTtl(row, fallbackTtl) {
     if (row && Number.isFinite(row.ttlMs)) {
@@ -1402,8 +1440,16 @@ export async function fetchLivePrice(symbol) {
  */
 // ─── Consolidated Interval Fetching ────────────────────────────────
 
-const pendingIntervalReqs = new Map(); // timeframe:window -> Map<symbol, Promise>
+const pendingIntervalReqs = new Map(); // timeframe:window -> Map<symbol, true>
 const intervalWaitTimers = new Map(); // timeframe:window -> timer
+const intervalWaiters = new Map(); // timeframe:window -> Set<() => void>
+
+function getOrCreateIntervalWaiters(cacheKeyBase) {
+    if (!intervalWaiters.has(cacheKeyBase)) {
+        intervalWaiters.set(cacheKeyBase, new Set());
+    }
+    return intervalWaiters.get(cacheKeyBase);
+}
 
 /**
  * Fetch interval change % for MANY symbols.
@@ -1424,6 +1470,7 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
         pendingIntervalReqs.set(cacheKeyBase, new Map());
     }
     const currentPending = pendingIntervalReqs.get(cacheKeyBase);
+    const currentWaiters = getOrCreateIntervalWaiters(cacheKeyBase);
 
     // 1. Filter out already cached symbols
     const uncached = [];
@@ -1431,10 +1478,9 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
 
     for (const raw of symbols) {
         const sym = cleanSymbol(raw);
-        const cacheKey = `${sym}:${window}`;
-        const cached = intervalCache.get(cacheKey);
+        const { cacheKey, cached } = resolveIntervalCacheRecord(sym, interval, window);
 
-        if (isCacheRowFresh(cached, ttl)) {
+        if (isIntervalRowFresh(cached, ttl)) {
             markLocalCacheHit();
             if (idbHydratedIntervalKeys.has(cacheKey)) {
                 incrementMetric('intervalLocalHitsFromIdb');
@@ -1465,127 +1511,184 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
     });
 
     if (uncached.length === 0) {
-        // All either cached or already pending. 
-        // We need to wait for pending ones if some are requested.
-        return new Promise(async (resolve) => {
-            const requestedPending = symbols.map(s => cleanSymbol(s)).filter(s => currentPending.has(s));
-            if (requestedPending.length > 0) {
-                await Promise.all(requestedPending.map(s => currentPending.get(s)));
-                // Re-read from cache/results
-                symbols.forEach(s => {
-                    const sym = cleanSymbol(s);
-                    const cacheKey = `${sym}:${window}`;
-                    const c = intervalCache.get(cacheKey);
-                    if (c?.data) results.set(sym, c.data);
-                });
-            }
-            resolve(results);
+        // All either cached or already pending.
+        const requestedPending = symbols.map(s => cleanSymbol(s)).filter(s => currentPending.has(s));
+        if (requestedPending.length === 0) return results;
+
+        return new Promise((resolve) => {
+            currentWaiters.add(resolve);
+        }).then(() => {
+            symbols.forEach(s => {
+                const sym = cleanSymbol(s);
+                const { cached: c } = resolveIntervalCacheRecord(sym, interval, window);
+                if (c?.data) results.set(sym, c.data);
+            });
+            return results;
         });
     }
 
-    // 2. Create promises for the new symbols
-    let resolveBatch;
-    const batchPromise = new Promise(res => { resolveBatch = res; });
-    uncached.forEach(sym => currentPending.set(sym, batchPromise));
+    // 2. Mark newly pending symbols and register this caller as waiter
+    uncached.forEach(sym => currentPending.set(sym, true));
+    const waitForFlush = new Promise((resolve) => {
+        currentWaiters.add(resolve);
+    });
 
     // 3. Schedule the execution
     if (intervalWaitTimers.has(cacheKeyBase)) clearTimeout(intervalWaitTimers.get(cacheKeyBase));
 
     intervalWaitTimers.set(cacheKeyBase, setTimeout(async () => {
         intervalWaitTimers.delete(cacheKeyBase);
-
-        // Final list of ALL symbols waiting for this specific timeframe
-        const allUncached = Array.from(currentPending.keys()).filter(s => {
-            const cacheKey = `${s}:${window}`;
-            const c = intervalCache.get(cacheKey);
-            return !isCacheRowFresh(c, ttl);
-        });
-
-        if (allUncached.length === 0) {
-            resolveBatch();
-            return;
-        }
-
-        if (IS_DEV) {
-            console.debug(`[PriceService] Consolidating Interval ${interval} — Batching ${allUncached.length} symbols`);
-        }
-
-        // Seed chunking keeps fanout bounded before URL-budget splitting.
-        const CHUNK_SIZE = 550;
-        const seededChunks = [];
-        for (let i = 0; i < allUncached.length; i += CHUNK_SIZE) {
-            seededChunks.push(allUncached.slice(i, i + CHUNK_SIZE));
-        }
-
-        const transportGroups = [];
-        seededChunks.forEach((seededChunk) => {
-            const seededItems = seededChunk.map((sym) => {
-                const ex = getExchange(sym);
-                const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
-                return {
-                    symbol: sym,
-                    entry: [GOOGLE_RPC_CHART, rpcArgs, null, 'generic']
-                };
+        const waiters = getOrCreateIntervalWaiters(cacheKeyBase);
+        let waitersResolved = false;
+        const resolveAllWaiters = () => {
+            if (waitersResolved) return;
+            waitersResolved = true;
+            const callbacks = Array.from(waiters);
+            waiters.clear();
+            callbacks.forEach((resolve) => {
+                try {
+                    resolve();
+                } catch {
+                    // ignore waiter resolution errors
+                }
             });
-            splitItemsByUrlBudget(seededItems, (item) => item.entry).forEach((group) => {
-                transportGroups.push(group);
+        };
+        try {
+            // Final list of ALL symbols waiting for this specific timeframe
+            const allUncached = Array.from(currentPending.keys()).filter(s => {
+                const { cached: c } = resolveIntervalCacheRecord(s, interval, window);
+                return !isIntervalRowFresh(c, ttl);
             });
-        });
 
-        if (IS_DEV) {
-            console.debug(`[PriceService] Interval ${interval} transport groups: ${transportGroups.length}`);
-        }
+            if (allUncached.length === 0) return;
 
-        await runWithConcurrency(transportGroups, INTERVAL_CHUNK_CONCURRENCY, async (group) => {
-            const entries = group.map((item) => item.entry);
-            const groupSymbols = group.map((item) => item.symbol);
-            try {
-                const batchResult = await executeBatch(entries);
-                const frames = parseAllFrames(batchResult.text).filter(f => f.rpcId === GOOGLE_RPC_CHART);
-                const returned = new Set();
-
-                frames.forEach(frame => {
-                    const extracted = extractChartFromFrame(frame.payload, interval);
-                    if (extracted) {
-                        const cacheKey = `${extracted.symbol}:${window}`;
-                        const row = buildCacheRow(extracted.data, batchResult.responseTtlMs, ttl);
-                        if (row) {
-                            intervalCache.set(cacheKey, row);
-                            idbHydratedIntervalKeys.delete(cacheKey);
-                            sessionHydratedIntervalKeys.delete(cacheKey);
-                        }
-                        returned.add(extracted.symbol);
-                    }
-                });
-
-                // Negative cache
-                groupSymbols.forEach(sym => {
-                    if (!returned.has(sym)) {
-                        const row = buildCacheRow(null, batchResult.responseTtlMs, ttl);
-                        if (row) {
-                            const cacheKey = `${sym}:${window}`;
-                            intervalCache.set(cacheKey, row);
-                            idbHydratedIntervalKeys.delete(cacheKey);
-                            sessionHydratedIntervalKeys.delete(cacheKey);
-                        }
-                    }
-                });
-            } catch (err) {
-                console.warn(`[PriceService] Parallel chunk failed:`, err.message);
+            if (IS_DEV) {
+                console.debug(`[PriceService] Consolidating Interval ${interval} — Batching ${allUncached.length} symbols`);
             }
-        });
 
-        scheduleIntervalSave();
-        currentPending.clear(); // Clear pending map for this timeframe
-        resolveBatch();
+            // Seed chunking keeps fanout bounded before URL-budget splitting.
+            const CHUNK_SIZE = 550;
+            const seededChunks = [];
+            for (let i = 0; i < allUncached.length; i += CHUNK_SIZE) {
+                seededChunks.push(allUncached.slice(i, i + CHUNK_SIZE));
+            }
+
+            const transportGroups = [];
+            seededChunks.forEach((seededChunk) => {
+                const seededItems = seededChunk.map((sym) => {
+                    const ex = getExchange(sym);
+                    const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
+                    return {
+                        symbol: sym,
+                        entry: [GOOGLE_RPC_CHART, rpcArgs, null, 'generic']
+                    };
+                });
+                splitItemsByUrlBudget(seededItems, (item) => item.entry).forEach((group) => {
+                    transportGroups.push(group);
+                });
+            });
+
+            if (IS_DEV) {
+                console.debug(`[PriceService] Interval ${interval} transport groups: ${transportGroups.length}`);
+            }
+
+            const unresolvedSymbols = new Set();
+
+            const processTransportGroup = async (group, { applyNegativeCache = false } = {}) => {
+                const entries = group.map((item) => item.entry);
+                const groupSymbols = group.map((item) => item.symbol);
+                try {
+                    const batchResult = await executeBatch(entries);
+                    const frames = parseAllFrames(batchResult.text).filter(f => f.rpcId === GOOGLE_RPC_CHART);
+                    const returned = new Set();
+
+                    frames.forEach(frame => {
+                        const extracted = extractChartFromFrame(frame.payload, interval);
+                        if (extracted) {
+                            const cacheKey = getIntervalCacheKey(extracted.symbol, interval, window);
+                            const row = buildCacheRow(extracted.data, batchResult.responseTtlMs, ttl);
+                            if (row) {
+                                intervalCache.set(cacheKey, row);
+                                idbHydratedIntervalKeys.delete(cacheKey);
+                                sessionHydratedIntervalKeys.delete(cacheKey);
+                            }
+                            returned.add(extracted.symbol);
+                        }
+                    });
+
+                    const hasAnyExtractedRow = returned.size > 0;
+                    groupSymbols.forEach((sym) => {
+                        if (returned.has(sym)) return;
+                        unresolvedSymbols.add(sym);
+                        if (!applyNegativeCache || !hasAnyExtractedRow) return;
+
+                        const cacheKey = getIntervalCacheKey(sym, interval, window);
+                        const row = buildCacheRow(null, batchResult.responseTtlMs, Math.min(ttl, INTERVAL_NEGATIVE_CACHE_TTL_MS));
+                        if (!row) return;
+                        intervalCache.set(cacheKey, row);
+                        idbHydratedIntervalKeys.delete(cacheKey);
+                        sessionHydratedIntervalKeys.delete(cacheKey);
+                    });
+                } catch (err) {
+                    groupSymbols.forEach((sym) => unresolvedSymbols.add(sym));
+                    console.warn(`[PriceService] Parallel chunk failed:`, err.message);
+                }
+            };
+
+            await runWithConcurrency(transportGroups, INTERVAL_CHUNK_CONCURRENCY, (group) => processTransportGroup(group));
+
+            if (unresolvedSymbols.size > 0) {
+                const retrySymbols = Array.from(unresolvedSymbols).filter((sym) => {
+                    const { cached } = resolveIntervalCacheRecord(sym, interval, window);
+                    return !isIntervalRowFresh(cached, ttl);
+                });
+                unresolvedSymbols.clear();
+
+                if (retrySymbols.length > 0) {
+                    if (IS_DEV) {
+                        console.warn(`[PriceService] Interval ${interval} retrying unresolved symbols: ${retrySymbols.length}`);
+                    }
+
+                    const retrySeededChunks = [];
+                    for (let i = 0; i < retrySymbols.length; i += INTERVAL_RETRY_CHUNK_SIZE) {
+                        retrySeededChunks.push(retrySymbols.slice(i, i + INTERVAL_RETRY_CHUNK_SIZE));
+                    }
+
+                    const retryGroups = [];
+                    retrySeededChunks.forEach((seededChunk) => {
+                        const seededItems = seededChunk.map((sym) => {
+                            const ex = getExchange(sym);
+                            const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
+                            return {
+                                symbol: sym,
+                                entry: [GOOGLE_RPC_CHART, rpcArgs, null, 'generic']
+                            };
+                        });
+                        splitItemsByUrlBudget(seededItems, (item) => item.entry).forEach((group) => {
+                            retryGroups.push(group);
+                        });
+                    });
+
+                    await runWithConcurrency(retryGroups, INTERVAL_RETRY_CHUNK_CONCURRENCY, (group) =>
+                        processTransportGroup(group, { applyNegativeCache: true })
+                    );
+                }
+            }
+
+            scheduleIntervalSave();
+        } catch (err) {
+            console.warn(`[PriceService] Interval ${interval} consolidation failed:`, err?.message || err);
+        } finally {
+            currentPending.clear(); // Clear pending map for this timeframe
+            resolveAllWaiters();
+        }
     }, 50)); // 50ms window to aggregate hook calls
 
     // Return results merged with any pending data
-    return batchPromise.then(() => {
+    return waitForFlush.then(() => {
         symbols.forEach(s => {
             const sym = cleanSymbol(s);
-            const cacheKey = `${sym}:${window}`;
-            const c = intervalCache.get(cacheKey);
+            const { cached: c } = resolveIntervalCacheRecord(sym, interval, window);
             if (c?.data) results.set(sym, c.data);
         });
         return results;
@@ -1872,10 +1975,9 @@ export function getCachedInterval(symbol, interval) {
     ensureMarketBoundaryPurge();
     const key = cleanSymbol(symbol);
     const window = INTERVAL_WINDOWS[interval] || 3;
-    const cacheKey = `${key}:${window}`;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
-    const cached = intervalCache.get(cacheKey);
-    if (isCacheRowFresh(cached, ttl)) {
+    const { cacheKey, cached } = resolveIntervalCacheRecord(key, interval, window);
+    if (isIntervalRowFresh(cached, ttl)) {
         markLocalCacheHit();
         if (idbHydratedIntervalKeys.has(cacheKey)) {
             incrementMetric('intervalLocalHitsFromIdb');

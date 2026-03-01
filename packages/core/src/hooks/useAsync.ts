@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 export function useAsync<T>(
   asyncFn: (...args: any[]) => Promise<T>,
@@ -8,22 +8,30 @@ export function useAsync<T>(
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(immediate);
   const [error, setError] = useState<string | null>(null);
+  const latestRequestIdRef = useRef(0);
 
   const execute = useCallback(
     async (...args: any[]) => {
+      const requestId = ++latestRequestIdRef.current;
       setLoading(true);
       setError(null);
 
       try {
         const result = await asyncFn(...args);
-        setData(result);
+        if (requestId === latestRequestIdRef.current) {
+          setData(result);
+        }
         return result;
       } catch (err: any) {
         const message = err?.message || String(err);
-        setError(message);
+        if (requestId === latestRequestIdRef.current) {
+          setError(message);
+        }
         throw err;
       } finally {
-        setLoading(false);
+        if (requestId === latestRequestIdRef.current) {
+          setLoading(false);
+        }
       }
     },
     [asyncFn],
@@ -33,17 +41,19 @@ export function useAsync<T>(
     if (!immediate) return;
 
     let cancelled = false;
+    const requestId = ++latestRequestIdRef.current;
     setLoading(true);
+    setError(null);
 
     const run = async () => {
       try {
         const result = await asyncFn();
-        if (!cancelled) {
+        if (!cancelled && requestId === latestRequestIdRef.current) {
           setData(result);
           setLoading(false);
         }
       } catch (err: any) {
-        if (!cancelled) {
+        if (!cancelled && requestId === latestRequestIdRef.current) {
           setError(err?.message || String(err));
           setLoading(false);
         }
@@ -67,4 +77,3 @@ export function useAsync<T>(
     [data, loading, error, execute],
   );
 }
-

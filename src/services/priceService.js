@@ -20,6 +20,7 @@ const INTERVAL_CHUNK_CONCURRENCY = 4;
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
+const INTERVAL_SOURCE_LOG_INTERVAL_MS = 15_000;
 const CACHE_METRICS_STATE_KEY = 'tt_cache_metrics_state:v1';
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
@@ -88,6 +89,51 @@ function getSortedCacheEntries(cache) {
 let intervalCacheDbPromise = null;
 let intervalCacheHydrated = false;
 let intervalCacheHydrationPromise = null;
+const idbHydratedIntervalKeys = new Set();
+const sessionHydratedIntervalKeys = new Set();
+let intervalSourceLastLogAt = 0;
+const intervalSourceAccumulator = {
+    calls: 0,
+    symbols: 0,
+    idbHits: 0,
+    sessionHits: 0,
+    memoryHits: 0,
+    misses: 0,
+};
+
+function flushIntervalSourceLog(force = false) {
+    const now = Date.now();
+    if (!force && now - intervalSourceLastLogAt < INTERVAL_SOURCE_LOG_INTERVAL_MS) return;
+    if (intervalSourceAccumulator.calls === 0) return;
+
+    intervalSourceLastLogAt = now;
+    console.info('[PriceService][IntervalCacheSource]', {
+        at: new Date(now).toISOString(),
+        calls: intervalSourceAccumulator.calls,
+        symbols: intervalSourceAccumulator.symbols,
+        idbHits: intervalSourceAccumulator.idbHits,
+        sessionHits: intervalSourceAccumulator.sessionHits,
+        memoryHits: intervalSourceAccumulator.memoryHits,
+        misses: intervalSourceAccumulator.misses,
+    });
+
+    intervalSourceAccumulator.calls = 0;
+    intervalSourceAccumulator.symbols = 0;
+    intervalSourceAccumulator.idbHits = 0;
+    intervalSourceAccumulator.sessionHits = 0;
+    intervalSourceAccumulator.memoryHits = 0;
+    intervalSourceAccumulator.misses = 0;
+}
+
+function recordIntervalSourceSample({ symbols = 0, idbHits = 0, sessionHits = 0, memoryHits = 0, misses = 0 }) {
+    intervalSourceAccumulator.calls += 1;
+    intervalSourceAccumulator.symbols += symbols;
+    intervalSourceAccumulator.idbHits += idbHits;
+    intervalSourceAccumulator.sessionHits += sessionHits;
+    intervalSourceAccumulator.memoryHits += memoryHits;
+    intervalSourceAccumulator.misses += misses;
+    flushIntervalSourceLog();
+}
 
 function openIntervalCacheDb() {
     if (!HAS_INDEXED_DB) return Promise.resolve(null);
@@ -169,6 +215,7 @@ async function clearIntervalCacheFromIndexedDb() {
 const priceCache = loadCache(PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
 const intervalCache = loadCache(INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES_SESSION);
 const fundaCache = loadCache(FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES);
+intervalCache.forEach((_, key) => sessionHydratedIntervalKeys.add(key));
 
 async function hydrateIntervalCacheFromIndexedDb() {
     const startedAt = Date.now();
@@ -183,13 +230,26 @@ async function hydrateIntervalCacheFromIndexedDb() {
                 const existingTs = existing?.timestamp || 0;
                 if (!existing || row.timestamp > existingTs) {
                     intervalCache.set(key, row);
+                    idbHydratedIntervalKeys.add(key);
+                    sessionHydratedIntervalKeys.delete(key);
                 }
             });
             pruneCacheEntries(intervalCache, MAX_INTERVAL_MEMORY_ENTRIES);
         }
     } finally {
+        cacheMetrics.idbHydrationRuns = (cacheMetrics.idbHydrationRuns || 0) + 1;
+        if (hydratedEntries > 0) {
+            cacheMetrics.idbHydrationHitLoads = (cacheMetrics.idbHydrationHitLoads || 0) + 1;
+        } else {
+            cacheMetrics.idbHydrationMissLoads = (cacheMetrics.idbHydrationMissLoads || 0) + 1;
+        }
         cacheMetrics.idbHydrationMs = Math.max(0, Date.now() - startedAt);
         cacheMetrics.idbHydrationEntries = hydratedEntries;
+        console.info('[PriceService][IDB] Interval hydration', {
+            entries: hydratedEntries,
+            ms: cacheMetrics.idbHydrationMs,
+            usedIdb: hydratedEntries > 0
+        });
         intervalCacheHydrated = true;
     }
 }
@@ -311,6 +371,13 @@ const cacheMetrics = {
     heatmapScheduledRefreshes: 0,
     idbHydrationMs: 0,
     idbHydrationEntries: 0,
+    idbHydrationRuns: 0,
+    idbHydrationHitLoads: 0,
+    idbHydrationMissLoads: 0,
+    intervalLocalHitsFromIdb: 0,
+    intervalLocalHitsFromSession: 0,
+    intervalLocalHitsFromMemory: 0,
+    intervalLocalHitsFromMemorySession: 0,
     appLoads: 0,
 };
 
@@ -476,6 +543,7 @@ function recordEdgeResponse(headers, entries, getUrl) {
 }
 
 function logCacheMetricsSnapshot() {
+    flushIntervalSourceLog(true);
     const edgeAgeAvgMs = cacheMetrics.edgeAgeSamples > 0
         ? Math.round(cacheMetrics.edgeAgeMsTotal / cacheMetrics.edgeAgeSamples)
         : 0;
@@ -493,6 +561,9 @@ function logCacheMetricsSnapshot() {
         snapshot: {
             ...counters,
             edgeAgeAvgMs,
+            intervalLocalIdbHitPct: (counters.intervalLocalHitsFromIdb + counters.intervalLocalHitsFromSession + counters.intervalLocalHitsFromMemory) > 0
+                ? Math.round((counters.intervalLocalHitsFromIdb / (counters.intervalLocalHitsFromIdb + counters.intervalLocalHitsFromSession + counters.intervalLocalHitsFromMemory)) * 100)
+                : null,
             edgeGetConversionPct: counters.edgeGetEligibleBatches > 0
                 ? Math.round((counters.edgeGetExecutedBatches / counters.edgeGetEligibleBatches) * 100)
                 : null
@@ -1150,6 +1221,10 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cacheKeyBase = `${interval}:${window}`;
+    let callIdbHits = 0;
+    let callSessionHits = 0;
+    let callMemoryHits = 0;
+    let callMisses = 0;
 
     if (!pendingIntervalReqs.has(cacheKeyBase)) {
         pendingIntervalReqs.set(cacheKeyBase, new Map());
@@ -1167,12 +1242,33 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
 
         if (isCacheRowFresh(cached, ttl)) {
             markLocalCacheHit();
+            if (idbHydratedIntervalKeys.has(cacheKey)) {
+                incrementMetric('intervalLocalHitsFromIdb');
+                callIdbHits += 1;
+            } else if (sessionHydratedIntervalKeys.has(cacheKey)) {
+                incrementMetric('intervalLocalHitsFromSession');
+                incrementMetric('intervalLocalHitsFromMemorySession');
+                callSessionHits += 1;
+            } else {
+                incrementMetric('intervalLocalHitsFromMemory');
+                incrementMetric('intervalLocalHitsFromMemorySession');
+                callMemoryHits += 1;
+            }
             if (cached.data !== null) results.set(sym, cached.data);
         } else if (!currentPending.has(sym)) {
             markLocalCacheMiss(cacheLookupMissReason(cached));
+            callMisses += 1;
             uncached.push(sym);
         }
     }
+
+    recordIntervalSourceSample({
+        symbols: symbols.length,
+        idbHits: callIdbHits,
+        sessionHits: callSessionHits,
+        memoryHits: callMemoryHits,
+        misses: callMisses
+    });
 
     if (uncached.length === 0) {
         // All either cached or already pending. 
@@ -1259,7 +1355,11 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                     if (extracted) {
                         const cacheKey = `${extracted.symbol}:${window}`;
                         const row = buildCacheRow(extracted.data, batchResult.responseTtlMs, ttl);
-                        if (row) intervalCache.set(cacheKey, row);
+                        if (row) {
+                            intervalCache.set(cacheKey, row);
+                            idbHydratedIntervalKeys.delete(cacheKey);
+                            sessionHydratedIntervalKeys.delete(cacheKey);
+                        }
                         returned.add(extracted.symbol);
                     }
                 });
@@ -1268,7 +1368,12 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
                 groupSymbols.forEach(sym => {
                     if (!returned.has(sym)) {
                         const row = buildCacheRow(null, batchResult.responseTtlMs, ttl);
-                        if (row) intervalCache.set(`${sym}:${window}`, row);
+                        if (row) {
+                            const cacheKey = `${sym}:${window}`;
+                            intervalCache.set(cacheKey, row);
+                            idbHydratedIntervalKeys.delete(cacheKey);
+                            sessionHydratedIntervalKeys.delete(cacheKey);
+                        }
                     }
                 });
             } catch (err) {
@@ -1527,6 +1632,9 @@ export function clearPriceCache() {
     priceCache.clear();
     intervalCache.clear();
     fundaCache.clear();
+    idbHydratedIntervalKeys.clear();
+    sessionHydratedIntervalKeys.clear();
+    flushIntervalSourceLog(true);
     sessionStorage.removeItem(PRICE_CACHE_KEY);
     sessionStorage.removeItem(INTERVAL_CACHE_KEY);
     sessionStorage.removeItem(FUNDA_CACHE_KEY);
@@ -1545,6 +1653,15 @@ export function getCachedInterval(symbol, interval) {
     const cached = intervalCache.get(cacheKey);
     if (isCacheRowFresh(cached, ttl)) {
         markLocalCacheHit();
+        if (idbHydratedIntervalKeys.has(cacheKey)) {
+            incrementMetric('intervalLocalHitsFromIdb');
+        } else if (sessionHydratedIntervalKeys.has(cacheKey)) {
+            incrementMetric('intervalLocalHitsFromSession');
+            incrementMetric('intervalLocalHitsFromMemorySession');
+        } else {
+            incrementMetric('intervalLocalHitsFromMemory');
+            incrementMetric('intervalLocalHitsFromMemorySession');
+        }
         return cached.data;
     }
     markLocalCacheMiss(cacheLookupMissReason(cached));

@@ -16,6 +16,9 @@ const EDGE_CACHE_MAX_URL_LENGTH = 7000;
 const EDGE_REALTIME_GROUP_SIZE = 20;
 const EDGE_CACHEABLE_GROUP_SIZE = 25;
 const EDGE_BATCH_TTL_MS = 300_000;
+const EDGE_BATCH_TIMEOUT_MS = 15_000;
+const EDGE_BATCH_RETRIES = 1;
+const EDGE_BATCH_RETRY_BACKOFF_MS = 180;
 const INTERVAL_CHUNK_CONCURRENCY = 4;
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
@@ -983,7 +986,7 @@ function queueRpc(rpcId, rpcArgs) {
  * Execute a raw batchexecute call with arbitrary entries.
  * Returns raw response text and optional CDN freshness budget.
  */
-async function executeBatch(entries, timeoutMs = 12000) {
+async function executeBatch(entries, timeoutMs = EDGE_BATCH_TIMEOUT_MS) {
     if (entries.length === 0) return { text: '', responseTtlMs: null };
     markNetworkMissBatch();
 
@@ -1000,45 +1003,84 @@ async function executeBatch(entries, timeoutMs = 12000) {
     });
     const getUrl = `${url}?${params.toString()}`;
 
-    if (getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH) {
+    const canUseEdgeGet = getUrl.length <= EDGE_CACHE_MAX_URL_LENGTH;
+    if (canUseEdgeGet) {
         markEdgeGetEligibleBatch();
         markEdgeGetExecutedBatch();
-        const getResponse = await fetch(getUrl, {
-            method: 'GET',
-            signal: AbortSignal.timeout?.(timeoutMs),
-        });
-        if (getResponse.ok) {
-            recordEdgeResponse(getResponse.headers, entries, getUrl);
-            return {
-                text: await getResponse.text(),
-                responseTtlMs: getRemainingEdgeTtlMs(getResponse.headers)
-            };
-        }
-        markEdgeGetFailure();
-        if (IS_DEV) {
-            console.warn(`[PriceService] Edge GET batch failed (${getResponse.status}), falling back to POST`);
-        }
     } else {
         markEdgeUrlTooLongSkip();
         maybeWarnEdgeUrlTooLong(getUrl.length, entries.length);
     }
 
-    // Fallback path: AES-256-GCM encrypted POST payload
-    markPostFallback();
-    const entropy = await seal(fReq);
+    let lastError = null;
+    for (let attempt = 0; attempt <= EDGE_BATCH_RETRIES; attempt++) {
+        const attemptTimeout = timeoutMs + (attempt * 4000);
+        try {
+            if (canUseEdgeGet) {
+                const getResponse = await fetch(getUrl, {
+                    method: 'GET',
+                    signal: AbortSignal.timeout?.(attemptTimeout),
+                });
+                if (getResponse.ok) {
+                    const text = await getResponse.text();
+                    if (isLikelyValidBatchResponse(text, rpcIds)) {
+                        recordEdgeResponse(getResponse.headers, entries, getUrl);
+                        return {
+                            text,
+                            responseTtlMs: getRemainingEdgeTtlMs(getResponse.headers)
+                        };
+                    }
+                    markEdgeGetFailure();
+                    if (IS_DEV) {
+                        console.warn('[PriceService] Edge GET payload invalid, falling back to POST');
+                    }
+                } else {
+                    markEdgeGetFailure();
+                    if (IS_DEV) {
+                        console.warn(`[PriceService] Edge GET batch failed (${getResponse.status}), falling back to POST`);
+                    }
+                }
+            }
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            [HDR_ENTROPY]: rpcIds.join(','),
-            'Content-Type': CT_PLAIN
-        },
-        body: entropy,
-        signal: AbortSignal.timeout?.(timeoutMs),
-    });
+            // Fallback path: AES-256-GCM encrypted POST payload
+            markPostFallback();
+            const entropy = await seal(fReq);
 
-    if (!response.ok) throw new Error(`Batch failed: ${response.status}`);
-    return { text: await response.text(), responseTtlMs: null };
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    [HDR_ENTROPY]: rpcIds.join(','),
+                    'Content-Type': CT_PLAIN
+                },
+                body: entropy,
+                signal: AbortSignal.timeout?.(attemptTimeout),
+            });
+
+            if (!response.ok) throw new Error(`Batch failed: ${response.status}`);
+            const text = await response.text();
+            if (!isLikelyValidBatchResponse(text, rpcIds)) {
+                throw new Error('Batch payload malformed');
+            }
+            return { text, responseTtlMs: null };
+        } catch (error) {
+            lastError = error;
+            if (attempt < EDGE_BATCH_RETRIES) {
+                if (IS_DEV) {
+                    console.warn(`[PriceService] Batch retry ${attempt + 1}/${EDGE_BATCH_RETRIES} after error: ${error?.message || error}`);
+                }
+                await new Promise((resolve) => setTimeout(resolve, EDGE_BATCH_RETRY_BACKOFF_MS * (attempt + 1)));
+            }
+        }
+    }
+
+    throw lastError || new Error('Batch failed: unknown error');
+}
+
+function isLikelyValidBatchResponse(text, rpcIds) {
+    if (typeof text !== 'string' || text.length < 24) return false;
+    if (!text.includes('"wrb.fr"')) return false;
+    if (!Array.isArray(rpcIds) || rpcIds.length === 0) return true;
+    return rpcIds.some((rpcId) => text.includes(`"${rpcId}"`));
 }
 
 function base64UrlEncode(value) {

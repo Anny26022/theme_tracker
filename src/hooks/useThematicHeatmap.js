@@ -138,22 +138,36 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
                 recordCacheMetric('externalCacheMisses');
 
                 const symbolsToFetch = isCacheValid ? missingSymbols : normalizedSymbols;
-                const fetchedPerf = symbolsToFetch.length > 0
-                    ? await fetchBatchIntervalPerformance(symbolsToFetch, interval)
-                    : new Map();
+                let fetchedPerf = new Map();
+                if (symbolsToFetch.length > 0) {
+                    try {
+                        fetchedPerf = await fetchBatchIntervalPerformance(symbolsToFetch, interval);
+                    } catch {
+                        fetchedPerf = new Map();
+                    }
+                }
 
-                const nextPerfMap = (isCacheValid && hasCacheForInterval)
+                // Never drop existing interval data on transient fetch failures.
+                const nextPerfMap = hasCacheForInterval
                     ? new Map(globalPriceDataCache.get(interval))
                     : new Map();
 
+                let mergedCount = 0;
+
                 fetchedPerf.forEach((value, symbol) => {
                     nextPerfMap.set(symbol, value);
+                    coverage.add(symbol);
+                    mergedCount++;
                 });
 
-                symbolsToFetch.forEach((symbol) => coverage.add(symbol));
-                globalPriceCoverage.set(interval, coverage);
-                globalPriceDataCache.set(interval, nextPerfMap);
-                wasRefetched = true;
+                // Persist cache state if we merged fresh rows, or if this interval had no cache yet.
+                if (mergedCount > 0 || !hasCacheForInterval) {
+                    globalPriceCoverage.set(interval, coverage);
+                    globalPriceDataCache.set(interval, nextPerfMap);
+                }
+                if (mergedCount > 0) {
+                    wasRefetched = true;
+                }
                 return { interval, perfMap: nextPerfMap };
             })
         );

@@ -4,6 +4,11 @@ import { fetchBatchIntervalPerformance, cleanSymbol, recordCacheMetric } from '.
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
 const HEATMAP_CACHE_TTL_MS = 300_000; // 5 minutes freshness budget
 const HEATMAP_REFRESH_INTERVAL_MS = 240_000; // 4 minutes scheduled refresh
+const HEATMAP_DEFAULT_PRIORITY_INTERVAL = '1M';
+const HEATMAP_INTERVAL_PARALLELISM = Math.max(1, Math.min(
+    Number(import.meta.env?.VITE_HEATMAP_INTERVAL_PARALLELISM || 3),
+    7
+));
 const RAW_DATA_KEY = 'tt_raw_price_data:v1';
 
 // ─── Persistence Helpers ───────────────────────────────────────────
@@ -212,64 +217,80 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             setIntervalProgress(nextProgress);
         }
 
-        await Promise.all(HEATMAP_INTERVALS.map(async (interval) => {
-            const hasCacheForInterval = globalPriceDataCache.has(interval);
-            const coverage = globalPriceCoverage.get(interval) || new Set();
-            const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
+        const orderedIntervals = (() => {
+            const preferred = HEATMAP_DEFAULT_PRIORITY_INTERVAL;
+            if (!HEATMAP_INTERVALS.includes(preferred)) return HEATMAP_INTERVALS;
+            return [
+                preferred,
+                ...HEATMAP_INTERVALS.filter((interval) => interval !== preferred)
+            ];
+        })();
 
-            if (isCacheValid && hasCacheForInterval && missingSymbols.length === 0) {
-                recordCacheMetric('externalCacheHits');
-                intervalResults.set(interval, globalPriceDataCache.get(interval));
-            } else {
-                recordCacheMetric('externalCacheMisses');
-                const symbolsToFetch = isCacheValid ? missingSymbols : normalizedSymbols;
-                const nextPerfMap = (isCacheValid && hasCacheForInterval)
-                    ? new Map(globalPriceDataCache.get(interval))
-                    : new Map();
-                intervalResults.set(interval, nextPerfMap);
+        const intervalQueue = [...orderedIntervals];
+        const workerCount = Math.max(1, Math.min(HEATMAP_INTERVAL_PARALLELISM, intervalQueue.length));
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+            while (intervalQueue.length > 0) {
+                const interval = intervalQueue.shift();
+                if (!interval) break;
 
-                const fetchedPerf = symbolsToFetch.length > 0
-                    ? await fetchBatchIntervalPerformance(symbolsToFetch, interval, {
-                        onProgress: (progress) => {
-                            if (requestId !== requestIdRef.current) return;
-                            if (progress?.partialData && typeof progress.partialData === 'object') {
-                                Object.entries(progress.partialData).forEach(([symbol, value]) => {
-                                    if (value && typeof value.changePct === 'number') {
-                                        nextPerfMap.set(symbol, value);
-                                    }
-                                });
-                                globalPriceDataCache.set(interval, nextPerfMap);
-                                const chunkHeatmap = buildHeatmap(themeToSymbols, intervalResults);
-                                setHeatmapData(chunkHeatmap);
-                                if (hasAnyHeatmapValues(chunkHeatmap)) setLoading(false);
-                            }
-                            setIntervalProgress((prev) => ({
-                                ...prev,
-                                [interval]: {
-                                    ...(prev?.[interval] || {}),
-                                    ...progress,
-                                    done: Boolean(progress?.done)
+                const hasCacheForInterval = globalPriceDataCache.has(interval);
+                const coverage = globalPriceCoverage.get(interval) || new Set();
+                const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
+
+                if (isCacheValid && hasCacheForInterval && missingSymbols.length === 0) {
+                    recordCacheMetric('externalCacheHits');
+                    intervalResults.set(interval, globalPriceDataCache.get(interval));
+                } else {
+                    recordCacheMetric('externalCacheMisses');
+                    const symbolsToFetch = isCacheValid ? missingSymbols : normalizedSymbols;
+                    const nextPerfMap = (isCacheValid && hasCacheForInterval)
+                        ? new Map(globalPriceDataCache.get(interval))
+                        : new Map();
+                    intervalResults.set(interval, nextPerfMap);
+
+                    const fetchedPerf = symbolsToFetch.length > 0
+                        ? await fetchBatchIntervalPerformance(symbolsToFetch, interval, {
+                            onProgress: (progress) => {
+                                if (requestId !== requestIdRef.current) return;
+                                if (progress?.partialData && typeof progress.partialData === 'object') {
+                                    Object.entries(progress.partialData).forEach(([symbol, value]) => {
+                                        if (value && typeof value.changePct === 'number') {
+                                            nextPerfMap.set(symbol, value);
+                                        }
+                                    });
+                                    globalPriceDataCache.set(interval, nextPerfMap);
+                                    const chunkHeatmap = buildHeatmap(themeToSymbols, intervalResults);
+                                    setHeatmapData(chunkHeatmap);
+                                    if (hasAnyHeatmapValues(chunkHeatmap)) setLoading(false);
                                 }
-                            }));
-                        }
-                    })
-                    : new Map();
+                                setIntervalProgress((prev) => ({
+                                    ...prev,
+                                    [interval]: {
+                                        ...(prev?.[interval] || {}),
+                                        ...progress,
+                                        done: Boolean(progress?.done)
+                                    }
+                                }));
+                            }
+                        })
+                        : new Map();
 
-                fetchedPerf.forEach((value, symbol) => {
-                    nextPerfMap.set(symbol, value);
-                });
+                    fetchedPerf.forEach((value, symbol) => {
+                        nextPerfMap.set(symbol, value);
+                    });
 
-                symbolsToFetch.forEach((symbol) => coverage.add(symbol));
-                globalPriceCoverage.set(interval, coverage);
-                globalPriceDataCache.set(interval, nextPerfMap);
-                intervalResults.set(interval, nextPerfMap);
-                wasRefetched = true;
+                    symbolsToFetch.forEach((symbol) => coverage.add(symbol));
+                    globalPriceCoverage.set(interval, coverage);
+                    globalPriceDataCache.set(interval, nextPerfMap);
+                    intervalResults.set(interval, nextPerfMap);
+                    wasRefetched = true;
+                }
+
+                if (requestId !== requestIdRef.current) return;
+                const partialHeatmap = buildHeatmap(themeToSymbols, intervalResults);
+                setHeatmapData(partialHeatmap);
+                if (hasAnyHeatmapValues(partialHeatmap)) setLoading(false);
             }
-
-            if (requestId !== requestIdRef.current) return;
-            const partialHeatmap = buildHeatmap(themeToSymbols, intervalResults);
-            setHeatmapData(partialHeatmap);
-            if (hasAnyHeatmapValues(partialHeatmap)) setLoading(false);
         }));
 
         if (wasRefetched) {

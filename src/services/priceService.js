@@ -15,7 +15,14 @@ const BATCH_AGGREGATION_WINDOW = 16; // 16ms (1 frame) aggregation window for in
 const EDGE_REALTIME_GROUP_SIZE = 550;
 const EDGE_CACHEABLE_GROUP_SIZE = 550;
 const EDGE_BATCH_TTL_MS = 300_000;
-const INTERVAL_CHUNK_CONCURRENCY = 4;
+const INTERVAL_CHUNK_CONCURRENCY = Math.max(1, Math.min(
+    Number(import.meta.env?.VITE_INTERVAL_CHUNK_CONCURRENCY || 6),
+    12
+));
+const INTERVAL_CONSOLIDATION_WINDOW_MS = Math.max(0, Math.min(
+    Number(import.meta.env?.VITE_INTERVAL_CONSOLIDATION_WINDOW_MS || 16),
+    100
+));
 const IS_DEV = import.meta.env?.DEV;
 const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
@@ -1310,7 +1317,7 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
         scheduleIntervalSave();
         currentPending.clear(); // Clear pending map for this timeframe
         resolveBatch();
-    }, 50)); // 50ms window to aggregate hook calls
+    }, INTERVAL_CONSOLIDATION_WINDOW_MS)); // small window to aggregate same-tick calls
 
     // Return results merged with any pending data
     return batchPromise.then(() => {

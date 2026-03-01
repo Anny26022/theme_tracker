@@ -1,4 +1,4 @@
-import React, { startTransition, useMemo, useState, useRef, useEffect } from 'react';
+import React, { startTransition, useMemo, useState, useRef, useEffect, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
@@ -19,6 +19,17 @@ const COLUMNS = [
 const EMPTY_THEME_PERF = Object.freeze({});
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
+const BLOCK_PREFETCH_ROOT_MARGIN = '320px 0px';
+const INITIAL_VISIBLE_BLOCKS = 3;
+const EMPTY_GRID_CONTEXT = Object.freeze({
+    themeCompaniesMap: EMPTY_OBJECT,
+    heatmapData: EMPTY_OBJECT,
+    loading: false,
+    stockPerfMap: EMPTY_OBJECT,
+    highlightedTheme: null,
+    isMobile: false
+});
+const ThemeGridDataContext = React.createContext(EMPTY_GRID_CONTEXT);
 
 const makeBlockId = (title) => `block-${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
@@ -356,10 +367,8 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
 });
 
 const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => {
-    const blockId = makeBlockId(block.title);
-
     return (
-        <div id={blockId} className="flex flex-col h-full group/block transition-all duration-700 scroll-mt-32">
+        <div className="flex flex-col h-full group/block transition-all duration-700">
             <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2">
                 <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">
                     {block.title}
@@ -396,24 +405,222 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
     );
 });
 
-const ThemeGrid = React.memo(({ mapSource, gridClassName, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => (
-    <div className={gridClassName}>
-        {mapSource.map((block, idx) => (
-            <ThemeBlock
-                key={block.title || idx}
-                block={block}
-                themeCompaniesMap={themeCompaniesMap}
-                heatmapData={heatmapData}
-                loading={loading}
-                stockPerfMap={stockPerfMap}
-                highlightedTheme={highlightedTheme}
-                isMobile={isMobile}
-            />
-        ))}
-    </div>
-));
+const ContextThemeBlock = React.memo(({ block }) => {
+    const {
+        themeCompaniesMap,
+        heatmapData,
+        loading,
+        stockPerfMap,
+        highlightedTheme,
+        isMobile
+    } = useContext(ThemeGridDataContext);
 
-const Legend = () => (
+    return (
+        <ThemeBlock
+            block={block}
+            themeCompaniesMap={themeCompaniesMap}
+            heatmapData={heatmapData}
+            loading={loading}
+            stockPerfMap={stockPerfMap}
+            highlightedTheme={highlightedTheme}
+            isMobile={isMobile}
+        />
+    );
+});
+
+const ThemeBlockSkeleton = () => (
+    <div className="h-[220px] rounded-xl border border-[var(--ui-divider)]/20 bg-[var(--bg-main)]/15" />
+);
+
+const buildInitialVisibleIds = (mapSource) => {
+    const ids = new Set();
+    mapSource.slice(0, INITIAL_VISIBLE_BLOCKS).forEach((block) => {
+        ids.add(makeBlockId(block.title));
+    });
+    return ids;
+};
+
+const buildVisibleIdsFromMap = (visibilityMap, mapSource) => {
+    const ids = new Set();
+    mapSource.forEach((block) => {
+        const id = makeBlockId(block.title);
+        if (visibilityMap.get(id)) ids.add(id);
+    });
+    return ids;
+};
+
+const DeferredThemeBlock = React.memo(({
+    block,
+    blockId,
+    isVisible,
+    attachRef
+}) => {
+    return (
+        <div id={blockId} ref={attachRef} data-block-id={blockId} className="scroll-mt-32 min-h-[220px]">
+            {isVisible ? (
+                <ContextThemeBlock block={block} />
+            ) : (
+                <ThemeBlockSkeleton />
+            )}
+        </div>
+    );
+});
+
+const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive }) => {
+    const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
+    const visibilityRef = useRef(new Map());
+    const nodeRefs = useRef(new Map());
+
+    useEffect(() => {
+        const initialIds = buildInitialVisibleIds(mapSource);
+        const nextVisibility = new Map();
+        mapSource.forEach((block) => {
+            const id = makeBlockId(block.title);
+            nextVisibility.set(id, initialIds.has(id));
+        });
+        visibilityRef.current = nextVisibility;
+        setVisibleIds(initialIds);
+    }, [mapSource]);
+
+    const attachNodeRef = useCallback((blockId, node) => {
+        if (node) {
+            nodeRefs.current.set(blockId, node);
+        } else {
+            nodeRefs.current.delete(blockId);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!isActive) return undefined;
+
+        if (typeof window === 'undefined' || !('IntersectionObserver' in window)) {
+            setVisibleIds(() => new Set(mapSource.map((block) => makeBlockId(block.title))));
+            return undefined;
+        }
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                let hasChanges = false;
+                entries.forEach((entry) => {
+                    const id = entry.target.getAttribute('data-block-id');
+                    if (!id) return;
+                    const nextValue = entry.isIntersecting;
+                    if (visibilityRef.current.get(id) === nextValue) return;
+                    visibilityRef.current.set(id, nextValue);
+                    hasChanges = true;
+                });
+
+                if (!hasChanges) return;
+                const nextIds = buildVisibleIdsFromMap(visibilityRef.current, mapSource);
+                setVisibleIds(nextIds.size > 0 ? nextIds : buildInitialVisibleIds(mapSource));
+            },
+            { root: null, rootMargin: BLOCK_PREFETCH_ROOT_MARGIN, threshold: 0.01 }
+        );
+
+        nodeRefs.current.forEach((node) => {
+            observer.observe(node);
+        });
+
+        return () => observer.disconnect();
+    }, [isActive, mapSource]);
+
+    return (
+        <div className={gridClassName}>
+            {mapSource.map((block, idx) => {
+                const blockId = makeBlockId(block.title);
+                return (
+                    <DeferredThemeBlock
+                        key={block.title || idx}
+                        block={block}
+                        blockId={blockId}
+                        isVisible={visibleIds.has(blockId)}
+                        attachRef={(node) => attachNodeRef(blockId, node)}
+                    />
+                );
+            })}
+        </div>
+    );
+});
+
+const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue }) => {
+    if (!isMounted) return null;
+
+    return (
+        <div className={cn(isActive ? 'block' : 'hidden')} aria-hidden={!isActive}>
+            <ThemeGridDataContext.Provider value={gridContextValue}>
+                <ThemeGrid
+                    mapSource={THEMATIC_MAP}
+                    gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+                    isActive={isActive}
+                />
+            </ThemeGridDataContext.Provider>
+        </div>
+    );
+}, (prevProps, nextProps) => {
+    if (prevProps.isMounted !== nextProps.isMounted) return false;
+    if (prevProps.isActive !== nextProps.isActive) return false;
+    if (!prevProps.isActive && !nextProps.isActive) return true;
+    return prevProps.gridContextValue === nextProps.gridContextValue;
+});
+
+const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue }) => {
+    if (!isMounted) return null;
+
+    return (
+        <div className={cn(isActive ? 'block' : 'hidden')} aria-hidden={!isActive}>
+            <ThemeGridDataContext.Provider value={gridContextValue}>
+                <ThemeGrid
+                    mapSource={macroMap}
+                    gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3"
+                    isActive={isActive}
+                />
+            </ThemeGridDataContext.Provider>
+        </div>
+    );
+}, (prevProps, nextProps) => {
+    if (prevProps.isMounted !== nextProps.isMounted) return false;
+    if (prevProps.isActive !== nextProps.isActive) return false;
+    if (prevProps.macroMap !== nextProps.macroMap) return false;
+    if (!prevProps.isActive && !nextProps.isActive) return true;
+    return prevProps.gridContextValue === nextProps.gridContextValue;
+});
+
+const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => {
+    const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
+
+    useEffect(() => {
+        if (viewMode === 'MACRO' && !hasMountedMacro) {
+            setHasMountedMacro(true);
+        }
+    }, [viewMode, hasMountedMacro]);
+
+    const gridContextValue = useMemo(() => ({
+        themeCompaniesMap,
+        heatmapData,
+        loading,
+        stockPerfMap,
+        highlightedTheme,
+        isMobile
+    }), [themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile]);
+
+    return (
+        <>
+            <ThematicGridPane
+                isActive={viewMode === 'THEMATIC'}
+                isMounted={true}
+                gridContextValue={gridContextValue}
+            />
+            <MacroGridPane
+                isActive={viewMode === 'MACRO'}
+                isMounted={hasMountedMacro}
+                macroMap={macroMap}
+                gridContextValue={gridContextValue}
+            />
+        </>
+    );
+});
+
+const Legend = React.memo(() => (
     <div className="flex items-center gap-4 md:gap-8 px-4 md:px-6 py-2.5 glass-card border-[var(--ui-divider)]/20 rounded-full mb-10 w-fit mx-auto md:mx-0 bg-[var(--bg-main)]/40 shadow-xl">
         <span className="text-[7.5px] font-black uppercase tracking-[0.3em] text-[var(--text-muted)]">Performance Analytics</span>
         <div className="flex items-center gap-2">
@@ -431,7 +638,7 @@ const Legend = () => (
             ))}
         </div>
     </div>
-);
+));
 
 export const MarketMapView = ({ hierarchy }) => {
     const [hideBSE, setHideBSE] = useState(true);
@@ -439,7 +646,6 @@ export const MarketMapView = ({ hierarchy }) => {
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [highlightedTheme, setHighlightedTheme] = useState(null);
     const [viewMode, setViewMode] = useState('THEMATIC'); // 'THEMATIC' or 'MACRO'
-    const [hasMountedMacro, setHasMountedMacro] = useState(false);
     const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth < 768 : false));
     const searchRef = useRef(null);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
@@ -452,24 +658,6 @@ export const MarketMapView = ({ hierarchy }) => {
         window.addEventListener('resize', checkMobile);
         return () => window.removeEventListener('resize', checkMobile);
     }, []);
-
-    useEffect(() => {
-        if (hasMountedMacro || typeof window === 'undefined') return undefined;
-
-        const warmMacroTree = () => {
-            startTransition(() => {
-                setHasMountedMacro(true);
-            });
-        };
-
-        if (typeof window.requestIdleCallback === 'function') {
-            const idleId = window.requestIdleCallback(warmMacroTree, { timeout: 1200 });
-            return () => window.cancelIdleCallback(idleId);
-        }
-
-        const timeoutId = window.setTimeout(warmMacroTree, 500);
-        return () => window.clearTimeout(timeoutId);
-    }, [hasMountedMacro]);
 
     useEffect(() => {
         if (isSearchFocused && searchRef.current) {
@@ -678,7 +866,6 @@ export const MarketMapView = ({ hierarchy }) => {
                         <button
                             onClick={() => {
                                 startTransition(() => {
-                                    setHasMountedMacro(true);
                                     setViewMode('MACRO');
                                 });
                             }}
@@ -719,33 +906,16 @@ export const MarketMapView = ({ hierarchy }) => {
 
             <div className="max-w-full lg:max-w-[1800px] mx-auto">
                 <Legend />
-                <div className={cn(viewMode === 'THEMATIC' ? 'block' : 'hidden')}>
-                    <ThemeGrid
-                        mapSource={THEMATIC_MAP}
-                        gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
-                        themeCompaniesMap={themeCompaniesMap}
-                        heatmapData={heatmapData}
-                        loading={loading}
-                        stockPerfMap={stockPerfMap}
-                        highlightedTheme={highlightedTheme}
-                        isMobile={isMobile}
-                    />
-                </div>
-
-                {(hasMountedMacro || viewMode === 'MACRO') && (
-                    <div className={cn(viewMode === 'MACRO' ? 'block' : 'hidden')}>
-                        <ThemeGrid
-                            mapSource={macroMap}
-                            gridClassName="grid gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 auto-rows-fr grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3"
-                            themeCompaniesMap={themeCompaniesMap}
-                            heatmapData={heatmapData}
-                            loading={loading}
-                            stockPerfMap={stockPerfMap}
-                            highlightedTheme={highlightedTheme}
-                            isMobile={isMobile}
-                        />
-                    </div>
-                )}
+                <ThemeGridSection
+                    viewMode={viewMode}
+                    macroMap={macroMap}
+                    themeCompaniesMap={themeCompaniesMap}
+                    heatmapData={heatmapData}
+                    loading={loading}
+                    stockPerfMap={stockPerfMap}
+                    highlightedTheme={highlightedTheme}
+                    isMobile={isMobile}
+                />
             </div>
         </ViewWrapper>
     );

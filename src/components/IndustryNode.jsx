@@ -2,7 +2,7 @@ import React from 'react';
 import { WatchlistCopyButton } from './WatchlistCopyButton';
 import { BaseNode } from './BaseNode';
 
-export const IndustryNode = ({ name, count, onClick, onCopy, index }) => {
+export const IndustryNode = ({ name, count, onClick, onCopy, index, disableEnterAnimation = false, disableContentVisibility = false }) => {
     return (
         <BaseNode
             label="Industry"
@@ -10,6 +10,8 @@ export const IndustryNode = ({ name, count, onClick, onCopy, index }) => {
             title={name}
             onClick={onClick}
             index={index}
+            disableEnterAnimation={disableEnterAnimation}
+            disableContentVisibility={disableContentVisibility}
         >
             <div className="flex items-center justify-end mt-auto">
                 {onCopy && (

@@ -14,17 +14,22 @@ export const BaseNode = ({
     index = 0,
     accentClass = "",
     children,
-    className = ""
+    className = "",
+    disableEnterAnimation = false,
+    disableContentVisibility = false,
 }) => {
+    const boundedDelay = Math.max(0, Math.min(index, 10)) * 0.02;
+
     return (
         <m.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.03 }}
+            initial={disableEnterAnimation ? false : { opacity: 0, y: 15 }}
+            animate={disableEnterAnimation ? undefined : { opacity: 1, y: 0 }}
+            transition={disableEnterAnimation ? undefined : { delay: boundedDelay }}
             whileHover={{ scale: 1.01 }}
             onClick={onClick}
             className={cn(
-                "gpu-accel cv-auto p-4 md:p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
+                "gpu-accel p-4 md:p-5 border glass-card cursor-pointer group transition-colors duration-300 relative overflow-hidden flex flex-col gap-4 hover:bg-[var(--glass-bg)] hover:border-[var(--accent-primary)]",
+                !disableContentVisibility && "cv-auto",
                 accentClass?.split(' ').find(c => c.startsWith('border-')) || "border-[var(--ui-divider)]",
                 className
             )}

@@ -141,10 +141,10 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
         <ViewWrapper id="tracker">
             {isGlobalLoading && <UniverseLoader />}
             <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-[var(--ui-divider)] pb-6">
-                <div className="space-y-1 max-w-full xl:max-w-xl shrink-0">
+                <div className="space-y-1 w-full xl:max-w-xl shrink-0">
                     <div className="flex items-center gap-3 mb-2">
-                        <h2 className="text-base md:text-lg xl:text-xl font-light tracking-[0.2em] xl:tracking-[0.4em] uppercase opacity-90 text-glow-gold">
-                            {trackingType === 'INDUSTRY' ? 'Custom Industry & Sector Tracker' : 'Deep Thematic Cluster Tracker'}
+                        <h2 className="text-sm md:text-lg xl:text-xl font-light tracking-[0.1em] md:tracking-[0.2em] xl:tracking-[0.4em] uppercase opacity-90 text-glow-gold truncate">
+                            {trackingType === 'INDUSTRY' ? 'Industry & Sector' : 'Thematic Clusters'}
                         </h2>
                         <div className="relative group flex items-center shrink-0">
                             <Info className="w-4 h-4 text-[var(--accent-primary)]/50 cursor-help hover:text-[var(--accent-primary)] transition-colors group-hover:opacity-100" />
@@ -211,26 +211,27 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
             </div>
 
             <div className="relative">
-                <div className={`grid grid-cols-2 gap-4 md:gap-12 transition-opacity duration-300 ${isGlobalLoading ? 'opacity-30' : 'opacity-100'}`}>
-                    {/* SECTORS */}
-                    <div className="space-y-8">
+                <div className={`grid grid-cols-1 xl:grid-cols-2 gap-12 xl:gap-20 transition-opacity duration-300 ${isGlobalLoading ? 'opacity-30' : 'opacity-100'}`}>
+                    {/* SECTORS / PILLARS */}
+                    <div className="space-y-6">
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">
                             <div className="w-1 h-2 md:h-3 bg-[var(--accent-primary)]" />
                             <h2 className="text-[8px] md:text-[10px] font-bold tracking-[0.2em] md:tracking-[0.4em] uppercase opacity-40">
                                 {trackingType === 'INDUSTRY' ? 'Sector' : 'Macro Pillar'} {viewMode === 'breadth' ? 'Health' : 'Rankings'}
                             </h2>
                             <div className="ml-auto flex items-center gap-2">
-                                <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
+                                <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase whitespace-nowrap">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
                                 <button
                                     onClick={() => setSectorSortDesc(p => !p)}
-                                    className="flex items-center gap-0.5 text-[7px] font-bold tracking-wider uppercase px-1.5 py-0.5 rounded border border-[var(--ui-divider)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] transition-all text-[var(--text-muted)]"
+                                    className="flex items-center gap-0.5 text-[7px] font-bold tracking-wider uppercase px-2 py-1 rounded border border-[var(--ui-divider)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] transition-all text-[var(--text-muted)] whitespace-nowrap"
                                 >
                                     {sectorSortDesc ? <ArrowDown className="w-2.5 h-2.5" /> : <ArrowUp className="w-2.5 h-2.5" />}
-                                    {sectorSortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}
+                                    <span className="hidden xs:inline">{sectorSortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}</span>
+                                    <span className="xs:hidden">{sectorSortDesc ? 'High' : 'Low'}</span>
                                 </button>
                             </div>
                         </div>
-                        <div className="h-[min(70vh,720px)]">
+                        <div className="h-[500px] xl:h-[calc(100vh-320px)] min-h-[400px]">
                             <Virtuoso
                                 data={sortedLeft}
                                 computeItemKey={(_, item) => item}
@@ -263,17 +264,18 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                 {trackingType === 'INDUSTRY' ? 'Industry' : 'Thematic Theme'} {viewMode === 'breadth' ? 'Breadth' : 'Alpha'}
                             </h2>
                             <div className="ml-auto flex items-center gap-2">
-                                <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
+                                <span className="text-[7px] text-[var(--text-muted)] tracking-wider uppercase whitespace-nowrap">{viewMode === 'breadth' ? activeEMALabel : timeframe}</span>
                                 <button
                                     onClick={() => setIndustrySortDesc(p => !p)}
-                                    className="flex items-center gap-0.5 text-[7px] font-bold tracking-wider uppercase px-1.5 py-0.5 rounded border border-[var(--ui-divider)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] transition-all text-[var(--text-muted)]"
+                                    className="flex items-center gap-0.5 text-[7px] font-bold tracking-wider uppercase px-2 py-1 rounded border border-[var(--ui-divider)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] transition-all text-[var(--text-muted)] whitespace-nowrap"
                                 >
                                     {industrySortDesc ? <ArrowDown className="w-2.5 h-2.5" /> : <ArrowUp className="w-2.5 h-2.5" />}
-                                    {industrySortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}
+                                    <span className="hidden xs:inline">{industrySortDesc ? (viewMode === 'breadth' ? 'Strongest' : 'Best') : (viewMode === 'breadth' ? 'Weakest' : 'Worst')}</span>
+                                    <span className="xs:hidden">{industrySortDesc ? 'High' : 'Low'}</span>
                                 </button>
                             </div>
                         </div>
-                        <div className="h-[min(70vh,720px)]">
+                        <div className="h-[500px] xl:h-[calc(100vh-320px)] min-h-[400px]">
                             <Virtuoso
                                 data={sortedRight}
                                 computeItemKey={(_, item) => item}

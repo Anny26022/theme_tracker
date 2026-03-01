@@ -220,6 +220,8 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                                 onClick={() => onIndustryClick(ind.sector, ind.name)}
                                 onCopy={() => handleCopyIndustry(ind)}
                                 index={i}
+                                disableEnterAnimation
+                                disableContentVisibility
                             />
                         )}
                     />
@@ -232,4 +234,3 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
         </ViewWrapper>
     );
 };
-

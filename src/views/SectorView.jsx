@@ -98,6 +98,8 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
                             onClick={() => onIndustryClick(ind)}
                             onCopy={() => handleCopyIndustry(ind)}
                             index={i}
+                            disableEnterAnimation
+                            disableContentVisibility
                         />
                     )}
                 />

@@ -34,6 +34,7 @@ const CACHE_METRICS_STATE_KEY = 'tt_cache_metrics_state:v1';
 const PRICE_CACHE_KEY = 'tt_price_cache:v1';
 const INTERVAL_CACHE_KEY = 'tt_interval_cache:v1';
 const FUNDA_CACHE_KEY = 'tt_funda_cache:v1';
+const COMPARISON_CACHE_KEY = 'tt_comparison_cache:v1';
 
 const comparisonCacheMap = new Map();
 const unifiedResultCache = new Map(); // timeframe:symbol -> result
@@ -46,6 +47,7 @@ const MAX_PERSISTED_PRICE_ENTRIES = 1200;
 const MAX_PERSISTED_INTERVAL_ENTRIES_IDB = 30000;
 const MAX_PERSISTED_INTERVAL_ENTRIES_SESSION = 500;
 const MAX_PERSISTED_COMPARISON_ENTRIES_IDB = 1500;
+const MAX_PERSISTED_COMPARISON_ENTRIES_SESSION = 120;
 const MAX_COMPARISON_MEMORY_ENTRIES = 2500;
 const MAX_INTERVAL_MEMORY_ENTRIES = 40000;
 const MAX_PERSISTED_FUNDA_ENTRIES = 1500;
@@ -282,7 +284,12 @@ async function clearComparisonCacheFromIndexedDb() {
 const priceCache = loadCache(PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
 const intervalCache = loadCache(INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES_SESSION);
 const fundaCache = loadCache(FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES);
+const comparisonSessionCache = loadCache(COMPARISON_CACHE_KEY, MAX_PERSISTED_COMPARISON_ENTRIES_SESSION);
 intervalCache.forEach((_, key) => sessionHydratedIntervalKeys.add(key));
+comparisonSessionCache.forEach((row, key) => {
+    if (!key || !row || typeof row.timestamp !== 'number') return;
+    comparisonCacheMap.set(key, row);
+});
 
 async function hydrateIntervalCacheFromIndexedDb() {
     const startedAt = Date.now();
@@ -330,8 +337,11 @@ function ensureIntervalCacheHydrated() {
 }
 
 async function hydrateComparisonCacheFromIndexedDb() {
+    const startedAt = Date.now();
+    let hydratedEntries = 0;
     const entries = await readComparisonCacheEntriesFromIndexedDb();
     if (Array.isArray(entries)) {
+        hydratedEntries = entries.length;
         entries.forEach(([key, row]) => {
             if (!key || !row || typeof row.timestamp !== 'number') return;
             const existing = comparisonCacheMap.get(key);
@@ -341,6 +351,15 @@ async function hydrateComparisonCacheFromIndexedDb() {
             }
         });
         pruneCacheEntries(comparisonCacheMap, MAX_COMPARISON_MEMORY_ENTRIES);
+    }
+    if (IS_DEV) {
+        console.info('[PriceService][IDB] Comparison hydration', {
+            entries: hydratedEntries,
+            sessionSeededEntries: comparisonSessionCache.size,
+            finalEntries: comparisonCacheMap.size,
+            ms: Math.max(0, Date.now() - startedAt),
+            usedIdb: hydratedEntries > 0
+        });
     }
     comparisonCacheHydrated = true;
 }
@@ -365,7 +384,7 @@ if (IS_DEV) {
 let priceSaveTimer = null;
 let intervalSaveTimer = null;
 let fundaSaveTimer = null;
-let comparisonSaveTimer = null;
+let comparisonPersistInFlight = null;
 
 function schedulePriceSave() {
     if (priceSaveTimer) clearTimeout(priceSaveTimer);
@@ -388,13 +407,19 @@ function scheduleFundaSave() {
     fundaSaveTimer = setTimeout(() => saveCache(fundaCache, FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES), 500);
 }
 
-function scheduleComparisonSave() {
-    if (comparisonSaveTimer) clearTimeout(comparisonSaveTimer);
-    comparisonSaveTimer = setTimeout(() => {
+async function persistComparisonCacheNow() {
+    if (comparisonPersistInFlight) return comparisonPersistInFlight;
+    comparisonPersistInFlight = (async () => {
         pruneCacheEntries(comparisonCacheMap, MAX_COMPARISON_MEMORY_ENTRIES);
-        const idbEntries = getSortedCacheEntries(comparisonCacheMap).slice(0, MAX_PERSISTED_COMPARISON_ENTRIES_IDB);
-        void writeComparisonCacheEntriesToIndexedDb(idbEntries);
-    }, 500);
+        const sorted = getSortedCacheEntries(comparisonCacheMap);
+        const idbEntries = sorted.slice(0, MAX_PERSISTED_COMPARISON_ENTRIES_IDB);
+        const sessionMirror = new Map(sorted.slice(0, MAX_PERSISTED_COMPARISON_ENTRIES_SESSION));
+        saveCache(sessionMirror, COMPARISON_CACHE_KEY, MAX_PERSISTED_COMPARISON_ENTRIES_SESSION);
+        await writeComparisonCacheEntriesToIndexedDb(idbEntries);
+    })().finally(() => {
+        comparisonPersistInFlight = null;
+    });
+    return comparisonPersistInFlight;
 }
 
 export const INTERVAL_WINDOWS = {
@@ -1628,7 +1653,7 @@ export async function fetchFundamentals(symbols) {
 
 /**
  * Comparison Engine: Fetch full chart series for multiple symbols.
- * These are not cached in sessionStorage to avoid bloat.
+ * Cached in memory + IDB (and a small session mirror) for fast refresh reuse.
  */
 
 export async function fetchComparisonCharts(symbols, interval = '1D') {
@@ -1684,7 +1709,7 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
         if (rejected.length > 0) {
             console.warn(`[PriceService] Comparison queue partial failures: ${rejected.length}/${requests.length}`);
         }
-        scheduleComparisonSave();
+        await persistComparisonCacheNow();
 
         return results;
     })();
@@ -1711,6 +1736,7 @@ export function clearPriceCache() {
     sessionStorage.removeItem(PRICE_CACHE_KEY);
     sessionStorage.removeItem(INTERVAL_CACHE_KEY);
     sessionStorage.removeItem(FUNDA_CACHE_KEY);
+    sessionStorage.removeItem(COMPARISON_CACHE_KEY);
     void clearIntervalCacheFromIndexedDb();
     void clearComparisonCacheFromIndexedDb();
 }

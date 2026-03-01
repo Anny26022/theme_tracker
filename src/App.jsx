@@ -165,7 +165,6 @@ const App = () => {
     const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
     const { hierarchy, rawData, loading, error } = useMarketData();
     const [insightsCompany, setInsightsCompany] = React.useState(null);
-    const [hasVisitedMarketMap, setHasVisitedMarketMap] = React.useState(view === VIEWS.MARKET_MAP);
 
     // Source of truth from hierarchy to avoid drift between lists and lookup map.
     const sectors = useMemo(() => Object.keys(hierarchy).sort(), [hierarchy]);
@@ -198,12 +197,6 @@ const App = () => {
             navigate(normalizedView, null, null, null);
         }
     }, [view, normalizedView, navigate]);
-
-    React.useEffect(() => {
-        if (normalizedView === VIEWS.MARKET_MAP && !hasVisitedMarketMap) {
-            setHasVisitedMarketMap(true);
-        }
-    }, [normalizedView, hasVisitedMarketMap]);
 
     // Self-heal stale URLs when industry moved sectors.
     React.useEffect(() => {
@@ -262,8 +255,8 @@ const App = () => {
                             )}
                         </AnimatePresence>
 
-                        {(normalizedView === VIEWS.MARKET_MAP || hasVisitedMarketMap) && (
-                            <div className={normalizedView === VIEWS.MARKET_MAP ? 'relative z-[60]' : 'hidden'}>
+                        {normalizedView === VIEWS.MARKET_MAP && (
+                            <div className="relative z-[60]">
                                 <MarketMapView hierarchy={hierarchy} />
                             </div>
                         )}

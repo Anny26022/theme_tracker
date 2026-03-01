@@ -11,6 +11,7 @@
  *   Headers: x-rpc-ids: "xh8wxf,AiCwsd"  (comma-separated RPC IDs)
  *   Body: URL-encoded f.req=... (standard batchexecute format)
  */
+import { getMarketCachePolicy } from './_marketCachePolicy.js';
 
 export default async function handler(req, res) {
     // CORS headers for mobile clients
@@ -27,8 +28,10 @@ export default async function handler(req, res) {
     try {
         const isGet = req.method === 'GET';
         if (isGet) {
-            res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=60');
-            res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=300, stale-while-revalidate=60');
+            const policy = getMarketCachePolicy();
+            res.setHeader('Cache-Control', policy.cacheControl);
+            res.setHeader('Vercel-CDN-Cache-Control', policy.vercelCdnCacheControl);
+            res.setHeader('X-TT-Market-Cache-Phase', policy.phase);
         } else {
             res.setHeader('Cache-Control', 'no-store');
             res.setHeader('Vercel-CDN-Cache-Control', 'no-store');

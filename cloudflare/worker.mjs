@@ -23,9 +23,30 @@ const AES_KEY_BYTES = new Uint8Array([
 
 const TEXT_DECODER = new TextDecoder();
 
-const CDN_CACHE_5M = "public, max-age=0, s-maxage=300, stale-while-revalidate=60";
 const CDN_CACHE_1H = "public, max-age=0, s-maxage=3600, stale-while-revalidate=600";
 const DATA_JSON_CACHE = "public, max-age=0, s-maxage=54000, stale-while-revalidate=60";
+const IST_TIME_ZONE = "Asia/Kolkata";
+const MONDAY_OPEN_TOTAL_SECONDS = ((9 * 60) + 15) * 60;
+const WEEKDAY_TO_INDEX = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+const IST_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: IST_TIME_ZONE,
+  weekday: "short",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
 const EDGE_META_CACHED_AT = "x-tt-edge-cached-at";
 const EDGE_META_TTL = "x-tt-edge-ttl";
 const EDGE_META_SWR = "x-tt-edge-swr";
@@ -59,6 +80,79 @@ function withNoStore(headers = new Headers()) {
 function withCache(headers = new Headers(), cacheControl) {
   headers.set("Cache-Control", cacheControl);
   return headers;
+}
+
+function getIstParts(now = new Date()) {
+  const tokens = IST_PARTS_FORMATTER.formatToParts(now);
+  const parts = {};
+  for (const token of tokens) {
+    if (token.type !== "literal") parts[token.type] = token.value;
+  }
+
+  const weekday = parts.weekday || "Mon";
+  const dayIndex = Object.prototype.hasOwnProperty.call(WEEKDAY_TO_INDEX, weekday)
+    ? WEEKDAY_TO_INDEX[weekday]
+    : 1;
+
+  const hour = Number.parseInt(parts.hour || "0", 10) % 24;
+  const minute = Number.parseInt(parts.minute || "0", 10);
+  const second = Number.parseInt(parts.second || "0", 10);
+  const totalSeconds = (hour * 3600) + (minute * 60) + second;
+
+  return {
+    dayIndex,
+    year: parts.year || "1970",
+    month: parts.month || "01",
+    day: parts.day || "01",
+    hour,
+    totalSeconds,
+  };
+}
+
+function getMarketCachePolicy(now = new Date()) {
+  const ist = getIstParts(now);
+
+  if (ist.dayIndex === 0) {
+    const ttlSec = 21600;
+    const swrSec = 600;
+    return {
+      ttlSec,
+      swrSec,
+      phase: "sunday-closed-6h",
+      key: `sun-${ist.year}${ist.month}${ist.day}-slot${Math.floor(ist.hour / 6)}`,
+      cacheControl: `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=${swrSec}`,
+    };
+  }
+
+  if (ist.dayIndex === 1 && ist.totalSeconds < MONDAY_OPEN_TOTAL_SECONDS) {
+    const ttlSec = Math.max(1, MONDAY_OPEN_TOTAL_SECONDS - ist.totalSeconds);
+    const swrSec = 60;
+    return {
+      ttlSec,
+      swrSec,
+      phase: "monday-preopen-until-0915",
+      key: `mon-preopen-${ist.year}${ist.month}${ist.day}`,
+      cacheControl: `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=${swrSec}`,
+    };
+  }
+
+  const ttlSec = 300;
+  const swrSec = 60;
+  return {
+    ttlSec,
+    swrSec,
+    phase: "market-regular-5m",
+    key: `live-${ist.year}${ist.month}${ist.day}`,
+    cacheControl: `public, max-age=0, s-maxage=${ttlSec}, stale-while-revalidate=${swrSec}`,
+  };
+}
+
+function buildMarketCacheKeyUrl(url, policy) {
+  const cacheKeyUrl = new URL(url.toString());
+  if (!cacheKeyUrl.searchParams.get("mk")) {
+    cacheKeyUrl.searchParams.set("mk", policy.key);
+  }
+  return cacheKeyUrl.toString();
 }
 
 function json(data, init = {}) {
@@ -302,8 +396,12 @@ async function handleGoogleBatch(request, url, { encrypted }, ctx) {
   const isPost = request.method === "POST";
   if (!isGet && !isPost) return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
 
+  const marketPolicy = isGet ? getMarketCachePolicy() : null;
   const headers = withCors(new Headers(), "GET, POST, OPTIONS", "Content-Type, x-app-entropy");
-  if (isGet) withCache(headers, CDN_CACHE_5M);
+  if (isGet) {
+    withCache(headers, marketPolicy.cacheControl);
+    headers.set("X-TT-Market-Cache-Phase", marketPolicy.phase);
+  }
   else withNoStore(headers);
 
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -343,10 +441,10 @@ async function handleGoogleBatch(request, url, { encrypted }, ctx) {
 
     if (!isGet) return fetchFresh();
     return fetchWithEdgeCache({
-      cacheKeyUrl: request.url,
-      ttlSec: 300,
-      swrSec: 60,
-      cacheControl: CDN_CACHE_5M,
+      cacheKeyUrl: buildMarketCacheKeyUrl(url, marketPolicy),
+      ttlSec: marketPolicy.ttlSec,
+      swrSec: marketPolicy.swrSec,
+      cacheControl: marketPolicy.cacheControl,
       ctx,
       fetchFresh,
     });
@@ -360,8 +458,12 @@ async function handleStrikeProxy(request, url, { encrypted }, ctx) {
   const isPost = request.method === "POST";
   if (!isGet && !isPost) return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
 
+  const marketPolicy = isGet ? getMarketCachePolicy() : null;
   const headers = withCors(new Headers(), "GET, POST, OPTIONS", "Content-Type, x-app-entropy");
-  if (isGet) withCache(headers, CDN_CACHE_5M);
+  if (isGet) {
+    withCache(headers, marketPolicy.cacheControl);
+    headers.set("X-TT-Market-Cache-Phase", marketPolicy.phase);
+  }
   else withNoStore(headers);
 
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -384,10 +486,10 @@ async function handleStrikeProxy(request, url, { encrypted }, ctx) {
 
     if (!isGet) return fetchFresh();
     return fetchWithEdgeCache({
-      cacheKeyUrl: request.url,
-      ttlSec: 300,
-      swrSec: 60,
-      cacheControl: CDN_CACHE_5M,
+      cacheKeyUrl: buildMarketCacheKeyUrl(url, marketPolicy),
+      ttlSec: marketPolicy.ttlSec,
+      swrSec: marketPolicy.swrSec,
+      cacheControl: marketPolicy.cacheControl,
       ctx,
       fetchFresh,
     });
@@ -462,7 +564,11 @@ async function handleMobileBatch(request, url, ctx) {
   }
 
   const isGet = request.method === "GET";
-  if (isGet) withCache(headers, CDN_CACHE_5M);
+  const marketPolicy = isGet ? getMarketCachePolicy() : null;
+  if (isGet) {
+    withCache(headers, marketPolicy.cacheControl);
+    headers.set("X-TT-Market-Cache-Phase", marketPolicy.phase);
+  }
   else withNoStore(headers);
 
   try {
@@ -509,10 +615,10 @@ async function handleMobileBatch(request, url, ctx) {
 
     if (!isGet) return fetchFresh();
     return fetchWithEdgeCache({
-      cacheKeyUrl: request.url,
-      ttlSec: 300,
-      swrSec: 60,
-      cacheControl: CDN_CACHE_5M,
+      cacheKeyUrl: buildMarketCacheKeyUrl(url, marketPolicy),
+      ttlSec: marketPolicy.ttlSec,
+      swrSec: marketPolicy.swrSec,
+      cacheControl: marketPolicy.cacheControl,
       ctx,
       fetchFresh,
     });

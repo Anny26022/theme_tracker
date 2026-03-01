@@ -22,6 +22,20 @@ const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
 const INTERVAL_SOURCE_LOG_INTERVAL_MS = 15_000;
 const CACHE_METRICS_STATE_KEY = 'tt_cache_metrics_state:v1';
+const MARKET_PHASE_STATE_KEY = 'tt_market_phase_state:v1';
+const IST_TIME_ZONE = 'Asia/Kolkata';
+const MONDAY_OPEN_TOTAL_MINUTES = (9 * 60) + 15;
+const IST_WEEKDAY_TO_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+const IST_MARKET_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
+    timeZone: IST_TIME_ZONE,
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+});
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
 
@@ -378,6 +392,7 @@ const cacheMetrics = {
     intervalLocalHitsFromSession: 0,
     intervalLocalHitsFromMemory: 0,
     intervalLocalHitsFromMemorySession: 0,
+    marketBoundaryPurges: 0,
     appLoads: 0,
 };
 
@@ -650,7 +665,8 @@ function estimateEdgeGetUrlLengthFromEntries(entries) {
     const encoded = base64UrlEncode(fReq);
     const params = new URLSearchParams({
         rpcids: rpcIds.join(','),
-        f_req: encoded
+        f_req: encoded,
+        mk: getIstMarketCacheKey(),
     });
     return `${buildBatchUrl(rpcIds)}?${params.toString()}`.length;
 }
@@ -726,6 +742,116 @@ async function runWithConcurrency(items, concurrency, worker) {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
+
+let cachedMarketKeyStamp = '';
+let cachedMarketKeyValue = '';
+let runtimePhaseCheckKey = '';
+
+function getIstMarketPhaseState(now = new Date()) {
+    const tokens = IST_MARKET_PARTS_FORMATTER.formatToParts(now);
+    const parts = {};
+    for (const token of tokens) {
+        if (token.type !== 'literal') parts[token.type] = token.value;
+    }
+
+    const weekday = parts.weekday || 'Mon';
+    const year = parts.year || '1970';
+    const month = parts.month || '01';
+    const day = parts.day || '01';
+    const hour = Number.parseInt(parts.hour || '0', 10) % 24;
+    const minute = Number.parseInt(parts.minute || '0', 10);
+    const dayIndex = Object.prototype.hasOwnProperty.call(IST_WEEKDAY_TO_INDEX, weekday)
+        ? IST_WEEKDAY_TO_INDEX[weekday]
+        : 1;
+    const totalMinutes = (hour * 60) + minute;
+
+    let phaseType = 'live';
+    let phaseKey = `live-${year}${month}${day}`;
+    if (dayIndex === 0) {
+        phaseType = 'sunday';
+        phaseKey = `sun-${year}${month}${day}-slot${Math.floor(hour / 6)}`;
+    } else if (dayIndex === 1 && totalMinutes < MONDAY_OPEN_TOTAL_MINUTES) {
+        phaseType = 'preopen';
+        phaseKey = `mon-preopen-${year}${month}${day}`;
+    }
+
+    return {
+        phaseKey,
+        phaseType,
+        dayIndex,
+        totalMinutes,
+    };
+}
+
+function getIstMarketCacheKey(now = new Date()) {
+    const state = getIstMarketPhaseState(now);
+    const stamp = state.phaseKey;
+    if (cachedMarketKeyStamp === stamp && cachedMarketKeyValue) return cachedMarketKeyValue;
+    cachedMarketKeyStamp = stamp;
+    cachedMarketKeyValue = state.phaseKey;
+    return state.phaseKey;
+}
+
+function readStoredMarketPhaseState() {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+        const raw = localStorage.getItem(MARKET_PHASE_STATE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        if (typeof parsed.phaseKey !== 'string' || typeof parsed.phaseType !== 'string') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeStoredMarketPhaseState(state) {
+    if (typeof localStorage === 'undefined' || !state) return;
+    try {
+        localStorage.setItem(MARKET_PHASE_STATE_KEY, JSON.stringify({
+            phaseKey: state.phaseKey,
+            phaseType: state.phaseType,
+            updatedAt: Date.now(),
+        }));
+    } catch {
+        // ignore
+    }
+}
+
+function shouldPurgeAtMarketBoundary(previousState, currentState) {
+    if (!currentState || currentState.phaseType !== 'live') return false;
+
+    if (!previousState) {
+        // Safety for first load after deploy/version upgrade: if it's Monday live, hard-reset once.
+        return currentState.dayIndex === 1 && currentState.totalMinutes >= MONDAY_OPEN_TOTAL_MINUTES;
+    }
+
+    if (previousState.phaseKey === currentState.phaseKey) return false;
+    if (previousState.phaseType === 'preopen' || previousState.phaseType === 'sunday') return true;
+    return false;
+}
+
+function ensureMarketBoundaryPurge() {
+    if (typeof window === 'undefined') return;
+
+    const currentState = getIstMarketPhaseState();
+    if (runtimePhaseCheckKey === currentState.phaseKey) return;
+
+    const previousState = readStoredMarketPhaseState();
+    if (shouldPurgeAtMarketBoundary(previousState, currentState)) {
+        clearPriceCache();
+        incrementMetric('marketBoundaryPurges');
+        console.info('[PriceService][MarketBoundaryPurge]', {
+            from: previousState?.phaseKey || 'none',
+            to: currentState.phaseKey,
+            at: new Date().toISOString(),
+        });
+    }
+
+    writeStoredMarketPhaseState(currentState);
+    runtimePhaseCheckKey = currentState.phaseKey;
+}
 
 function getExchange(symbol) {
     return /^\d+$/.test(symbol) ? 'BOM' : 'NSE';
@@ -869,7 +995,8 @@ async function executeBatch(entries, timeoutMs = 12000) {
     const encoded = base64UrlEncode(fReq);
     const params = new URLSearchParams({
         rpcids: rpcIds.join(','),
-        f_req: encoded
+        f_req: encoded,
+        mk: getIstMarketCacheKey(),
     });
     const getUrl = `${url}?${params.toString()}`;
 
@@ -1087,7 +1214,10 @@ async function fetchFromStrike(symbol) {
         path: '/v2/api/equity/priceticks'
     });
 
-    const getParams = new URLSearchParams({ f_req: base64UrlEncode(rawBody) });
+    const getParams = new URLSearchParams({
+        f_req: base64UrlEncode(rawBody),
+        mk: getIstMarketCacheKey(),
+    });
     const getUrl = `/api/fckyouuu1?${getParams.toString()}`;
 
     try {
@@ -1142,6 +1272,7 @@ async function fetchFromStrike(symbol) {
  * @returns {Map<string, priceData>}
  */
 export async function fetchLivePrices(symbols) {
+    ensureMarketBoundaryPurge();
     const keys = symbols.map(s => cleanSymbol(s));
     const results = new Map();
 
@@ -1231,6 +1362,7 @@ const intervalWaitTimers = new Map(); // timeframe:window -> timer
  * Consolidation: Merges multiple calls in the same tick into a single set of parallel batches.
  */
 export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
+    ensureMarketBoundaryPurge();
     await ensureIntervalCacheHydrated();
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
@@ -1418,6 +1550,7 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M') {
  * @param {string} interval 
  */
 export async function fetchUnifiedTrackerData(symbols, interval = '1M', options = {}) {
+    ensureMarketBoundaryPurge();
     const includeBreadth = options?.includeBreadth !== false;
     const keys = [...new Set(symbols.map(s => cleanSymbol(s)))];
     const modeKey = includeBreadth ? 'withBreadth' : 'perfOnly';
@@ -1560,6 +1693,7 @@ function extractFundaFromFrame(payload) {
  * Since fundamentals are heavy, we only fetch on demand.
  */
 export async function fetchFundamentals(symbols) {
+    ensureMarketBoundaryPurge();
     const keys = symbols.map(s => cleanSymbol(s));
     const results = new Map();
     const uncached = [];
@@ -1617,6 +1751,7 @@ export async function fetchFundamentals(symbols) {
  */
 
 export async function fetchComparisonCharts(symbols, interval = '1D') {
+    ensureMarketBoundaryPurge();
     const window = INTERVAL_WINDOWS[interval] || 1;
     const results = new Map();
     const uncached = [];
@@ -1668,6 +1803,10 @@ export function clearPriceCache() {
     priceCache.clear();
     intervalCache.clear();
     fundaCache.clear();
+    comparisonCacheMap.clear();
+    unifiedResultCache.clear();
+    pendingUnifiedRequests.clear();
+    pendingRpcRequests.clear();
     idbHydratedIntervalKeys.clear();
     sessionHydratedIntervalKeys.clear();
     flushIntervalSourceLog(true);
@@ -1682,6 +1821,7 @@ export function clearPriceCache() {
  * Returns { changePct, close } or null if not cached/expired.
  */
 export function getCachedInterval(symbol, interval) {
+    ensureMarketBoundaryPurge();
     const key = cleanSymbol(symbol);
     const window = INTERVAL_WINDOWS[interval] || 3;
     const cacheKey = `${key}:${window}`;
@@ -1708,6 +1848,7 @@ export function getCachedInterval(symbol, interval) {
  * Read cached price data synchronously (no fetch).
  */
 export function getCachedPrice(symbol) {
+    ensureMarketBoundaryPurge();
     const key = cleanSymbol(symbol);
     const cached = priceCache.get(key);
     if (isCacheRowFresh(cached, PRICE_CACHE_TTL)) {

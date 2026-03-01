@@ -1,7 +1,5 @@
 import { unseal } from './_unseal.js';
-
-const CDN_CACHE_CONTROL = 'public, max-age=0, s-maxage=300, stale-while-revalidate=60';
-const CDN_S_MAXAGE = 's-maxage=300, stale-while-revalidate=60';
+import { getMarketCachePolicy } from './_marketCachePolicy.js';
 
 function firstQueryValue(value) {
     if (Array.isArray(value)) return value[0];
@@ -25,8 +23,10 @@ export default async function handler(req, res) {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (isGet) {
-        res.setHeader('Cache-Control', CDN_CACHE_CONTROL);
-        res.setHeader('Vercel-CDN-Cache-Control', CDN_S_MAXAGE);
+        const policy = getMarketCachePolicy();
+        res.setHeader('Cache-Control', policy.cacheControl);
+        res.setHeader('Vercel-CDN-Cache-Control', policy.vercelCdnCacheControl);
+        res.setHeader('X-TT-Market-Cache-Phase', policy.phase);
     } else {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Vercel-CDN-Cache-Control', 'no-store');

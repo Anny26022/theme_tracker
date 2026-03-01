@@ -43,12 +43,15 @@ const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
 const MAX_PERSISTED_INTERVAL_ENTRIES_IDB = 30000;
 const MAX_PERSISTED_INTERVAL_ENTRIES_SESSION = 500;
+const MAX_PERSISTED_COMPARISON_ENTRIES_IDB = 1500;
+const MAX_COMPARISON_MEMORY_ENTRIES = 2500;
 const MAX_INTERVAL_MEMORY_ENTRIES = 40000;
 const MAX_PERSISTED_FUNDA_ENTRIES = 1500;
 const INTERVAL_CACHE_DB_NAME = 'tt_cache_db';
 const INTERVAL_CACHE_DB_VERSION = 1;
 const INTERVAL_CACHE_STORE = 'kv';
 const INTERVAL_CACHE_IDB_KEY = 'interval_cache_v1';
+const COMPARISON_CACHE_IDB_KEY = 'comparison_cache_v1';
 const HAS_INDEXED_DB = typeof indexedDB !== 'undefined';
 
 function pruneCacheEntries(cache, maxEntries) {
@@ -95,6 +98,8 @@ function getSortedCacheEntries(cache) {
 let intervalCacheDbPromise = null;
 let intervalCacheHydrated = false;
 let intervalCacheHydrationPromise = null;
+let comparisonCacheHydrated = false;
+let comparisonCacheHydrationPromise = null;
 const idbHydratedIntervalKeys = new Set();
 const sessionHydratedIntervalKeys = new Set();
 let intervalSourceLastLogAt = 0;
@@ -218,6 +223,60 @@ async function clearIntervalCacheFromIndexedDb() {
     });
 }
 
+async function readComparisonCacheEntriesFromIndexedDb() {
+    const db = await openIntervalCacheDb();
+    if (!db) return null;
+
+    return new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readonly');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            const request = store.get(COMPARISON_CACHE_IDB_KEY);
+            request.onsuccess = () => {
+                const value = request.result;
+                resolve(Array.isArray(value?.entries) ? value.entries : null);
+            };
+            request.onerror = () => resolve(null);
+        } catch {
+            resolve(null);
+        }
+    });
+}
+
+async function writeComparisonCacheEntriesToIndexedDb(entries) {
+    const db = await openIntervalCacheDb();
+    if (!db) return;
+
+    await new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            store.put({ entries, updatedAt: Date.now() }, COMPARISON_CACHE_IDB_KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        } catch {
+            resolve();
+        }
+    });
+}
+
+async function clearComparisonCacheFromIndexedDb() {
+    const db = await openIntervalCacheDb();
+    if (!db) return;
+
+    await new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            store.delete(COMPARISON_CACHE_IDB_KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        } catch {
+            resolve();
+        }
+    });
+}
+
 const priceCache = loadCache(PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
 const intervalCache = loadCache(INTERVAL_CACHE_KEY, MAX_PERSISTED_INTERVAL_ENTRIES_SESSION);
 const fundaCache = loadCache(FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES);
@@ -268,7 +327,32 @@ function ensureIntervalCacheHydrated() {
     return intervalCacheHydrationPromise;
 }
 
+async function hydrateComparisonCacheFromIndexedDb() {
+    const entries = await readComparisonCacheEntriesFromIndexedDb();
+    if (Array.isArray(entries)) {
+        entries.forEach(([key, row]) => {
+            if (!key || !row || typeof row.timestamp !== 'number') return;
+            const existing = comparisonCacheMap.get(key);
+            const existingTs = existing?.timestamp || 0;
+            if (!existing || row.timestamp > existingTs) {
+                comparisonCacheMap.set(key, row);
+            }
+        });
+        pruneCacheEntries(comparisonCacheMap, MAX_COMPARISON_MEMORY_ENTRIES);
+    }
+    comparisonCacheHydrated = true;
+}
+
+function ensureComparisonCacheHydrated() {
+    if (comparisonCacheHydrated) return Promise.resolve();
+    if (!comparisonCacheHydrationPromise) {
+        comparisonCacheHydrationPromise = hydrateComparisonCacheFromIndexedDb();
+    }
+    return comparisonCacheHydrationPromise;
+}
+
 ensureIntervalCacheHydrated();
+ensureComparisonCacheHydrated();
 
 // Debug: log hydration on module load
 if (IS_DEV) {
@@ -279,6 +363,7 @@ if (IS_DEV) {
 let priceSaveTimer = null;
 let intervalSaveTimer = null;
 let fundaSaveTimer = null;
+let comparisonSaveTimer = null;
 
 function schedulePriceSave() {
     if (priceSaveTimer) clearTimeout(priceSaveTimer);
@@ -299,6 +384,15 @@ function scheduleIntervalSave() {
 function scheduleFundaSave() {
     if (fundaSaveTimer) clearTimeout(fundaSaveTimer);
     fundaSaveTimer = setTimeout(() => saveCache(fundaCache, FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES), 500);
+}
+
+function scheduleComparisonSave() {
+    if (comparisonSaveTimer) clearTimeout(comparisonSaveTimer);
+    comparisonSaveTimer = setTimeout(() => {
+        pruneCacheEntries(comparisonCacheMap, MAX_COMPARISON_MEMORY_ENTRIES);
+        const idbEntries = getSortedCacheEntries(comparisonCacheMap).slice(0, MAX_PERSISTED_COMPARISON_ENTRIES_IDB);
+        void writeComparisonCacheEntriesToIndexedDb(idbEntries);
+    }, 500);
 }
 
 export const INTERVAL_WINDOWS = {
@@ -1536,6 +1630,7 @@ export async function fetchFundamentals(symbols) {
  */
 
 export async function fetchComparisonCharts(symbols, interval = '1D') {
+    await ensureComparisonCacheHydrated();
     const window = INTERVAL_WINDOWS[interval] || 1;
     const results = new Map();
     const uncached = [];
@@ -1573,6 +1668,7 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
 
     try {
         await Promise.all(requests);
+        scheduleComparisonSave();
     } catch (err) {
         console.warn('[PriceService] Comparison queue failed:', err.message);
     }
@@ -1587,6 +1683,7 @@ export function clearPriceCache() {
     priceCache.clear();
     intervalCache.clear();
     fundaCache.clear();
+    comparisonCacheMap.clear();
     idbHydratedIntervalKeys.clear();
     sessionHydratedIntervalKeys.clear();
     flushIntervalSourceLog(true);
@@ -1594,6 +1691,7 @@ export function clearPriceCache() {
     sessionStorage.removeItem(INTERVAL_CACHE_KEY);
     sessionStorage.removeItem(FUNDA_CACHE_KEY);
     void clearIntervalCacheFromIndexedDb();
+    void clearComparisonCacheFromIndexedDb();
 }
 
 /**

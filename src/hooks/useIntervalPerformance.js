@@ -1,20 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { fetchBatchIntervalPerformance, cleanSymbol } from '../services/priceService';
-import { useAsync } from './useAsync';
-
-const REFRESH_INTERVALS = {
-    '1D': 5 * 60_000,
-    '5D': 5 * 60_000,
-    '1M': 10 * 60_000,
-    '3M': 10 * 60_000,
-    '6M': 10 * 60_000,
-    'YTD': 10 * 60_000,
-    '1Y': 10 * 60_000,
-    '5Y': 15 * 60_000,
-    'MAX': 15 * 60_000,
-};
+import { useEffect, useMemo } from 'react';
+import { cleanSymbol, getCachedInterval } from '../services/priceService';
+import { useIntervalVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
 export function useIntervalPerformance(items, hierarchy, interval, type = 'sector') {
+    const { subscribeIntervalSymbols } = useMarketDataRegistry();
+    const intervalVersion = useIntervalVersion();
     const itemToSymbols = useMemo(() => {
         const itemToSymbols = new Map();
 
@@ -52,12 +42,16 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
         return [...allSymbols];
     }, [itemToSymbols]);
 
-    const fetchFunc = async () => {
-        if (symbolsArray.length === 0) return {};
+    useEffect(() => {
+        if (symbolsArray.length === 0) return;
+        return subscribeIntervalSymbols([interval], symbolsArray);
+    }, [symbolsArray, interval, subscribeIntervalSymbols]);
 
-        const results = await fetchBatchIntervalPerformance(symbolsArray, interval);
+    const { perfMap, hasAnyData } = useMemo(() => {
+        if (symbolsArray.length === 0) return { perfMap: {}, hasAnyData: false };
+
         const updates = {};
-
+        let anyData = false;
         for (const name of items) {
             const companies = itemToSymbols.get(name) || [];
             let totalPerf = 0;
@@ -66,10 +60,11 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
 
             companies.forEach(c => {
                 const key = cleanSymbol(c.symbol);
-                const data = results.get(key);
+                const data = getCachedInterval(key, interval, { silent: true });
                 if (data && data.changePct !== null) {
                     totalPerf += data.changePct;
                     validCount++;
+                    anyData = true;
 
                     if (!/^\d+$/.test(c.symbol)) {
                         pool.push({
@@ -93,24 +88,10 @@ export function useIntervalPerformance(items, hierarchy, interval, type = 'secto
             }
         }
 
-        return updates;
-    };
+        return { perfMap: updates, hasAnyData: anyData };
+    }, [symbolsArray, itemToSymbols, items, interval, intervalVersion]);
 
-    const { data: perfMap, loading, execute } = useAsync(fetchFunc, [symbolsArray, itemToSymbols, interval]);
-    const intervalTimerRef = useRef(null);
-
-    useEffect(() => {
-        if (symbolsArray.length === 0) return;
-
-        const refreshMs = REFRESH_INTERVALS[interval] || 10 * 60_000;
-        intervalTimerRef.current = setInterval(() => {
-            execute();
-        }, refreshMs);
-
-        return () => {
-            if (intervalTimerRef.current) clearInterval(intervalTimerRef.current);
-        };
-    }, [symbolsArray, interval, execute]);
+    const loading = symbolsArray.length > 0 && !hasAnyData;
 
     return { perfMap: perfMap || {}, loading };
 }

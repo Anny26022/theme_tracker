@@ -11,6 +11,7 @@ import { BackgroundAmbience } from './components/BackgroundAmbience';
 
 // Context
 import { PriceProvider } from './context/PriceContext';
+import { MarketDataProvider } from './context/MarketDataContext';
 
 // Utils
 import { cn } from './lib/utils';
@@ -218,60 +219,62 @@ const App = () => {
 
     return (
         <LazyMotion features={domAnimation}>
-            <PriceProvider>
-                <div className="min-h-screen selection:bg-[#c5a059]/30 !overflow-visible bg-[var(--bg-main)] text-[var(--text-main)] transition-colors duration-400">
-                    <BackgroundAmbience />
-                    <Navbar view={normalizedView} navigate={navigate} />
+            <MarketDataProvider>
+                <PriceProvider>
+                    <div className="min-h-screen selection:bg-[#c5a059]/30 !overflow-visible bg-[var(--bg-main)] text-[var(--text-main)] transition-colors duration-400">
+                        <BackgroundAmbience />
+                        <Navbar view={normalizedView} navigate={navigate} />
 
-                    <main className={cn(
-                        "pt-24 md:pt-32 pb-20 px-3 md:px-8 mx-auto relative z-10 !overflow-visible",
-                        normalizedView === VIEWS.MARKET_MAP ? "max-w-[1800px]" : "max-w-7xl"
-                    )}>
-                        <AnimatePresence mode="wait">
-                            {normalizedView !== VIEWS.MARKET_MAP && (
-                                <RouterView
-                                    key={normalizedView}
-                                    view={normalizedView}
-                                    sectors={sectors}
-                                    hierarchy={hierarchy}
-                                    sector={sector}
-                                    industry={industry}
-                                    timeframe={timeframe}
-                                    setTimeframe={setTimeframe}
-                                    currentIndustries={currentIndustries}
-                                    currentCompanies={currentCompanies}
-                                    onSectorClick={handleSectorClick}
-                                    onIndustryClick={handleIndustryClick}
-                                    onDomainIndustryClick={handleDomainIndustryClick}
-                                    onTrackerSectorClick={handleTrackerSectorClick}
-                                    onTrackerIndustryClick={handleTrackerIndustryClick}
-                                    onSectorBack={handleSectorBack}
-                                    onIndustryBack={handleIndustryBack}
-                                    onSectorIndustryClick={handleSectorIndustryClick}
-                                    onOpenInsights={handleOpenInsights}
-                                    rawData={rawData}
-                                    loading={loading}
-                                />
+                        <main className={cn(
+                            "pt-24 md:pt-32 pb-20 px-3 md:px-8 mx-auto relative z-10 !overflow-visible",
+                            normalizedView === VIEWS.MARKET_MAP ? "max-w-[1800px]" : "max-w-7xl"
+                        )}>
+                            <AnimatePresence mode="wait">
+                                {normalizedView !== VIEWS.MARKET_MAP && (
+                                    <RouterView
+                                        key={normalizedView}
+                                        view={normalizedView}
+                                        sectors={sectors}
+                                        hierarchy={hierarchy}
+                                        sector={sector}
+                                        industry={industry}
+                                        timeframe={timeframe}
+                                        setTimeframe={setTimeframe}
+                                        currentIndustries={currentIndustries}
+                                        currentCompanies={currentCompanies}
+                                        onSectorClick={handleSectorClick}
+                                        onIndustryClick={handleIndustryClick}
+                                        onDomainIndustryClick={handleDomainIndustryClick}
+                                        onTrackerSectorClick={handleTrackerSectorClick}
+                                        onTrackerIndustryClick={handleTrackerIndustryClick}
+                                        onSectorBack={handleSectorBack}
+                                        onIndustryBack={handleIndustryBack}
+                                        onSectorIndustryClick={handleSectorIndustryClick}
+                                        onOpenInsights={handleOpenInsights}
+                                        rawData={rawData}
+                                        loading={loading}
+                                    />
+                                )}
+                            </AnimatePresence>
+
+                            {normalizedView === VIEWS.MARKET_MAP && (
+                                <div className="relative z-[60]">
+                                    <MarketMapView hierarchy={hierarchy} />
+                                </div>
                             )}
-                        </AnimatePresence>
+                        </main>
 
-                        {normalizedView === VIEWS.MARKET_MAP && (
-                            <div className="relative z-[60]">
-                                <MarketMapView hierarchy={hierarchy} />
-                            </div>
-                        )}
-                    </main>
-
-                    <React.Suspense fallback={insightsFallback}>
-                        <CompanyInsights
-                            isOpen={!!insightsCompany}
-                            symbol={insightsCompany?.symbol}
-                            name={insightsCompany?.name}
-                            onClose={handleCloseInsights}
-                        />
-                    </React.Suspense>
-                </div>
-            </PriceProvider>
+                        <React.Suspense fallback={insightsFallback}>
+                            <CompanyInsights
+                                isOpen={!!insightsCompany}
+                                symbol={insightsCompany?.symbol}
+                                name={insightsCompany?.name}
+                                onClose={handleCloseInsights}
+                            />
+                        </React.Suspense>
+                    </div>
+                </PriceProvider>
+            </MarketDataProvider>
         </LazyMotion>
     );
 };

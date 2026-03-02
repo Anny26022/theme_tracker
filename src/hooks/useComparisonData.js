@@ -1,7 +1,6 @@
-import { fetchComparisonCharts } from '../services/priceService';
-import { useCallback, useMemo } from 'react';
-import { useAsync } from './useAsync';
-import { buildComparisonMap } from '../../packages/core/src/comparison/buildComparisonMap';
+import { getCachedComparisonSeries } from '../services/priceService';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
 function normalizeSymbols(symbols) {
     return Array.from(new Set((symbols || []).filter(Boolean).map((s) => String(s).trim().toUpperCase()))).sort();
@@ -12,18 +11,36 @@ function normalizeSymbols(symbols) {
  * Caching is centralized in priceService (memory + IDB); this hook stays stateless.
  */
 export function useComparisonData(symbols, interval) {
-    const stableSymbolKey = useMemo(() => normalizeSymbols(symbols).join('|'), [symbols]);
-    const fetchFunc = useCallback(async () => {
-        if (!stableSymbolKey) return new Map();
-        const normalizedSymbols = stableSymbolKey.split('|');
-        return buildComparisonMap(normalizedSymbols, interval, fetchComparisonCharts);
-    }, [stableSymbolKey, interval]);
-    const { data: dataMap, loading, error, execute } = useAsync(fetchFunc, [stableSymbolKey, interval]);
+    const { subscribeChartSymbols, refreshCharts } = useMarketDataRegistry();
+    const chartVersion = useChartVersion();
+    const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
+    const stableSymbolKey = useMemo(() => normalizedSymbols.join('|'), [normalizedSymbols]);
+
+    useEffect(() => {
+        if (!normalizedSymbols.length || !interval) return;
+        return subscribeChartSymbols(interval, normalizedSymbols);
+    }, [interval, normalizedSymbols, stableSymbolKey, subscribeChartSymbols]);
+
+    const dataMap = useMemo(() => {
+        const map = new Map();
+        normalizedSymbols.forEach((symbol) => {
+            const series = getCachedComparisonSeries(symbol, interval, { silent: true });
+            if (series) map.set(symbol, series);
+        });
+        return map;
+    }, [normalizedSymbols, interval, chartVersion]);
+
+    const refresh = useCallback(() => {
+        if (!normalizedSymbols.length || !interval) return Promise.resolve(new Map());
+        return refreshCharts(interval, normalizedSymbols);
+    }, [interval, normalizedSymbols, stableSymbolKey, refreshCharts]);
+
+    const loading = normalizedSymbols.length > 0 && dataMap.size < normalizedSymbols.length;
 
     return {
         data: dataMap || new Map(),
         loading,
-        error,
-        refresh: execute
+        error: null,
+        refresh
     };
 }

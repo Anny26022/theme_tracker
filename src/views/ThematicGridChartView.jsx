@@ -1,8 +1,9 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import FinvizChart from '../components/FinvizChart';
-import { fetchComparisonCharts, cleanSymbol } from '../services/priceService';
-import { ChevronLeft, ChevronRight, RefreshCcw, ChevronDown, Layers } from 'lucide-react';
+import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
+import { ChevronLeft, ChevronDown, Layers } from 'lucide-react';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
+import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
 const DeferredFinvizChart = ({ company, chartData, height }) => {
     const [isVisible, setIsVisible] = useState(false);
@@ -50,9 +51,11 @@ const DeferredFinvizChart = ({ company, chartData, height }) => {
     );
 };
 
-const ThematicGridChartView = ({ themeName, companies = [], timeframe = '1Y', onBack, onSelectTheme, viewMode = 'THEMATIC' }) => {
+const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectTheme, viewMode = 'THEMATIC' }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef(null);
+    const { subscribeChartSymbols } = useMarketDataRegistry();
+    const chartVersion = useChartVersion();
 
     // Reset when theme changes
     useEffect(() => {
@@ -69,8 +72,10 @@ const ThematicGridChartView = ({ themeName, companies = [], timeframe = '1Y', on
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const [chartData, setChartData] = useState(new Map());
-    const [loading, setLoading] = useState(false);
+    const normalizedSymbols = useMemo(
+        () => Array.from(new Set((companies || []).map((c) => cleanSymbol(c.symbol)).filter(Boolean))),
+        [companies]
+    );
 
     // Build the hierarchical menu data based on viewMode
     const switcherData = useMemo(() => {
@@ -93,27 +98,20 @@ const ThematicGridChartView = ({ themeName, companies = [], timeframe = '1Y', on
         }
     }, [viewMode]);
 
-    const fetchData = async () => {
-        if (!companies || companies.length === 0) return;
-        setLoading(true);
-        try {
-            const symbols = companies.map(c => c.symbol);
-            const data = await fetchComparisonCharts(symbols, 'MAX');
-            setChartData(prev => {
-                const next = new Map(prev);
-                data.forEach((val, key) => next.set(key, val));
-                return next;
-            });
-        } catch (err) {
-            console.error('Failed to fetch chart data:', err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
     useEffect(() => {
-        fetchData();
-    }, [themeName, timeframe]);
+        if (!normalizedSymbols.length) return;
+        return subscribeChartSymbols('MAX', normalizedSymbols);
+    }, [normalizedSymbols, subscribeChartSymbols]);
+
+    const chartData = useMemo(() => {
+        const map = new Map();
+        normalizedSymbols.forEach((symbol) => {
+            const series = getCachedComparisonSeries(symbol, 'MAX', { silent: true });
+            if (series) map.set(symbol, series);
+        });
+        return map;
+    }, [normalizedSymbols, chartVersion]);
+
 
     return (
         <div className="flex flex-col gap-6">

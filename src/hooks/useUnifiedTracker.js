@@ -3,9 +3,13 @@ import { fetchUnifiedTrackerData, cleanSymbol } from '../services/priceService';
 import { useAsync } from './useAsync';
 import { buildItemToCompanies, collectUniqueSymbols, computeTrackerUpdates } from '../../packages/core/src/tracker/aggregation';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
+import { useChartVersion, useIntervalVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
 export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', options = {}) {
     const includeBreadth = options?.includeBreadth !== false;
+    const { subscribeIntervalSymbols, subscribeChartSymbols, refreshIntervals, refreshCharts } = useMarketDataRegistry();
+    const intervalVersion = useIntervalVersion();
+    const chartVersion = useChartVersion();
     const itemToSymbols = useMemo(() => {
         if (type === 'thematic') {
             const themeByName = new Map();
@@ -102,18 +106,43 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
         if (symbolsArray.length === 0) return {};
 
         // Performance mode can reuse interval cache and skip 1Y chart fetches.
-        const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval, { includeBreadth });
+        const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval, { includeBreadth, cacheOnly: true });
+
+        // Hybrid warm-up: if cache is empty, trigger registry refresh in background.
+        if (rawResults instanceof Map ? rawResults.size === 0 : Object.keys(rawResults).length === 0) {
+            void refreshIntervals([interval], symbolsArray);
+            if (includeBreadth) {
+                void refreshCharts('1Y', symbolsArray);
+            }
+        }
         return computeTrackerUpdates(items, itemToSymbols, rawResults);
-    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth]);
+    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth, refreshIntervals, refreshCharts]);
 
-    const { data: trackerMap, loading, execute } = useAsync(fetchFunc, [symbolsArray, itemToSymbols, interval, includeBreadth]);
-
-    // Handle background refreshes
     useEffect(() => {
         if (symbolsArray.length === 0) return;
-        const timer = setInterval(execute, 5 * 60_000); // Unified refresh every 5 mins
-        return () => clearInterval(timer);
-    }, [symbolsArray, execute]);
+        const intervalUnsub = subscribeIntervalSymbols([interval], symbolsArray);
+        const chartUnsub = includeBreadth ? subscribeChartSymbols('1Y', symbolsArray) : () => { };
+        return () => {
+            intervalUnsub?.();
+            chartUnsub?.();
+        };
+    }, [symbolsArray, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
 
-    return { trackerMap: trackerMap || {}, loading, refresh: execute };
+    const refreshSignal = includeBreadth ? chartVersion : 0;
+    const { data: trackerMap, loading, execute } = useAsync(
+        fetchFunc,
+        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal]
+    );
+
+    const resolvedMap = trackerMap || {};
+    const hasAnyData = useMemo(
+        () => Object.values(resolvedMap).some((value) => value && (typeof value.avgPerf === 'number' || value?.breadth?.validCount > 0)),
+        [resolvedMap]
+    );
+
+    return {
+        trackerMap: resolvedMap,
+        loading: loading || (symbolsArray.length > 0 && !hasAnyData),
+        refresh: execute
+    };
 }

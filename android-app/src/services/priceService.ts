@@ -901,6 +901,37 @@ export async function fetchLivePrice(symbol: string) {
 const pendingIntervalReqs = new Map<string, Map<string, Promise<void>>>();
 const intervalWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+export function getCachedComparisonSeries(symbol: string, interval: string) {
+    const clean = cleanSymbol(symbol);
+    const window = INTERVAL_WINDOWS[interval] || 1;
+    const cacheKey = `${clean}:${window}:full`;
+    const cached = comparisonCacheMap.get(cacheKey);
+    if (isCacheRowFresh(cached, COMPARISON_CACHE_TTL) && cached) {
+        markLocalCacheHit();
+        return cached.series;
+    }
+    markLocalCacheMiss();
+    return null;
+}
+
+function deriveIntervalFromSeries(series: any[] | null | undefined): IntervalData | null {
+    if (!series || series.length < 2) return null;
+    const first = series[0];
+    const last = series[series.length - 1];
+    const firstVal = typeof first?.value === 'number' ? first.value : first?.price;
+    const lastVal = typeof last?.value === 'number' ? last.value : last?.price;
+    if (typeof firstVal !== 'number' || typeof lastVal !== 'number' || firstVal <= 0) return null;
+
+    const changePct = typeof last?.changePct === 'number'
+        ? last.changePct
+        : ((lastVal - firstVal) / firstVal) * 100;
+
+    return {
+        changePct,
+        close: typeof last?.price === 'number' ? last.price : lastVal,
+    };
+}
+
 export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M') {
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
@@ -913,6 +944,7 @@ export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M'
 
     const results = new Map<string, IntervalData>();
     const uncached: string[] = [];
+    let derivedFromCharts = false;
 
     symbols.forEach((rawSymbol) => {
         const symbol = cleanSymbol(rawSymbol);
@@ -922,11 +954,26 @@ export function fetchBatchIntervalPerformance(symbols: string[], interval = '1M'
         if (isCacheRowFresh(cached, ttl) && cached) {
             markLocalCacheHit();
             if (cached.data) results.set(symbol, cached.data);
-        } else if (!currentPending.has(symbol)) {
+            return;
+        }
+
+        const chartSeries = getCachedComparisonSeries(symbol, interval);
+        const derived = deriveIntervalFromSeries(chartSeries);
+        if (derived) {
+            results.set(symbol, derived);
+            const row = buildCacheRow(derived, null, ttl);
+            if (row) intervalCache.set(cacheKey, row);
+            derivedFromCharts = true;
+            return;
+        }
+
+        if (!currentPending.has(symbol)) {
             markLocalCacheMiss();
             uncached.push(symbol);
         }
     });
+
+    if (derivedFromCharts) scheduleIntervalSave();
 
     if (!uncached.length) {
         return new Promise<Map<string, IntervalData>>(async (resolve) => {
@@ -1073,7 +1120,8 @@ export async function fetchComparisonCharts(symbols: string[], interval = '1D') 
     return results;
 }
 
-export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M') {
+export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M', options: { cacheOnly?: boolean } = {}) {
+    const cacheOnly = options?.cacheOnly === true;
     await cacheHydrationPromise;
 
     const keys = symbols.map((symbol) => cleanSymbol(symbol));
@@ -1093,6 +1141,53 @@ export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M'
     });
 
     if (!uncachedKeys.length) return results;
+
+    if (cacheOnly) {
+        uncachedKeys.forEach((symbol) => {
+            const series = getCachedComparisonSeries(symbol, '1Y');
+            if (!series || series.length < 5) return;
+
+            const prices = series.map((point: any) => point.price).filter((price: any) => typeof price === 'number' && price > 0);
+            if (prices.length < 5) return;
+
+            const currentPrice = prices[prices.length - 1];
+            const dayIndices: Record<string, number> = { '1D': 1, '5D': 5, '1M': 20, '6M': 125, '1Y': 250, YTD: 250 };
+            const lookback = dayIndices[interval] || 20;
+            const startIndex = Math.max(0, prices.length - 1 - lookback);
+            const startPrice = prices[startIndex];
+
+            const changePct = startPrice > 0 ? ((currentPrice - startPrice) / startPrice) * 100 : 0;
+
+            const ema10 = calculateEMA(prices, 10);
+            const ema21 = calculateEMA(prices, 21);
+            const ema50 = calculateEMA(prices, 50);
+            const ema150 = calculateEMA(prices, 150);
+            const ema200 = calculateEMA(prices, 200);
+
+            const data: UnifiedData = {
+                perf: { changePct, close: currentPrice },
+                breadth: {
+                    above10EMA: ema10 !== null ? currentPrice > ema10 : false,
+                    above21EMA: ema21 !== null ? currentPrice > ema21 : false,
+                    above50EMA: ema50 !== null ? currentPrice > ema50 : false,
+                    above150EMA: ema150 !== null ? currentPrice > ema150 : false,
+                    above200EMA: ema200 !== null ? currentPrice > ema200 : false,
+                    ema10,
+                    ema21,
+                    ema50,
+                    ema150,
+                    ema200,
+                },
+                hasBreadth: true,
+            };
+
+            const row = buildCacheRow(data, null, 300_000);
+            if (row) unifiedResultCache.set(`${interval}:${symbol}`, row);
+            results.set(symbol, data);
+        });
+
+        return results;
+    }
 
     const charts = await fetchComparisonCharts(uncachedKeys, '1Y');
 
@@ -1227,6 +1322,17 @@ export function getCachedPrice(symbol: string) {
     const key = cleanSymbol(symbol);
     const cached = priceCache.get(key);
     if (isCacheRowFresh(cached, PRICE_CACHE_TTL) && cached) {
+        markLocalCacheHit();
+        return cached.data;
+    }
+    markLocalCacheMiss();
+    return null;
+}
+
+export function getCachedFundamentals(symbol: string) {
+    const key = cleanSymbol(symbol);
+    const cached = fundaCache.get(key);
+    if (isCacheRowFresh(cached, FUNDA_CACHE_TTL) && cached) {
         markLocalCacheHit();
         return cached.data;
     }

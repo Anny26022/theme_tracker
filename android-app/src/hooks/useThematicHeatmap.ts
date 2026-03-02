@@ -1,63 +1,16 @@
-import { useMemo, useCallback, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useAsync } from './useAsync';
-import { fetchBatchIntervalPerformance, cleanSymbol } from '../services/priceService';
+import { useMemo, useEffect, useRef } from 'react';
+import { cleanSymbol, getCachedInterval } from '../services/priceService';
 import { THEMATIC_MAP, BlockDefinition } from '@core/market/thematicMap';
+import { useMarketDataRegistry, useIntervalVersion } from '../contexts/MarketDataContext';
 
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '6M', 'YTD'];
-const CACHE_TTL = 300_000; // 5 minutes
-const RAW_DATA_KEY = 'tt_raw_price_data:v1';
-
-// Module-level memory cache for instant tab switching
-let globalPriceDataCache = new Map<string, Map<string, number>>();
-let globalPriceDataTimestamp = 0;
-let globalPriceDataVersion = 0;
-const globalPriceCoverage = new Map<string, Set<string>>();
-
-async function loadPersistedRawData() {
-    try {
-        const raw = await AsyncStorage.getItem(RAW_DATA_KEY);
-        if (raw) {
-            const parsed = JSON.parse(raw);
-            if (parsed && Date.now() - parsed.timestamp < CACHE_TTL) {
-                const cache = new Map();
-                Object.keys(parsed.data).forEach(interval => {
-                    cache.set(interval, new Map(Object.entries(parsed.data[interval])));
-                });
-                return { cache, timestamp: parsed.timestamp };
-            }
-        }
-    } catch { /* ignore */ }
-    return null;
-}
-
-async function savePersistedRawData(cache: Map<string, Map<string, number>>, timestamp: number) {
-    try {
-        const dataToSave: any = {};
-        cache.forEach((perfMap, interval) => {
-            dataToSave[interval] = Object.fromEntries(perfMap);
-        });
-        await AsyncStorage.setItem(RAW_DATA_KEY, JSON.stringify({
-            data: dataToSave,
-            timestamp
-        }));
-    } catch { /* ignore */ }
-}
-
-// Initialize from storage
-loadPersistedRawData().then(initial => {
-    if (initial) {
-        globalPriceDataCache = initial.cache;
-        globalPriceDataTimestamp = initial.timestamp;
-        globalPriceDataVersion += 1;
-        initial.cache.forEach((perfMap: Map<string, number>, interval: string) => {
-            globalPriceCoverage.set(interval, new Set(perfMap.keys()));
-        });
-    }
-});
 
 export function useThematicHeatmap(hierarchy: any) {
     const thematicMap = THEMATIC_MAP;
+    const stockPerfMapRef = useRef<Map<string, Map<string, number>>>(new Map());
+    const stockPerfVersionRef = useRef(0);
+    const { subscribeIntervalSymbols } = useMarketDataRegistry();
+    const marketDataVersion = useIntervalVersion();
 
     const themeMappings = useMemo(() => {
         const themeToSymbols = new Map<string, string[]>();
@@ -100,62 +53,54 @@ export function useThematicHeatmap(hierarchy: any) {
 
     const { themeToSymbols, allSymbols } = themeMappings;
 
-    const fetchFunc = useCallback(async () => {
+    useEffect(() => {
+        if (!allSymbols.length) return;
+        return subscribeIntervalSymbols(HEATMAP_INTERVALS, allSymbols);
+    }, [allSymbols, subscribeIntervalSymbols]);
+
+    const { heatmapData, stockPerfMap, hasData } = useMemo(() => {
+        const cacheVersion = marketDataVersion;
         if (allSymbols.length === 0) {
-            return { heatmap: {}, stockPerfVersion: globalPriceDataVersion };
+            return {
+                heatmapData: {},
+                stockPerfMap: new Map<string, Map<string, number>>(),
+                hasData: false,
+            };
         }
 
-        const now = Date.now();
-        const isCacheValid = (now - globalPriceDataTimestamp < CACHE_TTL);
         const normalizedSymbols = Array.from(new Set(allSymbols.map((symbol) => cleanSymbol(symbol))));
+        const stockPerfMapLocal = new Map<string, Map<string, number>>();
+        let anyData = false;
 
-        let wasRefetched = false;
-        const results = await Promise.all(
-            HEATMAP_INTERVALS.map(async (interval) => {
-                const hasCacheForInterval = globalPriceDataCache.has(interval);
-                const coverage = globalPriceCoverage.get(interval) || new Set();
-                const missingSymbols = normalizedSymbols.filter((symbol) => !coverage.has(symbol));
-
-                if (isCacheValid && hasCacheForInterval && missingSymbols.length === 0) {
-                    return { interval, perfMap: globalPriceDataCache.get(interval)! };
-                }
-
-                const symbolsToFetch = isCacheValid ? missingSymbols : normalizedSymbols;
-                const fetchedPerf = symbolsToFetch.length > 0
-                    ? await fetchBatchIntervalPerformance(symbolsToFetch, interval)
-                    : new Map();
-
-                const nextPerfMap = (isCacheValid && hasCacheForInterval)
-                    ? new Map(globalPriceDataCache.get(interval))
-                    : new Map();
-
-                fetchedPerf.forEach((value: any, symbol: string) => {
-                    nextPerfMap.set(symbol, value.changePct);
-                });
-
-                symbolsToFetch.forEach((symbol) => coverage.add(symbol));
-                globalPriceCoverage.set(interval, coverage);
-                globalPriceDataCache.set(interval, nextPerfMap);
-                wasRefetched = true;
-                return { interval, perfMap: nextPerfMap };
-            })
-        );
-
-        if (wasRefetched) {
-            globalPriceDataTimestamp = Date.now();
-            globalPriceDataVersion += 1;
-            savePersistedRawData(globalPriceDataCache, globalPriceDataTimestamp);
+        if (cacheVersion < 0) {
+            return {
+                heatmapData: {},
+                stockPerfMap: stockPerfMapLocal,
+                hasData: false,
+            };
         }
+
+        HEATMAP_INTERVALS.forEach((interval) => {
+            const perfMap = new Map<string, number>();
+            normalizedSymbols.forEach((symbol) => {
+                const cached = getCachedInterval(symbol, interval);
+                if (cached && typeof cached.changePct === 'number') {
+                    perfMap.set(symbol, cached.changePct);
+                }
+            });
+            if (perfMap.size > 0) anyData = true;
+            stockPerfMapLocal.set(interval, perfMap);
+        });
 
         const heatmap: any = {};
-
         themeToSymbols.forEach((symbols, themeName) => {
             heatmap[themeName] = {};
-            results.forEach(({ interval, perfMap }) => {
+            HEATMAP_INTERVALS.forEach((interval) => {
+                const perfMap = stockPerfMapLocal.get(interval);
                 let sum = 0;
                 let validCount = 0;
                 symbols.forEach(s => {
-                    const val = perfMap.get(cleanSymbol(s));
+                    const val = perfMap?.get(cleanSymbol(s));
                     if (typeof val === 'number') {
                         sum += val;
                         validCount++;
@@ -166,23 +111,22 @@ export function useThematicHeatmap(hierarchy: any) {
         });
 
         return {
-            heatmap,
-            stockPerfVersion: globalPriceDataVersion
+            heatmapData: heatmap,
+            stockPerfMap: stockPerfMapLocal,
+            hasData: anyData,
         };
-    }, [allSymbols, themeToSymbols]);
-
-    const { data: heatmapResult, loading, execute } = useAsync(fetchFunc, [allSymbols, themeToSymbols]);
+    }, [allSymbols, themeToSymbols, marketDataVersion]);
 
     useEffect(() => {
-        if (!allSymbols.length) return;
-        const timer = setInterval(execute, CACHE_TTL);
-        return () => clearInterval(timer);
-    }, [allSymbols, execute]);
+        if (stockPerfMap) {
+            stockPerfMapRef.current = stockPerfMap;
+        }
+    }, [stockPerfMap]);
 
     return {
-        heatmapData: heatmapResult?.heatmap || {},
-        stockPerfMap: globalPriceDataCache,
-        stockPerfVersion: heatmapResult?.stockPerfVersion ?? globalPriceDataVersion,
-        loading: loading && !heatmapResult
+        heatmapData,
+        stockPerfMap: stockPerfMap || stockPerfMapRef.current,
+        stockPerfVersion: marketDataVersion ?? stockPerfVersionRef.current,
+        loading: allSymbols.length > 0 && !hasData
     };
 }

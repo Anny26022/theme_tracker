@@ -1115,6 +1115,23 @@ function extractWideChartFromFrame(payload) {
     };
 }
 
+function deriveIntervalPerfFromSeries(series, interval) {
+    if (!Array.isArray(series) || series.length < 2) return null;
+    const prices = series
+        .map((point) => (typeof point?.price === 'number' ? point.price : point?.close))
+        .filter((value) => typeof value === 'number' && value > 0);
+
+    if (prices.length < 2) return null;
+
+    const firstPrice = prices[0];
+    const lastPrice = prices[prices.length - 1];
+    if (!firstPrice || !lastPrice) return null;
+
+    // Series already scoped to the requested interval, so first/last is accurate.
+    const changePct = ((lastPrice - firstPrice) / firstPrice) * 100;
+    return { changePct, close: lastPrice };
+}
+
 // ─── Strike Fallback (NSE only) ────────────────────────────────────
 
 async function fetchFromStrike(symbol) {
@@ -1275,6 +1292,7 @@ const intervalWaitTimers = new Map(); // timeframe:window -> timer
  */
 export async function fetchBatchIntervalPerformance(symbols, interval = '1M', options = {}) {
     await ensureIntervalCacheHydrated();
+    await ensureComparisonCacheHydrated();
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cacheKeyBase = `${interval}:${window}`;
@@ -1321,10 +1339,23 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
                 callMemoryHits += 1;
             }
             if (cached.data !== null) results.set(sym, cached.data);
-        } else if (!currentPending.has(sym)) {
-            markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
-            callMisses += 1;
-            uncached.push(sym);
+        } else {
+            const chartSeries = getCachedComparisonSeries(sym, interval, { silent: true });
+            const derived = deriveIntervalPerfFromSeries(chartSeries, interval);
+            if (derived && typeof derived.changePct === 'number') {
+                callMemoryHits += 1;
+                const row = buildCacheRow(derived, null, ttl);
+                if (row) {
+                    intervalCache.set(cacheKey, row);
+                    idbHydratedIntervalKeys.delete(cacheKey);
+                    sessionHydratedIntervalKeys.delete(cacheKey);
+                }
+                results.set(sym, derived);
+            } else if (!currentPending.has(sym)) {
+                markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
+                callMisses += 1;
+                uncached.push(sym);
+            }
         }
     }
 
@@ -1511,13 +1542,16 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
  */
 export async function fetchUnifiedTrackerData(symbols, interval = '1M', options = {}) {
     const includeBreadth = options?.includeBreadth !== false;
+    const cacheOnly = options?.cacheOnly === true;
     const keys = [...new Set(symbols.map(s => cleanSymbol(s)))];
     const modeKey = includeBreadth ? 'withBreadth' : 'perfOnly';
-    const requestKey = `${modeKey}:${interval}:${[...keys].sort().join(',')}`;
+    const requestKey = `${modeKey}:${interval}:${cacheOnly ? 'cacheOnly' : 'network'}:${[...keys].sort().join(',')}`;
     const pending = pendingUnifiedRequests.get(requestKey);
     if (pending) return pending;
 
     const requestPromise = (async () => {
+        await ensureIntervalCacheHydrated();
+        await ensureComparisonCacheHydrated();
         const results = new Map();
         const uncachedKeys = [];
 
@@ -1536,6 +1570,79 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M', options 
         });
 
         if (uncachedKeys.length === 0) return results;
+
+        if (cacheOnly) {
+            if (!includeBreadth) {
+                uncachedKeys.forEach((sym) => {
+                    let perf = getCachedInterval(sym, interval, { silent: true });
+                    if (!perf) {
+                        const series = getCachedComparisonSeries(sym, interval, { silent: true });
+                        perf = deriveIntervalPerfFromSeries(series, interval);
+                    }
+                    if (!perf || typeof perf.changePct !== 'number') return;
+
+                    const data = {
+                        perf: { changePct: perf.changePct, close: perf.close },
+                        breadth: {},
+                        hasBreadth: false,
+                    };
+
+                    const row = buildCacheRow(data, null, 300_000);
+                    if (row) unifiedResultCache.set(`${interval}:${sym}`, row);
+                    results.set(sym, data);
+                });
+                return results;
+            }
+
+            uncachedKeys.forEach((sym) => {
+                const series = getCachedComparisonSeries(sym, '1Y', { silent: true });
+                if (!series || series.length < 5) return;
+
+                const prices = series.map(p => p.price).filter(p => p > 0);
+                if (prices.length < 5) return;
+
+                const currentPrice = prices[prices.length - 1];
+                let changePct = 0;
+
+                const dayIndices = { '1D': 1, '5D': 5, '1M': 20, '3M': 63, '6M': 125, '1Y': 250, 'YTD': 250 };
+                const lookback = dayIndices[interval] || 20;
+                const startIndex = Math.max(0, prices.length - 1 - lookback);
+                const startPrice = prices[startIndex];
+
+                if (startPrice > 0) {
+                    changePct = ((currentPrice - startPrice) / startPrice) * 100;
+                }
+
+                const ema10 = calculateEMA(prices, 10);
+                const ema21 = calculateEMA(prices, 21);
+                const ema50 = calculateEMA(prices, 50);
+                const ema150 = calculateEMA(prices, 150);
+                const ema200 = calculateEMA(prices, 200);
+
+                const data = {
+                    perf: { changePct, close: currentPrice },
+                    breadth: {
+                        above10EMA: ema10 !== null ? currentPrice > ema10 : false,
+                        above21EMA: ema21 !== null ? currentPrice > ema21 : false,
+                        above50EMA: ema50 !== null ? currentPrice > ema50 : false,
+                        above150EMA: ema150 !== null ? currentPrice > ema150 : false,
+                        above200EMA: ema200 !== null ? currentPrice > ema200 : false,
+                        ema10,
+                        ema21,
+                        ema50,
+                        ema150,
+                        ema200
+                    },
+                    hasBreadth: true,
+                };
+
+                const row = buildCacheRow(data, null, 300_000);
+                if (row) unifiedResultCache.set(`${interval}:${sym}`, row);
+                results.set(sym, data);
+            });
+
+            return results;
+        }
 
         if (!includeBreadth) {
             const perfMap = await fetchBatchIntervalPerformance(uncachedKeys, interval);
@@ -1778,6 +1885,22 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
 }
 
 /**
+ * Read cached comparison series synchronously (no fetch).
+ */
+export function getCachedComparisonSeries(symbol, interval = '1D', options = {}) {
+    const key = cleanSymbol(symbol);
+    const window = INTERVAL_WINDOWS[interval] || 1;
+    const cacheKey = `${key}:${window}:full`;
+    const cached = comparisonCacheMap.get(cacheKey);
+    if (cached && isCacheRowFresh(cached, COMPARISON_CACHE_TTL)) {
+        if (!options?.silent) markLocalCacheHit();
+        return cached.series;
+    }
+    if (!options?.silent) markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
+    return null;
+}
+
+/**
  * Clear all caches.
  */
 export function clearPriceCache() {
@@ -1800,26 +1923,70 @@ export function clearPriceCache() {
  * Read cached interval data synchronously (no fetch).
  * Returns { changePct, close } or null if not cached/expired.
  */
-export function getCachedInterval(symbol, interval) {
+export function getCachedInterval(symbol, interval, options = {}) {
     const key = cleanSymbol(symbol);
     const window = INTERVAL_WINDOWS[interval] || 3;
     const cacheKey = `${key}:${window}`;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cached = intervalCache.get(cacheKey);
     if (isCacheRowFresh(cached, ttl)) {
-        markLocalCacheHit();
-        if (idbHydratedIntervalKeys.has(cacheKey)) {
-            incrementMetric('intervalLocalHitsFromIdb');
-        } else if (sessionHydratedIntervalKeys.has(cacheKey)) {
-            incrementMetric('intervalLocalHitsFromSession');
-            incrementMetric('intervalLocalHitsFromMemorySession');
-        } else {
-            incrementMetric('intervalLocalHitsFromMemory');
-            incrementMetric('intervalLocalHitsFromMemorySession');
+        if (!options?.silent) {
+            markLocalCacheHit();
+            if (idbHydratedIntervalKeys.has(cacheKey)) {
+                incrementMetric('intervalLocalHitsFromIdb');
+            } else if (sessionHydratedIntervalKeys.has(cacheKey)) {
+                incrementMetric('intervalLocalHitsFromSession');
+                incrementMetric('intervalLocalHitsFromMemorySession');
+            } else {
+                incrementMetric('intervalLocalHitsFromMemory');
+                incrementMetric('intervalLocalHitsFromMemorySession');
+            }
         }
         return cached.data;
     }
-    markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
+    if (!options?.silent) markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
+    return null;
+}
+
+export function getCachedIntervalEntry(symbol, interval, options = {}) {
+    const key = cleanSymbol(symbol);
+    const window = INTERVAL_WINDOWS[interval] || 3;
+    const cacheKey = `${key}:${window}`;
+    const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
+    const cached = intervalCache.get(cacheKey);
+    const isFresh = isCacheRowFresh(cached, ttl);
+
+    if (isFresh) {
+        if (!options?.silent) {
+            markLocalCacheHit();
+            if (idbHydratedIntervalKeys.has(cacheKey)) {
+                incrementMetric('intervalLocalHitsFromIdb');
+            } else if (sessionHydratedIntervalKeys.has(cacheKey)) {
+                incrementMetric('intervalLocalHitsFromSession');
+                incrementMetric('intervalLocalHitsFromMemorySession');
+            } else {
+                incrementMetric('intervalLocalHitsFromMemory');
+                incrementMetric('intervalLocalHitsFromMemorySession');
+            }
+        }
+        return { data: cached?.data ?? null, hasEntry: true };
+    }
+
+    if (!options?.silent) markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
+    return { data: null, hasEntry: false };
+}
+
+/**
+ * Read cached fundamentals synchronously (no fetch).
+ */
+export function getCachedFundamentals(symbol, options = {}) {
+    const key = cleanSymbol(symbol);
+    const cached = fundaCache.get(key);
+    if (isCacheRowFresh(cached, FUNDA_CACHE_TTL)) {
+        if (!options?.silent) markLocalCacheHit();
+        return cached.data;
+    }
+    if (!options?.silent) markLocalCacheMiss(cacheLookupMissReason(cached, key), key);
     return null;
 }
 

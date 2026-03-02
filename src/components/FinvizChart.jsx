@@ -18,6 +18,10 @@ const buildSmaSeries = (values, period) => {
     return result;
 };
 
+let _zc = null;
+const getZC = () => _zc || (_zc = JSON.parse(localStorage.getItem('tt_chart_zoom') || '{}'));
+const saveZC = (s, d) => { getZC()[s] = d; localStorage.setItem('tt_chart_zoom', JSON.stringify(_zc)); };
+
 const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, height = 300 }) {
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
@@ -30,14 +34,15 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const tooltipCloseRef = useRef(null);
     const tooltipHighRef = useRef(null);
     const tooltipLowRef = useRef(null);
-    const [zoomDays, setZoomDays] = useState(190);
+    const [zoomDays, _setZoomDays] = useState(() => getZC()[cleaned] || 190);
+    const setZoomDays = useCallback(v => _setZoomDays(prev => { const next = typeof v === 'function' ? v(prev) : v; saveZC(cleaned, next); return next; }), [cleaned]);
     const rafRef = useRef(null);
 
     const handleWheel = useCallback((e) => {
         e.preventDefault();
         if (e.deltaY < 0) setZoomDays(p => Math.max(20, Math.round(p * 0.9)));
         else setZoomDays(p => Math.min(totalPointsRef.current, Math.round(p * 1.1)));
-    }, []);
+    }, [setZoomDays]);
 
     useEffect(() => {
         const node = chartAreaRef.current;
@@ -147,20 +152,26 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const maxV = data?.maxV ?? 0;
     const minP = data?.minP ?? 0;
     const maxP = data?.maxP ?? 0;
-    const renderLine = (arr, color) => {
-        const pts = arr.map((val, i) => val ? `${i === 0 || !arr[i - 1] ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(val).toFixed(1)}` : '').filter(Boolean);
-        return pts.length > 1 ? <path d={pts.join(' ')} fill="none" stroke={color} strokeWidth="1" opacity="0.8" style={{ shapeRendering: 'auto' }} /> : null;
-    };
+    const colorUp = '#00c805';
+    const colorDown = '#ff2e2e';
+    const colorSma50 = '#f8d347';
+    const colorSma200 = '#9d27b0';
+    const candleWidth = Math.max(1.8, (chartW / (points.length || 1)) * 0.82);
+    const smaLines = useMemo(() => {
+        const build = (arr, color) => {
+            const pts = arr.map((val, i) => val ? `${i === 0 || !arr[i - 1] ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(val).toFixed(1)}` : '').filter(Boolean);
+            return pts.length > 1 ? <path d={pts.join(' ')} fill="none" stroke={color} strokeWidth="1" opacity="0.8" style={{ shapeRendering: 'auto' }} /> : null;
+        };
+        return <>{build(sma200, colorSma200)}{build(sma50, colorSma50)}</>;
+    }, [sma50, sma200, getX, getY]);
 
-    const getMonthsLabel = () => {
+    const monthLabels = useMemo(() => {
         const labels = [];
-        let prevM = -1;
-        let lastX = -100;
+        let prevM = -1, lastX = -100;
         points.forEach((p, i) => {
             const d = new Date(p.time);
             const m = d.getMonth();
             const x = getX(i);
-            // Only add label if it's a new month AND there's enough room (45px)
             if (m !== prevM && (x - lastX) > 45) {
                 labels.push({ x, text: d.toLocaleDateString('en-US', { month: 'short' }) });
                 prevM = m;
@@ -168,7 +179,7 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             }
         });
         return labels;
-    };
+    }, [points, getX]);
 
     const updateTooltip = useCallback((idx) => {
         if (!points.length) return;
@@ -213,13 +224,7 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const change = last.close - prevC;
     const changePct = (change / (prevC || 1)) * 100;
 
-    const colorUp = '#00c805'; // Vibrant Finviz Green
-    const colorDown = '#ff2e2e'; // Sharp Finviz Red (updated from #ff2e35)
-    const colorSma50 = '#f8d347'; // Premium SMA50 Yellow
-    const colorSma200 = '#9d27b0'; // Premium SMA200 Purple
 
-    // Normal Candle Gap (0.82 factor for clean separation)
-    const candleWidth = Math.max(1.8, (chartW / points.length) * 0.82);
 
     return (
         <div ref={containerRef} className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden" style={{ height }}>
@@ -267,43 +272,58 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
                         </g>
                     )}
 
-                    {maxV > 0 && points.map((p, i) => {
-                        const vh = (p.volume / maxV) * volH;
-                        const color = p.close >= (i > 0 ? points[i - 1].close : p.close) ? colorUp : colorDown;
-                        return <rect key={i} x={getX(i) - candleWidth / 2} y={H - paddingBottom - vh} width={candleWidth} height={vh} fill={color} opacity="0.3" />;
-                    })}
+                    {smaLines}
 
-                    {renderLine(sma200, colorSma200)}
-                    {renderLine(sma50, colorSma50)}
+                    {/* Batched volume + candles via path strings for perf (~6 DOM nodes instead of ~570) */}
+                    {useMemo(() => {
+                        const volUp = [], volDown = [];
+                        const wickUp = [], wickDown = [];
+                        const bodyUpFill = [], bodyUpStroke = [], bodyDown = [];
+                        const hw = candleWidth / 2;
 
-                    {/* NORMAL CANDLES */}
-                    {points.map((p, i) => {
-                        const x = getX(i), openY = getY(p.open), closeY = getY(p.close), highY = getY(p.high), lowY = getY(p.low);
-                        const prevClose = i > 0 ? points[i - 1].close : p.close;
-                        const color = p.close >= prevClose ? colorUp : colorDown;
-                        const isHollow = p.close >= p.open;
-                        const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
+                        points.forEach((p, i) => {
+                            const x = getX(i);
+                            const prevClose = i > 0 ? points[i - 1].close : p.close;
+                            const isUp = p.close >= prevClose;
+                            const isHollow = p.close >= p.open;
+
+                            // Volume
+                            if (maxV > 0 && p.volume > 0) {
+                                const vh = (p.volume / maxV) * volH;
+                                const vy = H - paddingBottom - vh;
+                                (isUp ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
+                            }
+
+                            // Wicks
+                            const highY = getY(p.high), lowY = getY(p.low);
+                            (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
+
+                            // Bodies
+                            const openY = getY(p.open), closeY = getY(p.close);
+                            const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
+                            const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
+                            if (isUp && isHollow) bodyUpStroke.push(bodyD);
+                            else if (isUp) bodyUpFill.push(bodyD);
+                            else bodyDown.push(bodyD);
+                        });
 
                         return (
-                            <g key={i}>
-                                <line x1={x} y1={highY} x2={x} y2={lowY} stroke={color} strokeWidth="1" />
-                                <rect
-                                    x={x - candleWidth / 2}
-                                    y={top}
-                                    width={candleWidth}
-                                    height={bodyH}
-                                    fill={isHollow ? '#0b0e14' : color}
-                                    stroke={isHollow ? color : 'none'}
-                                    strokeWidth={isHollow ? 1 : 0}
-                                />
-                            </g>
+                            <>
+                                {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.3" />}
+                                {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.3" />}
+                                {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
+                                {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
+                                {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
+                                {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="1" />}
+                                {bodyDown.length > 0 && <path d={bodyDown.join('')} fill={colorDown} />}
+                            </>
                         );
-                    })}
+                    }, [points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown])}
 
                     <g transform={`translate(${W - paddingX + 5}, 0)`}>
                         {[0, 0.25, 0.5, 0.75, 1].map(v => <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">{(maxP - (maxP - minP) * v).toFixed(1)}</text>)}
                     </g>
-                    {getMonthsLabel().map((m, i) => <text key={i} x={m.x} y={H - 8} fill="#444" fontSize="10" fontWeight="black" textAnchor="middle">{m.text.toUpperCase()}</text>)}
+                    {monthLabels.map((m, i) => <text key={i} x={m.x} y={H - 8} fill="#444" fontSize="10" fontWeight="black" textAnchor="middle">{m.text.toUpperCase()}</text>)}
                 </svg>
 
                 <div

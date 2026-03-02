@@ -1,5 +1,4 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react';
-import { m } from 'framer-motion';
 
 const COLORS = [
     '#3b82f6', // blue
@@ -290,7 +289,7 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
             {/* Liquid Tooltip */}
             <div
                 ref={tooltipRef}
-                className="absolute z-40 pointer-events-none glass-card p-3 border border-[var(--accent-primary)]/40 shadow-2xl flex flex-col gap-2 min-w-[240px] bg-[var(--bg-main)]/95 backdrop-blur-3xl transition-all duration-75 ease-out"
+                className="absolute z-40 pointer-events-none glass-card p-3 border border-[var(--accent-primary)]/40 shadow-2xl flex flex-col gap-2 min-w-[240px] bg-[var(--bg-main)]/95 backdrop-blur-3xl"
                 style={{
                     left: '0%',
                     top: '0%',
@@ -338,12 +337,7 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
                 className="w-full h-full overflow-visible cursor-crosshair"
                 preserveAspectRatio="none"
             >
-                <defs>
-                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feGaussianBlur stdDeviation="3" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                </defs>
+
 
                 {/* Base Grid Lines */}
                 <line x1="0" y1={getY(0)} x2={width} y2={getY(0)} stroke="var(--ui-divider)" strokeWidth="1" strokeDasharray="6 6" opacity="0.3" />
@@ -357,24 +351,16 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
 
                     return (
                         <g key={s.symbol}>
-                            <m.path
-                                initial={{ pathLength: 0, opacity: 0 }}
-                                animate={{ pathLength: 1, opacity: 1 }}
-                                transition={{ duration: 1.2, delay: idx * 0.08, ease: "easeInOut" }}
+                            <path
                                 d={memoizedPaths[idx]}
                                 fill="none"
                                 stroke={s.color}
                                 strokeWidth="2.5"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
-                                className="drop-shadow-[0_0_12px_rgba(0,0,0,0.5)]"
-                                opacity={1}
                             />
-
-                            {/* Static Terminal Points */}
-                            <circle cx={getX(lastPoint.time)} cy={getY(lastPoint.value)} r="4" fill={s.color} className="animate-pulse" opacity="0.4" />
+                            <circle cx={getX(lastPoint.time)} cy={getY(lastPoint.value)} r="4" fill={s.color} opacity="0.4" />
                             <circle cx={getX(lastPoint.time)} cy={getY(lastPoint.value)} r="2.5" fill={s.color} />
-
                         </g>
                     );
                 })}
@@ -408,7 +394,7 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
                         stroke="white"
                         strokeWidth="1.5"
                         opacity="0"
-                        className="filter drop-shadow-[0_0_8px_white]"
+                        className=""
                     />
                 ))}
             </svg>

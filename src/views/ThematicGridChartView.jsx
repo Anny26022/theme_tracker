@@ -273,13 +273,17 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
                     data={companySeries}
                     components={ChartGridComponents}
                     computeItemKey={(_, item) => item.company.symbol}
-                    increaseViewportBy={{ top: 400, bottom: 1200 }}
+                    increaseViewportBy={{ top: 200, bottom: 400 }}
                     itemContent={(idx, item) => (
-                        <DeferredFinvizChart
-                            company={item.company}
-                            series={item.series || []}
-                            height={280}
-                        />
+                        item.series.length > 0 ? (
+                            <FinvizChartCard
+                                company={item.company}
+                                series={item.series}
+                                height={280}
+                            />
+                        ) : (
+                            <ChartSkeleton company={item.company} height={280} />
+                        )
                     )}
                 />
             ) : null}

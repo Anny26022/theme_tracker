@@ -27,8 +27,9 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
     });
 
     const [searchQuery, setSearchQuery] = useState('');
-    const [searchMode, setSearchMode] = useState('INDUSTRY'); // INDUSTRY, THEMATIC
-    const [exchangePreference, setExchangePreference] = useState('ALL'); // ALL, NSE, BSE
+    const [searchMode, setSearchMode] = useState('INDUSTRY');
+    const [exchangePreference, _setExchangePreference] = useState(() => localStorage.getItem('tt_comp_exchange') || 'ALL');
+    const setExchangePreference = React.useCallback(v => { _setExchangePreference(v); localStorage.setItem('tt_comp_exchange', v); }, []);
 
     // Save selection whenever it changes
     React.useEffect(() => {

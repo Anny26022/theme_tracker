@@ -35,8 +35,10 @@ const RANGE_LABEL = {
 };
 
 export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, timeframe, setTimeframe, onOpenInsights }) => {
-    const [viewMode, setViewMode] = useState('performance'); // 'performance' | 'breadth'
-    const [trackingType, setTrackingType] = useState('INDUSTRY'); // 'INDUSTRY' | 'THEMATIC'
+    const [viewMode, _setViewMode] = useState(() => localStorage.getItem('tt_tracker_viewMode') || 'performance');
+    const setViewMode = useCallback(v => { const next = typeof v === 'function' ? v(viewMode) : v; localStorage.setItem('tt_tracker_viewMode', next); _setViewMode(next); }, [viewMode]);
+    const [trackingType, _setTrackingType] = useState(() => localStorage.getItem('tt_tracker_trackingType') || 'INDUSTRY');
+    const setTrackingType = useCallback(v => { const next = typeof v === 'function' ? v(trackingType) : v; localStorage.setItem('tt_tracker_trackingType', next); _setTrackingType(next); }, [trackingType]);
     const [sectorSortDesc, setSectorSortDesc] = useState(true);
     const [industrySortDesc, setIndustrySortDesc] = useState(true);
     const leftRangeRef = useRef(null);

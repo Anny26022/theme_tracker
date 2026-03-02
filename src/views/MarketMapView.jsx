@@ -743,12 +743,15 @@ const Legend = React.memo(() => (
 ));
 
 export const MarketMapView = ({ hierarchy }) => {
-    const [hideBSE, setHideBSE] = useState(false);
+    const [hideBSE, _setHideBSE] = useState(() => localStorage.getItem('tt_map_hideBSE') === 'true');
+    const setHideBSE = useCallback(v => _setHideBSE(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_map_hideBSE', String(next)); return next; }), []);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [highlightedTheme, setHighlightedTheme] = useState(null);
-    const [viewMode, setViewMode] = useState('THEMATIC'); // 'THEMATIC' or 'MACRO'
-    const [displayMode, setDisplayMode] = useState('HEATMAP'); // 'HEATMAP' or 'CHARTS'
+    const [viewMode, _setViewMode] = useState(() => localStorage.getItem('tt_map_viewMode') || 'THEMATIC');
+    const setViewMode = useCallback(v => _setViewMode(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_map_viewMode', next); return next; }), []);
+    const [displayMode, _setDisplayMode] = useState(() => localStorage.getItem('tt_map_displayMode') || 'HEATMAP');
+    const setDisplayMode = useCallback(v => _setDisplayMode(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_map_displayMode', next); return next; }), []);
     const scrollPosRef = useRef(0);
     const [visibleThemeNames, setVisibleThemeNames] = useState([]);
     const handleVisibleThemesChange = useCallback((themes) => {
@@ -760,15 +763,15 @@ export const MarketMapView = ({ hierarchy }) => {
         setSelectedThemeName(name);
         setDisplayMode('CHARTS');
         window.scrollTo(0, 0);
-    }, []);
+    }, [setDisplayMode]);
 
     const onExitCharts = useCallback(() => {
         setDisplayMode('HEATMAP');
-        // Simple direct restoration in the next tick
         setTimeout(() => window.scrollTo(0, scrollPosRef.current), 0);
-    }, []);
+    }, [setDisplayMode]);
 
-    const [selectedThemeName, setSelectedThemeName] = useState(null);
+    const [selectedThemeName, _setSelectedThemeName] = useState(() => localStorage.getItem('tt_map_theme') || null);
+    const setSelectedThemeName = useCallback(v => { _setSelectedThemeName(v); if (v) localStorage.setItem('tt_map_theme', v); }, []);
     const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth < 768 : false));
     const searchRef = useRef(null);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
@@ -1090,13 +1093,13 @@ export const MarketMapView = ({ hierarchy }) => {
                         />
                     </>
                 ) : (
-                        <ThematicGridChartView
-                            themeName={selectedThemeName}
-                            companies={themeCompaniesMap[selectedThemeName] || []}
-                            onBack={onExitCharts}
-                            onSelectTheme={setSelectedThemeName}
-                            viewMode={viewMode}
-                        />
+                    <ThematicGridChartView
+                        themeName={selectedThemeName}
+                        companies={themeCompaniesMap[selectedThemeName] || []}
+                        onBack={onExitCharts}
+                        onSelectTheme={setSelectedThemeName}
+                        viewMode={viewMode}
+                    />
                 )}
             </div>
         </ViewWrapper >

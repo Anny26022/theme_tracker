@@ -64,6 +64,13 @@ const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
 
 let cachedDecryptKey = null;
+let lastRefreshState = {
+    runId: null,
+    startedAt: null,
+    finishedAt: null,
+    status: 'idle',
+    errors: {},
+};
 
 function getNoStoreHeaders() {
     return {
@@ -243,12 +250,24 @@ function resolveSnapshotSourceUrl(env) {
     const direct = String(env?.NSE_SNAPSHOT_SOURCE_URL || '').trim();
     if (direct) return direct;
     const origin = String(env?.ORIGIN_BASE_URL || '').trim();
-    if (!origin) return '';
-    try {
-        return new URL('/data.json', origin).toString();
-    } catch {
-        return '';
+    if (origin) {
+        try {
+            return new URL('/data.json', origin).toString();
+        } catch {
+            // continue
+        }
     }
+    const fallback = String(env?.NSE_SNAPSHOT_FALLBACK_URL || '').trim();
+    if (fallback) return fallback;
+    const manualOrigin = String(env?._manualOrigin || '').trim();
+    if (manualOrigin) {
+        try {
+            return new URL('/data.json', manualOrigin).toString();
+        } catch {
+            // ignore
+        }
+    }
+    return '';
 }
 
 function parseIntervalListValue(value) {
@@ -553,6 +572,40 @@ async function refreshNseSnapshots(env) {
     };
 
     await putSnapshotObject(env, NSE_META_KEY, meta, { gzip: false, cacheControl: NSE_META_CACHE_CONTROL });
+}
+
+async function runRefreshPipeline(env) {
+    const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const startedAt = new Date().toISOString();
+    const errors = {};
+
+    try {
+        await refreshNseSnapshots(env);
+    } catch (error) {
+        errors.nse = error?.message || 'NSE snapshot failed';
+        console.error('[NSE Snapshot] refresh failed', error);
+    }
+    try {
+        await refreshIntervalSnapshots(env);
+    } catch (error) {
+        errors.intervals = error?.message || 'Interval snapshot failed';
+        console.error('[Interval Snapshot] refresh failed', error);
+    }
+    try {
+        await refreshPriceSnapshots(env);
+    } catch (error) {
+        errors.prices = error?.message || 'Price snapshot failed';
+        console.error('[Price Snapshot] refresh failed', error);
+    }
+    try {
+        await refreshChartSnapshots(env);
+    } catch (error) {
+        errors.charts = error?.message || 'Chart snapshot failed';
+        console.error('[Chart Snapshot] refresh failed', error);
+    }
+
+    const finishedAt = new Date().toISOString();
+    return { runId, startedAt, finishedAt, errors, ok: Object.keys(errors).length === 0 };
 }
 
 async function refreshIntervalSnapshots(env) {
@@ -1164,7 +1217,7 @@ async function handleSnapshotHealth(request, env, url) {
         }
     }));
 
-    return createJsonResponse(200, { ok: true, fetchedAt, results });
+    return createJsonResponse(200, { ok: true, fetchedAt, results, lastRefresh: lastRefreshState });
 }
 
 function createOptionsResponse(allowMethods, allowHeaders = 'Content-Type') {
@@ -1542,28 +1595,26 @@ async function handleSnapshotRefresh(request, env, ctx) {
         return createJsonResponse(403, { ok: false, error: 'Unauthorized' });
     }
 
+    const origin = new URL(request.url).origin;
+    const envWithOrigin = { ...env, _manualOrigin: origin };
     const startedAt = new Date().toISOString();
+    lastRefreshState = {
+        runId: `manual-${Date.now()}`,
+        startedAt,
+        finishedAt: null,
+        status: 'running',
+        errors: {},
+    };
+
     const runner = (async () => {
-        try {
-            await refreshNseSnapshots(env);
-        } catch (error) {
-            console.error('[NSE Snapshot] manual refresh failed', error);
-        }
-        try {
-            await refreshIntervalSnapshots(env);
-        } catch (error) {
-            console.error('[Interval Snapshot] manual refresh failed', error);
-        }
-        try {
-            await refreshPriceSnapshots(env);
-        } catch (error) {
-            console.error('[Price Snapshot] manual refresh failed', error);
-        }
-        try {
-            await refreshChartSnapshots(env);
-        } catch (error) {
-            console.error('[Chart Snapshot] manual refresh failed', error);
-        }
+        const result = await runRefreshPipeline(envWithOrigin);
+        lastRefreshState = {
+            runId: result.runId,
+            startedAt: result.startedAt,
+            finishedAt: result.finishedAt,
+            status: result.ok ? 'success' : 'error',
+            errors: result.errors,
+        };
     })();
 
     if (ctx?.waitUntil) {
@@ -1636,29 +1687,22 @@ export default {
         return handleStatic(request, env, url);
     },
     async scheduled(_event, env, ctx) {
-        ctx.waitUntil(
-            (async () => {
-                try {
-                    await refreshNseSnapshots(env);
-                } catch (error) {
-                    console.error('[NSE Snapshot] refresh failed', error);
-                }
-                try {
-                    await refreshIntervalSnapshots(env);
-                } catch (error) {
-                    console.error('[Interval Snapshot] refresh failed', error);
-                }
-                try {
-                    await refreshPriceSnapshots(env);
-                } catch (error) {
-                    console.error('[Price Snapshot] refresh failed', error);
-                }
-                try {
-                    await refreshChartSnapshots(env);
-                } catch (error) {
-                    console.error('[Chart Snapshot] refresh failed', error);
-                }
-            })()
-        );
+        ctx.waitUntil((async () => {
+            lastRefreshState = {
+                runId: `scheduled-${Date.now()}`,
+                startedAt: new Date().toISOString(),
+                finishedAt: null,
+                status: 'running',
+                errors: {},
+            };
+            const result = await runRefreshPipeline(env);
+            lastRefreshState = {
+                runId: result.runId,
+                startedAt: result.startedAt,
+                finishedAt: result.finishedAt,
+                status: result.ok ? 'success' : 'error',
+                errors: result.errors,
+            };
+        })());
     }
 };

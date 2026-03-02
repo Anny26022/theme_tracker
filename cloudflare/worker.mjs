@@ -62,8 +62,8 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
-const WORKER_BUILD_ID = '2026-03-02-002';
-const DEFAULT_SNAPSHOT_ORIGIN = 'https://nexus.themetracker.workers.dev';
+const WORKER_BUILD_ID = '2026-03-02-003';
+const DEFAULT_SNAPSHOT_SOURCE_URL = 'https://nexus.themetracker.workers.dev/data.json?v=0.0.0';
 const REFRESH_STATUS_KEY = 'snapshots/system/refresh-status.json';
 
 let cachedDecryptKey = null;
@@ -281,7 +281,7 @@ function resolveSnapshotSourceUrl(env) {
         manualOrigin ? new URL('/data.json', manualOrigin).toString() : '',
         origin ? new URL('/data.json', origin).toString() : '',
         fallback,
-        DEFAULT_SNAPSHOT_ORIGIN ? new URL('/data.json', DEFAULT_SNAPSHOT_ORIGIN).toString() : '',
+        DEFAULT_SNAPSHOT_SOURCE_URL,
     ].filter(Boolean);
 
     return candidates[0] || '';

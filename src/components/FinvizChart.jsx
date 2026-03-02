@@ -36,7 +36,9 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const tooltipLowRef = useRef(null);
     const [zoomDays, _setZoomDays] = useState(() => getZC()[cleaned] || 190);
     const [panOffset, setPanOffset] = useState(0);
-    const dragRef = useRef({ isDragging: false, startX: 0, startPan: 0 });
+    const [vScale, setVScale] = useState(1.0);
+    const [timeframe, setTimeframe] = useState('1D'); // '1D', '1W', '1M', '1Y'
+    const dragRef = useRef({ isDragging: false, isYDragging: false, startX: 0, startY: 0, startPan: 0, startVScale: 1.0 });
 
     const setZoomDays = useCallback(v => _setZoomDays(prev => {
         const next = typeof v === 'function' ? v(prev) : v;
@@ -56,35 +58,70 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         });
     }, [setZoomDays]);
 
+    const interactionRafRef = useRef(null);
+
     useEffect(() => {
         const node = chartAreaRef.current;
         if (!node) return undefined;
 
         const onStart = (e) => {
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
-            dragRef.current.isDragging = true;
-            dragRef.current.startX = clientX;
-            dragRef.current.startPan = panOffset;
+            const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
+            const rect = node.getBoundingClientRect();
+
+            // If dragging on the right side (price axis area), do vertical scale
+            const isRightSide = (clientX - rect.left) > (rect.width - 50);
+
+            if (isRightSide) {
+                dragRef.current.isYDragging = true;
+                dragRef.current.startY = clientY;
+                dragRef.current.startVScale = vScale;
+            } else {
+                dragRef.current.isDragging = true;
+                dragRef.current.startX = clientX;
+                dragRef.current.startPan = panOffset;
+            }
         };
 
         const onMove = (e) => {
-            if (!dragRef.current.isDragging) return;
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
-            const dx = clientX - dragRef.current.startX;
-            const nodeWidth = node.clientWidth || 500;
-            const dxPoints = Math.round((dx / nodeWidth) * zoomDays);
+            const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
 
-            setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
+            if (dragRef.current.isYDragging || dragRef.current.isDragging) {
+                if (e.cancelable) e.preventDefault();
 
-            if (e.cancelable) e.preventDefault();
+                if (interactionRafRef.current) cancelAnimationFrame(interactionRafRef.current);
+                interactionRafRef.current = requestAnimationFrame(() => {
+                    if (dragRef.current.isYDragging) {
+                        const dy = dragRef.current.startY - clientY;
+                        const sensitivity = 0.005;
+                        setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * sensitivity)));
+                    } else if (dragRef.current.isDragging) {
+                        const dx = clientX - dragRef.current.startX;
+                        const nodeWidth = node.clientWidth || 500;
+                        const dxPoints = Math.round((dx / nodeWidth) * zoomDays);
+                        setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
+                    }
+                });
+            }
         };
 
         const onEnd = () => {
             dragRef.current.isDragging = false;
+            dragRef.current.isYDragging = false;
+            if (interactionRafRef.current) cancelAnimationFrame(interactionRafRef.current);
+        };
+
+        const onDblClick = (e) => {
+            const rect = node.getBoundingClientRect();
+            if ((e.clientX - rect.left) > (rect.width - 50)) {
+                setVScale(1.0);
+            }
         };
 
         node.addEventListener('wheel', handleWheel, { passive: false });
         node.addEventListener('mousedown', onStart);
+        node.addEventListener('dblclick', onDblClick);
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onEnd);
 
@@ -95,42 +132,74 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         return () => {
             node.removeEventListener('wheel', handleWheel);
             node.removeEventListener('mousedown', onStart);
+            node.removeEventListener('dblclick', onDblClick);
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onEnd);
             node.removeEventListener('touchstart', onStart);
             window.removeEventListener('touchmove', onMove);
             window.removeEventListener('touchend', onEnd);
+            if (interactionRafRef.current) cancelAnimationFrame(interactionRafRef.current);
         };
-    }, [handleWheel, panOffset, zoomDays]);
+    }, [handleWheel, panOffset, zoomDays, vScale]);
 
     const baseData = useMemo(() => {
         if (!series || series.length === 0) return null;
 
         // 1. Process points
-        let needsSort = false;
-        for (let i = 1; i < series.length; i++) {
-            if (series[i - 1].time > series[i].time) {
-                needsSort = true;
-                break;
-            }
+        let ordered = [...series].sort((a, b) => a.time - b.time);
+
+        // 2. Aggregate if needed
+        if (timeframe !== '1D') {
+            const buckets = new Map();
+            ordered.forEach(p => {
+                const date = new Date(p.time);
+                let key;
+                if (timeframe === '1W') {
+                    // Monday-based week grouping
+                    const d = new Date(date);
+                    const day = d.getDay();
+                    const diff = d.getDate() - (day === 0 ? 6 : day - 1);
+                    const monday = new Date(d.getFullYear(), d.getMonth(), diff, 0, 0, 0, 0);
+                    key = monday.getTime();
+                } else if (timeframe === '1M') {
+                    key = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0, 0).getTime();
+                } else if (timeframe === '1Y') {
+                    key = new Date(date.getFullYear(), 0, 1, 0, 0, 0, 0).getTime();
+                }
+
+                const open = p.open ?? p.close ?? 0;
+                const high = p.high ?? p.close ?? 0;
+                const low = p.low ?? p.close ?? 0;
+                const close = p.close ?? 0;
+                const vol = p.volume ?? 0;
+
+                if (!buckets.has(key)) {
+                    buckets.set(key, { time: key, open, high, low, close, volume: vol });
+                } else {
+                    const b = buckets.get(key);
+                    b.high = Math.max(b.high, high);
+                    b.low = Math.min(b.low, low);
+                    b.close = close; // Last close in group
+                    b.volume += vol;
+                }
+            });
+            ordered = Array.from(buckets.values());
         }
 
-        const ordered = needsSort ? [...series].sort((a, b) => a.time - b.time) : series;
         const allPoints = ordered
             .map(p => ({
                 time: p.time,
-                open: p.open ?? p.close ?? 0,
-                high: p.high ?? p.close ?? 0,
-                low: p.low ?? p.close ?? 0,
-                close: p.close ?? 0,
-                volume: p.volume ?? 0,
+                open: p.open,
+                high: p.high,
+                low: p.low,
+                close: p.close,
+                volume: p.volume,
             }))
-            .filter(p => p.time > 0 && isFinite(p.close) && p.close > 0)
-            ;
+            .filter(p => !isNaN(p.time) && p.time > 0 && isFinite(p.close) && p.close > 0);
 
         if (allPoints.length < 2) return null;
 
-        // 2. Full-History SMA (Crucial for correctness)
+        // 3. Full-History SMA (Crucial for correctness)
         const allCloses = allPoints.map(p => p.close);
         const sma50Arr = buildSmaSeries(allCloses, 50);
         const sma200Arr = buildSmaSeries(allCloses, 200);
@@ -141,7 +210,16 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             sma200Arr,
             totalPoints: allPoints.length
         };
-    }, [series]);
+    }, [series, timeframe]);
+
+    // Reset view and Auto-Zoom on timeframe change
+    useEffect(() => {
+        setPanOffset(0);
+        if (timeframe === '1W') setZoomDays(100); // 100 weeks ~ 2years
+        else if (timeframe === '1M') setZoomDays(60); // 60 months ~ 5years
+        else if (timeframe === '1Y') setZoomDays(20);
+        else setZoomDays(190); // Default daily
+    }, [timeframe]);
 
     const data = useMemo(() => {
         if (!baseData) return null;
@@ -176,16 +254,18 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             if (sma50[i] && sma50[i] > maxP) maxP = sma50[i];
         });
 
-        const range = maxP - minP;
-        const padding = range * 0.1; // Normal healthy padding
-        minP -= padding;
-        maxP += padding;
+        // Apply Vertical Scaling
+        const mid = (maxP + minP) / 2;
+        const range = (maxP - minP) / vScale;
+        const padding = range * 0.1;
+        minP = mid - range / 2 - padding;
+        maxP = mid + range / 2 + padding;
 
         return {
             points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays, panOffset]);
+    }, [baseData, zoomDays, panOffset, vScale]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -256,6 +336,11 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const handleMouseMove = useCallback((e) => {
         if (!points.length) return;
         const rect = e.currentTarget.getBoundingClientRect();
+
+        // Change cursor if hovering over the price axis (right 50px)
+        const isRightSide = (e.clientX - rect.left) > (rect.width - 50);
+        e.currentTarget.style.cursor = isRightSide ? 'ns-resize' : 'crosshair';
+
         const xRatio = (e.clientX - rect.left - paddingLeft) / chartW;
         const idx = Math.min(points.length - 1, Math.max(0, Math.round(xRatio * (points.length - 1))));
         if (idx === hoverIndexRef.current) return;
@@ -283,137 +368,153 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
 
 
     return (
-        <div ref={containerRef} className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden" style={{ height }}>
-            {/* Legend */}
-            <div className="absolute top-1.5 left-3 right-2 flex justify-between items-start pointer-events-none z-10">
-                <div className="flex flex-col">
-                    <div className="flex items-baseline gap-1.5">
-                        <span className="text-[16px] font-black tracking-tight text-white uppercase">
-                            {/^\d+$/.test(cleaned) ? (name || symbol) : cleaned}
+        <>
+            {/* Timeframe Toggles - Ultra Mini */}
+            <div className="flex flex-row justify-end gap-0.5 mb-1 px-1">
+                {['1D', '1W', '1M', '1Y'].map(tf => (
+                    <button
+                        key={tf}
+                        onClick={(e) => { e.stopPropagation(); setTimeframe(tf); }}
+                        className={`px-1 py-0 rounded-[2px] text-[7px] font-black tracking-tighter border transition-all ${timeframe === tf ? 'bg-[var(--accent-primary)] text-black border-[var(--accent-primary)]' : 'bg-[#1a1c22]/50 border-white/5 text-white/20 hover:text-white hover:border-white/10'}`}
+                    >
+                        {tf}
+                    </button>
+                ))}
+            </div>
+
+            <div ref={containerRef} className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden" style={{ height }}>
+                {/* Legend */}
+                <div className="absolute top-1.5 left-3 right-2 flex justify-between items-start pointer-events-none z-10">
+                    <div className="flex flex-col">
+                        <div className="flex items-baseline gap-1.5">
+                            <span className="text-[16px] font-black tracking-tight text-white uppercase">
+                                {/^\d+$/.test(cleaned) ? (name || symbol) : cleaned}
+                            </span>
+                        </div>
+                        <div className="flex flex-col text-[9px] font-black leading-tight -mt-0.5">
+                            <span style={{ color: colorSma50 }}>SMA 50</span>
+                            <span style={{ color: colorSma200 }}>SMA 200</span>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col items-end leading-none">
+                        <span className="text-gray-800 text-[8px] font-black tracking-widest opacity-30">© FINVIZ.COM</span>
+                        <span className="text-[12px] font-black italic mt-1" style={{ color: change >= 0 ? colorUp : colorDown }}>
+                            {change >= 0 ? '+' : ''}{change.toFixed(2)} ({Math.abs(changePct).toFixed(2)}%)
                         </span>
                     </div>
-                    <div className="flex flex-col text-[9px] font-black leading-tight -mt-0.5">
-                        <span style={{ color: colorSma50 }}>SMA 50</span>
-                        <span style={{ color: colorSma200 }}>SMA 200</span>
-                    </div>
                 </div>
-                <div className="flex flex-col items-end leading-none">
-                    <span className="text-gray-800 text-[8px] font-black tracking-widest opacity-30">© FINVIZ.COM</span>
-                    <span className="text-[12px] font-black italic mt-1" style={{ color: change >= 0 ? colorUp : colorDown }}>
-                        {change >= 0 ? '+' : ''}{change.toFixed(2)} ({Math.abs(changePct).toFixed(2)}%)
-                    </span>
+
+                {/* Ultra-Mini Controls */}
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
+                    <button onClick={() => setZoomDays(prev => Math.max(20, Math.round(prev * 0.7)))} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
+                    <button onClick={() => setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4)))} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
+                    <button onClick={() => { setZoomDays(data.totalPoints); setPanOffset(0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
                 </div>
-            </div>
-
-            {/* Ultra-Mini Controls */}
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
-                <button onClick={() => setZoomDays(prev => Math.max(20, Math.round(prev * 0.7)))} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
-                <button onClick={() => setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4)))} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
-                <button onClick={() => setZoomDays(190)} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
-            </div>
-
-            <div
-                ref={chartAreaRef}
-                className="flex-1 relative cursor-crosshair mt-2"
-                onMouseMove={handleMouseMove}
-                onMouseLeave={handleMouseLeave}
-            >
-                <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
-
-                    {/* Volume Labels (Left Axis) */}
-                    {maxV > 0 && (
-                        <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
-                            <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
-                            <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
-                        </g>
-                    )}
-
-                    {smaLines}
-
-                    {/* Batched volume + candles via path strings for perf (~6 DOM nodes instead of ~570) */}
-                    {useMemo(() => {
-                        const volUp = [], volDown = [];
-                        const wickUp = [], wickDown = [];
-                        const bodyUpFill = [], bodyUpStroke = [], bodyDown = [];
-                        const hw = candleWidth / 2;
-
-                        points.forEach((p, i) => {
-                            const x = getX(i);
-                            const prevClose = i > 0 ? points[i - 1].close : p.close;
-                            const isUp = p.close >= prevClose;
-                            const isHollow = p.close >= p.open;
-
-                            // Volume
-                            if (maxV > 0 && p.volume > 0) {
-                                const vh = (p.volume / maxV) * volH;
-                                const vy = H - paddingBottom - vh;
-                                (isUp ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
-                            }
-
-                            // Wicks
-                            const highY = getY(p.high), lowY = getY(p.low);
-                            (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
-
-                            // Bodies
-                            const openY = getY(p.open), closeY = getY(p.close);
-                            const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
-                            const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
-                            if (isUp && isHollow) bodyUpStroke.push(bodyD);
-                            else if (isUp) bodyUpFill.push(bodyD);
-                            else bodyDown.push(bodyD);
-                        });
-
-                        return (
-                            <>
-                                {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.3" />}
-                                {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.3" />}
-                                {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
-                                {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
-                                {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
-                                {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="1" />}
-                                {bodyDown.length > 0 && <path d={bodyDown.join('')} fill={colorDown} />}
-                            </>
-                        );
-                    }, [points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown])}
-
-                    <g transform={`translate(${W - paddingX + 5}, 0)`}>
-                        {[0, 0.25, 0.5, 0.75, 1].map(v => (
-                            <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
-                                {(maxP - (maxP - minP) * v).toFixed(1)}
-                            </text>
-                        ))}
-                    </g>
-                    {monthLabels.map((m, i) => (
-                        <text
-                            key={i}
-                            x={m.x}
-                            y={H - 8}
-                            fill={m.isYear ? "#888" : "#444"}
-                            fontSize={m.isYear ? "11" : "10"}
-                            fontWeight={m.isYear ? "900" : "800"}
-                            fontFamily="monospace"
-                            textAnchor="middle"
-                        >
-                            {m.text}
-                        </text>
-                    ))}
-                </svg>
 
                 <div
-                    ref={tooltipRef}
-                    className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
-                    style={{ opacity: 0 }}
+                    ref={chartAreaRef}
+                    className="flex-1 relative cursor-crosshair mt-2"
+                    onMouseMove={handleMouseMove}
+                    onMouseLeave={handleMouseLeave}
                 >
-                    <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
-                    <div className="grid grid-cols-2 gap-x-2">
-                        <span ref={tooltipOpenRef}>O: —</span>
-                        <span ref={tooltipCloseRef}>C: —</span>
-                        <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
-                        <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
+                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
+
+                        {/* Volume Labels (Left Axis) */}
+                        {maxV > 0 && (
+                            <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
+                                <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
+                                <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
+                            </g>
+                        )}
+
+                        {smaLines}
+
+                        {/* Batched volume + candles via path strings for perf (~6 DOM nodes instead of ~570) */}
+                        {useMemo(() => {
+                            const volUp = [], volDown = [];
+                            const wickUp = [], wickDown = [];
+                            const bodyUpFill = [], bodyUpStroke = [], bodyDown = [];
+                            const hw = candleWidth / 2;
+
+                            points.forEach((p, i) => {
+                                const x = getX(i);
+                                const prevClose = i > 0 ? points[i - 1].close : p.close;
+                                const isUp = p.close >= prevClose;
+                                const isHollow = p.close >= p.open;
+
+                                // Volume
+                                if (maxV > 0 && p.volume > 0) {
+                                    const vh = (p.volume / maxV) * volH;
+                                    const vy = H - paddingBottom - vh;
+                                    (isUp ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
+                                }
+
+                                // Wicks
+                                const highY = getY(p.high), lowY = getY(p.low);
+                                (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
+
+                                // Bodies
+                                const openY = getY(p.open), closeY = getY(p.close);
+                                const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
+                                const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
+                                if (isUp && isHollow) bodyUpStroke.push(bodyD);
+                                else if (isUp) bodyUpFill.push(bodyD);
+                                else bodyDown.push(bodyD);
+                            });
+
+                            return (
+                                <>
+                                    {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.3" />}
+                                    {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.3" />}
+                                    {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
+                                    {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
+                                    {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
+                                    {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="1" />}
+                                    {bodyDown.length > 0 && <path d={bodyDown.join('')} fill={colorDown} />}
+                                </>
+                            );
+                        }, [points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown])}
+
+                        <g transform={`translate(${W - paddingX + 5}, 0)`}>
+                            {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                                <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                                    {(maxP - (maxP - minP) * v).toFixed(1)}
+                                </text>
+                            ))}
+                        </g>
+                        {monthLabels.map((m, i) => (
+                            <text
+                                key={i}
+                                x={m.x}
+                                y={H - 8}
+                                fill={m.isYear ? "#888" : "#444"}
+                                fontSize={m.isYear ? "11" : "10"}
+                                fontWeight={m.isYear ? "900" : "800"}
+                                fontFamily="monospace"
+                                textAnchor="middle"
+                            >
+                                {m.text}
+                            </text>
+                        ))}
+                    </svg>
+
+                    <div
+                        ref={tooltipRef}
+                        className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
+                        style={{ opacity: 0 }}
+                    >
+                        <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
+                        <div className="grid grid-cols-2 gap-x-2">
+                            <span ref={tooltipOpenRef}>O: —</span>
+                            <span ref={tooltipCloseRef}>C: —</span>
+                            <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
+                            <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </>
     );
 }, (prevProps, nextProps) => {
     if (prevProps.height !== nextProps.height) return false;

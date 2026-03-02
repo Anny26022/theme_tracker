@@ -62,7 +62,8 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
-const WORKER_BUILD_ID = '2026-03-02-001';
+const WORKER_BUILD_ID = '2026-03-02-002';
+const DEFAULT_SNAPSHOT_ORIGIN = 'https://nexus.themetracker.workers.dev';
 
 let cachedDecryptKey = null;
 let lastRefreshState = {
@@ -249,26 +250,19 @@ function buildSourceHeaders(env) {
 
 function resolveSnapshotSourceUrl(env) {
     const direct = String(env?.NSE_SNAPSHOT_SOURCE_URL || '').trim();
-    if (direct) return direct;
-    const origin = String(env?.ORIGIN_BASE_URL || '').trim();
-    if (origin) {
-        try {
-            return new URL('/data.json', origin).toString();
-        } catch {
-            // continue
-        }
-    }
-    const fallback = String(env?.NSE_SNAPSHOT_FALLBACK_URL || '').trim();
-    if (fallback) return fallback;
     const manualOrigin = String(env?._manualOrigin || '').trim();
-    if (manualOrigin) {
-        try {
-            return new URL('/data.json', manualOrigin).toString();
-        } catch {
-            // ignore
-        }
-    }
-    return '';
+    const origin = String(env?.ORIGIN_BASE_URL || '').trim();
+    const fallback = String(env?.NSE_SNAPSHOT_FALLBACK_URL || '').trim();
+
+    const candidates = [
+        direct,
+        manualOrigin ? new URL('/data.json', manualOrigin).toString() : '',
+        origin ? new URL('/data.json', origin).toString() : '',
+        fallback,
+        DEFAULT_SNAPSHOT_ORIGIN ? new URL('/data.json', DEFAULT_SNAPSHOT_ORIGIN).toString() : '',
+    ].filter(Boolean);
+
+    return candidates[0] || '';
 }
 
 function parseIntervalListValue(value) {

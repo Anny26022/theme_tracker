@@ -300,12 +300,19 @@ async function hydrateIntervalCacheFromIndexedDb() {
             hydratedEntries = entries.length;
             entries.forEach(([key, row]) => {
                 if (!key || !row || typeof row.timestamp !== 'number') return;
-                const existing = intervalCache.get(key);
+
+                // CRITICAL: Re-clean the key in case the IDB has old-format symbols
+                // key is "SYMBOL:WINDOW"
+                const [rawSym, win] = key.split(':');
+                const cleanSym = cleanSymbol(rawSym);
+                const canonicalKey = `${cleanSym}:${win}`;
+
+                const existing = intervalCache.get(canonicalKey);
                 const existingTs = existing?.timestamp || 0;
                 if (!existing || row.timestamp > existingTs) {
-                    intervalCache.set(key, row);
-                    idbHydratedIntervalKeys.add(key);
-                    sessionHydratedIntervalKeys.delete(key);
+                    intervalCache.set(canonicalKey, row);
+                    idbHydratedIntervalKeys.add(canonicalKey);
+                    sessionHydratedIntervalKeys.delete(canonicalKey);
                 }
             });
             pruneCacheEntries(intervalCache, MAX_INTERVAL_MEMORY_ENTRIES);
@@ -344,10 +351,17 @@ async function hydrateComparisonCacheFromIndexedDb() {
         hydratedEntries = entries.length;
         entries.forEach(([key, row]) => {
             if (!key || !row || typeof row.timestamp !== 'number') return;
-            const existing = comparisonCacheMap.get(key);
+
+            // CRITICAL: Re-clean the key
+            // key is "SYMBOL:WINDOW:full"
+            const parts = key.split(':');
+            const cleanSym = cleanSymbol(parts[0]);
+            const canonicalKey = `${cleanSym}:${parts[1]}:full`;
+
+            const existing = comparisonCacheMap.get(canonicalKey);
             const existingTs = existing?.timestamp || 0;
             if (!existing || row.timestamp > existingTs) {
-                comparisonCacheMap.set(key, row);
+                comparisonCacheMap.set(canonicalKey, row);
             }
         });
         pruneCacheEntries(comparisonCacheMap, MAX_COMPARISON_MEMORY_ENTRIES);
@@ -538,8 +552,11 @@ function markMissReason(reason) {
     if (normalized === 'post-fallback') incrementMetric('missReasonPostFallback');
 }
 
-function cacheLookupMissReason(cachedRow) {
-    return cachedRow ? 'ttl-expired' : 'cold';
+function cacheLookupMissReason(cachedRow, cacheKey) {
+    if (!cachedRow) return 'cold-miss';
+    const now = Date.now();
+    const age = now - cachedRow.timestamp;
+    return `ttl-expired(${Math.round(age / 1000)}s-old)`;
 }
 
 export function recordCacheMetric(key, value = 1) {
@@ -551,7 +568,10 @@ function markLocalCacheHit() {
     incrementMetric('localHits');
 }
 
-function markLocalCacheMiss(reason = 'cold') {
+function markLocalCacheMiss(reason = 'cold', cacheKey = 'unknown') {
+    if (IS_DEV) {
+        console.warn(`[PriceService][CacheMiss] Key: ${cacheKey} | Reason: ${reason}`);
+    }
     incrementMetric('localMisses');
     incrementMetric('cacheLookupMisses');
     markMissReason(reason);
@@ -1007,23 +1027,25 @@ function extractChartFromFrame(payload, interval) {
     if (typeof changePct !== 'number' || !isFinite(changePct)) return null;
 
     return {
-        symbol: symbolInfo[0],
+        symbol: cleanSymbol(symbolInfo[0]),
         data: { changePct: changePct * 100, close }
     };
 }
 
 /**
  * Extract FULL time-series from chart frame.
+ * Google AiCwsd format: [time, [close, ?, changePct]]
+ * We store both `price`/`close` (same value) for compat with
+ * ComparisonChart (uses .value) and FinvizChart (uses .close/.price).
  */
 function extractWideChartFromFrame(payload) {
     const root = payload?.[0]?.[0];
     if (!Array.isArray(root)) return null;
 
-    const symbolInfo = root[0];
+    const symbolInfo = root[0]; // [symbol, ex, price, change, changePct, ...]
+    const absolutePrice = symbolInfo?.[2];
 
     // Robustly find the points array. Google structure varies.
-    // 1D: root[3][0][1]
-    // 1M+: root[3][1]
     let points = root[3]?.[0]?.[1];
     if (!Array.isArray(points) || points.length < 2) {
         points = root[3]?.[1];
@@ -1031,32 +1053,61 @@ function extractWideChartFromFrame(payload) {
 
     if (!Array.isArray(points) || points.length === 0) return null;
 
-    // Convert internal date array [Y,M,D,H,m...] to timestamp
     const parseTime = (val) => {
         if (typeof val === 'number') return val;
         if (Array.isArray(val)) {
-            // [2026, 2, 24, 15, 30] -> timestamp
             const [y, m, d, h, min] = val;
             return new Date(y, m - 1, d, h || 0, min || 0).getTime();
         }
         return 0;
     };
 
-    const series = points.map(p => ({
-        time: parseTime(p[0]),
-        changePct: (p?.[1]?.[2] || 0) * 100,
-        price: p?.[1]?.[0] || 0
-    })).filter(p => isFinite(p.changePct) && p.time > 0)
+    let rawSeries = points.map(p => {
+        const stats = p[1];
+        const time = parseTime(p[0]);
+        const close = stats?.[0] || 0;
+        const changePct = (stats?.[2] || 0) * 100;
+
+        // Sanity check: Ensure OHLC are absolute prices and not glitches
+        const validateAbs = (val) => {
+            if (!val || val <= 0) return close;
+            // If the value is suspicious (very small compared to close), it might be a relative decimal
+            if (val < close * 0.1) return close;
+            return val;
+        };
+
+        const high = validateAbs(stats?.[3]);
+        const low = validateAbs(stats?.[4]);
+        const open = validateAbs(stats?.[5]);
+        const volume = p[2] || 0;
+
+        return { time, close, open, high, low, volume, changePct };
+    }).filter(p => isFinite(p.close) && p.time > 0)
         .sort((a, b) => a.time - b.time);
 
-    // Normalize value to changePct for chart compatibility 
-    series.forEach(p => { p.value = p.changePct; });
+    if (rawSeries.length === 0) return null;
 
-    // Normalize to start at 0% if we have points
-    if (series.length > 0) {
-        const startVal = series[0].value;
-        series.forEach(p => { p.value -= startVal; });
-    }
+    // ── Scaling Logic: Convert normalized series to absolute prices ──
+    const lastRawClose = rawSeries[rawSeries.length - 1].close;
+
+    // If the data is normalized (e.g. around 1.0 or 100.0) but the symbol price is high (e.g. 300+)
+    // we scale the whole series to match the absolutePrice.
+    const needsScaling = absolutePrice && absolutePrice > 5 && (Math.abs(lastRawClose - absolutePrice) > absolutePrice * 0.5);
+    const scaleFactor = needsScaling ? (absolutePrice / lastRawClose) : 1.0;
+
+    const series = rawSeries.map(p => ({
+        ...p,
+        close: p.close * scaleFactor,
+        open: p.open * scaleFactor,
+        high: p.high * scaleFactor,
+        low: p.low * scaleFactor,
+        price: p.close * scaleFactor, // Compatibility alias
+        value: p.changePct // For ComparisonChart
+    }));
+
+    // Normalize `value` to start at 0% for ComparisonChart overlays
+    const startVal = series[0].value;
+    series.forEach(p => { p.value -= startVal; });
 
     return {
         symbol: symbolInfo[0],
@@ -1145,7 +1196,7 @@ export async function fetchLivePrices(symbols) {
             markLocalCacheHit();
             results.set(key, cached.data);
         } else {
-            markLocalCacheMiss(cacheLookupMissReason(cached));
+            markLocalCacheMiss(cacheLookupMissReason(cached, key), key);
             uncached.push(key);
         }
     }
@@ -1271,7 +1322,7 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
             }
             if (cached.data !== null) results.set(sym, cached.data);
         } else if (!currentPending.has(sym)) {
-            markLocalCacheMiss(cacheLookupMissReason(cached));
+            markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
             callMisses += 1;
             uncached.push(sym);
         }
@@ -1394,15 +1445,16 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
                 frames.forEach(frame => {
                     const extracted = extractChartFromFrame(frame.payload, interval);
                     if (extracted) {
-                        const cacheKey = `${extracted.symbol}:${window}`;
+                        const sym = extracted.symbol; // Now always cleaned by extractor
+                        const cacheKey = `${sym}:${window}`;
                         const row = buildCacheRow(extracted.data, batchResult.responseTtlMs, ttl);
                         if (row) {
                             intervalCache.set(cacheKey, row);
                             idbHydratedIntervalKeys.delete(cacheKey);
                             sessionHydratedIntervalKeys.delete(cacheKey);
                         }
-                        partialData[extracted.symbol] = extracted.data;
-                        returned.add(extracted.symbol);
+                        partialData[sym] = extracted.data;
+                        returned.add(sym);
                     }
                 });
 
@@ -1478,7 +1530,7 @@ export async function fetchUnifiedTrackerData(symbols, interval = '1M', options 
                 markLocalCacheHit();
                 results.set(sym, cached.data);
             } else {
-                markLocalCacheMiss(cacheLookupMissReason(cached));
+                markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
                 uncachedKeys.push(sym);
             }
         });
@@ -1610,7 +1662,7 @@ export async function fetchFundamentals(symbols) {
             markLocalCacheHit();
             results.set(key, cached.data);
         } else {
-            markLocalCacheMiss(cacheLookupMissReason(cached));
+            markLocalCacheMiss(cacheLookupMissReason(cached, key), key);
             uncached.push(key);
         }
     }
@@ -1673,11 +1725,14 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
         for (const sym of keys) {
             const cacheKey = `${sym}:${window}:full`;
             const cached = comparisonCacheMap.get(cacheKey);
-            if (isCacheRowFresh(cached, COMPARISON_CACHE_TTL)) {
+            const isFresh = isCacheRowFresh(cached, COMPARISON_CACHE_TTL);
+            const hasOhlc = Array.isArray(cached?.series) && cached.series.length > 0 && typeof cached.series[0].open === 'number';
+
+            if (isFresh && hasOhlc) {
                 markLocalCacheHit();
                 results.set(sym, cached.series);
             } else {
-                markLocalCacheMiss(cacheLookupMissReason(cached));
+                markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
                 uncached.push(sym);
             }
         }
@@ -1764,7 +1819,7 @@ export function getCachedInterval(symbol, interval) {
         }
         return cached.data;
     }
-    markLocalCacheMiss(cacheLookupMissReason(cached));
+    markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
     return null;
 }
 
@@ -1778,7 +1833,7 @@ export function getCachedPrice(symbol) {
         markLocalCacheHit();
         return cached.data;
     }
-    markLocalCacheMiss(cacheLookupMissReason(cached));
+    markLocalCacheMiss(cacheLookupMissReason(cached, key), key);
     return null;
 }
 // ─── Technical Breadth & Indicators ────────────────────────────────

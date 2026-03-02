@@ -4,8 +4,9 @@ import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cn } from '../lib/utils';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
-import { Search, X } from 'lucide-react';
+import { Search, X, BarChart3, LayoutGrid } from 'lucide-react';
 import { UniverseLoader } from '../components/UniverseLoader';
+import ThematicGridChartView from './ThematicGridChartView';
 
 const COLUMNS = [
     { label: '1D', key: '1D' },
@@ -124,6 +125,7 @@ const buildSearchIndex = (mapSource, themeCompaniesMap) => {
             companies.forEach((company) => {
                 index.push({
                     ...company,
+                    type: 'STOCK',
                     themeName: theme.name,
                     groupTitle: block.title,
                     blockId: makeBlockId(block.title)
@@ -281,7 +283,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
     );
 };
 
-const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted, isMobile, alignPopover = 'right' }) => {
+const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted, isMobile, alignPopover = 'right', onSelect }) => {
     const [isHovered, setIsHovered] = useState(false);
     const count = companies.length;
 
@@ -293,7 +295,10 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                 className="pr-1 py-0.5 relative cursor-pointer md:cursor-help"
                 onMouseEnter={() => !isMobile && setIsHovered(true)}
                 onMouseLeave={() => !isMobile && setIsHovered(false)}
-                onClick={() => isMobile && setIsHovered((prev) => !prev)}
+                onClick={() => {
+                    if (isMobile) setIsHovered((prev) => !prev);
+                    else onSelect?.(theme.name);
+                }}
             >
                 <div className={cn(
                     "flex items-center justify-between gap-1 w-full relative z-10 px-1 py-1 rounded transition-all duration-700",
@@ -381,13 +386,30 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     return COLUMNS.every(({ key }) => prevProps.themePerf[key] === nextProps.themePerf[key]);
 });
 
-const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, alignPopover }) => {
+const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, alignPopover, onSelect }) => {
     return (
         <div className="flex flex-col h-full group/block transition-all duration-700">
-            <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2">
+            <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2 group/header relative">
                 <h3 className="text-[12.5px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]">
                     {block.title}
                 </h3>
+                {onSelect && (
+                    <button
+                        onClick={() => {
+                            // Determine all companies in this block
+                            const allBlockCompanies = block.themes.flatMap(t => themeCompaniesMap[t.name] || []);
+                            // We can either pass a composite "theme" or just the first theme name
+                            // For now, let's select the first theme to open the view, or we could handle "Block" selections in ChartView
+                            if (block.themes.length > 0) {
+                                onSelect(block.themes[0].name);
+                            }
+                        }}
+                        className="p-1.5 hover:bg-[var(--accent-primary)]/10 rounded-full transition-colors opacity-0 group-hover/header:opacity-100"
+                        title="View Group Charts"
+                    >
+                        <BarChart3 size={11} className="text-[var(--accent-primary)]" />
+                    </button>
+                )}
             </div>
 
             <div className="flex-1 overflow-visible px-1">
@@ -412,6 +434,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                                 isHighlighted={highlightedTheme === theme.name}
                                 isMobile={isMobile}
                                 alignPopover={alignPopover}
+                                onSelect={onSelect}
                             />
                         ))}
                     </tbody>
@@ -428,7 +451,8 @@ const ContextThemeBlock = React.memo(({ block, alignPopover }) => {
         loading,
         stockPerfMap,
         highlightedTheme,
-        isMobile
+        isMobile,
+        onSelect
     } = useContext(ThemeGridDataContext);
 
     return (
@@ -441,6 +465,7 @@ const ContextThemeBlock = React.memo(({ block, alignPopover }) => {
             highlightedTheme={highlightedTheme}
             isMobile={isMobile}
             alignPopover={alignPopover}
+            onSelect={onSelect}
         />
     );
 });
@@ -639,7 +664,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
 });
 MacroGridPane.displayName = 'MacroGridPane';
 
-const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => {
+const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, onSelectTheme }) => {
     const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
 
     useEffect(() => {
@@ -654,8 +679,9 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
         loading,
         stockPerfMap,
         highlightedTheme,
-        isMobile
-    }), [themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile]);
+        isMobile,
+        onSelect: onSelectTheme
+    }), [themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, onSelectTheme]);
 
     return (
         <>
@@ -703,6 +729,23 @@ export const MarketMapView = ({ hierarchy }) => {
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [highlightedTheme, setHighlightedTheme] = useState(null);
     const [viewMode, setViewMode] = useState('THEMATIC'); // 'THEMATIC' or 'MACRO'
+    const [displayMode, setDisplayMode] = useState('HEATMAP'); // 'HEATMAP' or 'CHARTS'
+    const scrollPosRef = useRef(0);
+
+    const onEnterCharts = useCallback((name) => {
+        scrollPosRef.current = window.scrollY;
+        setSelectedThemeName(name);
+        setDisplayMode('CHARTS');
+        window.scrollTo(0, 0);
+    }, []);
+
+    const onExitCharts = useCallback(() => {
+        setDisplayMode('HEATMAP');
+        // Simple direct restoration in the next tick
+        setTimeout(() => window.scrollTo(0, scrollPosRef.current), 0);
+    }, []);
+
+    const [selectedThemeName, setSelectedThemeName] = useState(null);
     const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth < 768 : false));
     const searchRef = useRef(null);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
@@ -805,7 +848,15 @@ export const MarketMapView = ({ hierarchy }) => {
     const scrollToBlock = (blockId, themeName) => {
         const el = document.getElementById(blockId);
         if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const headerOffset = 70;
+            const elementPosition = el.getBoundingClientRect().top;
+            const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+
+            window.scrollTo({
+                top: offsetPosition,
+                behavior: 'smooth'
+            });
+
             if (themeName) {
                 setHighlightedTheme(themeName);
                 setTimeout(() => setHighlightedTheme(null), 3500);
@@ -854,6 +905,36 @@ export const MarketMapView = ({ hierarchy }) => {
                 <div className="hidden md:block absolute top-0 right-0 w-80 h-80 bg-[var(--accent-primary)]/10 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2 animate-pulse" />
 
                 <div className="flex items-center gap-6 relative z-10 w-full md:w-auto">
+                    {/* Display Mode Toggle */}
+                    <div className="flex bg-[var(--ui-muted)]/5 p-1 rounded-full border border-[var(--ui-divider)]/20">
+                        <button
+                            onClick={onExitCharts}
+                            className={cn(
+                                "p-2 rounded-full transition-all duration-300",
+                                displayMode === 'HEATMAP' ? "bg-[var(--accent-primary)] text-white" : "text-[var(--text-muted)] hover:text-white"
+                            )}
+                            title="Heatmap View"
+                        >
+                            <LayoutGrid size={14} />
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (!selectedThemeName) {
+                                    onEnterCharts(THEMATIC_MAP[0].themes[0].name);
+                                } else {
+                                    onEnterCharts(selectedThemeName);
+                                }
+                            }}
+                            className={cn(
+                                "p-2 rounded-full transition-all duration-300",
+                                displayMode === 'CHARTS' ? "bg-[var(--accent-primary)] text-white" : "text-[var(--text-muted)] hover:text-white"
+                            )}
+                            title="Chart Grid View"
+                        >
+                            <BarChart3 size={14} />
+                        </button>
+                    </div>
+
                     {/* Search Bar */}
                     <div ref={searchRef} className="relative md:w-56 z-[100]">
                         <div className={cn(
@@ -870,12 +951,10 @@ export const MarketMapView = ({ hierarchy }) => {
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 onFocus={() => setIsSearchFocused(true)}
                                 placeholder="FIND STOCKS..."
-                                aria-label="SEARCH STOCKS"
                                 className="bg-transparent border-none outline-none text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-30 w-full"
                             />
                         </div>
 
-                        {/* Portal-based Search Results */}
                         {isSearchFocused && searchResults.length > 0 && createPortal(
                             <div
                                 style={{
@@ -891,7 +970,15 @@ export const MarketMapView = ({ hierarchy }) => {
                                     {searchResults.map((result, idx) => (
                                         <button
                                             key={`${result.symbol}-${idx}`}
-                                            onClick={() => scrollToBlock(result.blockId, result.themeName)}
+                                            onClick={() => {
+                                                if (displayMode === 'CHARTS') {
+                                                    setSelectedThemeName(result.themeName);
+                                                } else {
+                                                    onEnterCharts(result.themeName);
+                                                }
+                                                setSearchQuery('');
+                                                setIsSearchFocused(false);
+                                            }}
                                             className="w-full flex items-center justify-between py-1.5 px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
                                         >
                                             <div className="flex flex-col items-start min-w-0">
@@ -899,7 +986,7 @@ export const MarketMapView = ({ hierarchy }) => {
                                                     {result.name}
                                                 </span>
                                                 <span className="text-[8px] font-medium text-[var(--text-muted)] opacity-30 uppercase">
-                                                    {result.symbol}
+                                                    {result.symbol} • {result.themeName}
                                                 </span>
                                             </div>
                                             <span className="text-[8px] font-black text-[var(--accent-primary)]/60 uppercase tracking-tighter bg-[var(--accent-primary)]/5 px-1.5 py-1 rounded-sm flex-shrink-0 ml-2">
@@ -912,85 +999,73 @@ export const MarketMapView = ({ hierarchy }) => {
                             document.body
                         )}
 
-                        {/* Overlay to close search */}
                         {isSearchFocused && (
-                            <div
-                                className="fixed inset-0 z-[-1]"
-                                onClick={() => setIsSearchFocused(false)}
-                            />
+                            <div className="fixed inset-0 z-[-1]" onClick={() => setIsSearchFocused(false)} />
                         )}
                     </div>
 
+                    {/* ViewMode Toggle */}
                     <div className="flex bg-[var(--ui-muted)]/5 p-1 rounded-full border border-[var(--ui-divider)]/20">
                         <button
-                            onClick={() => {
-                                startTransition(() => {
-                                    setViewMode('THEMATIC');
-                                });
-                            }}
+                            onClick={() => startTransition(() => setViewMode('THEMATIC'))}
                             className={cn(
                                 "px-4 py-1.5 rounded-full text-[7.5px] font-black uppercase tracking-widest transition-all duration-500",
-                                viewMode === 'THEMATIC'
-                                    ? "bg-[var(--accent-primary)] text-white shadow-lg"
-                                    : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                                viewMode === 'THEMATIC' ? "bg-[var(--accent-primary)] text-white shadow-lg" : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
                             )}
                         >
                             Thematic
                         </button>
                         <button
-                            onClick={() => {
-                                startTransition(() => {
-                                    setViewMode('MACRO');
-                                });
-                            }}
+                            onClick={() => startTransition(() => setViewMode('MACRO'))}
                             className={cn(
                                 "px-4 py-1.5 rounded-full text-[7.5px] font-black uppercase tracking-widest transition-all duration-500",
-                                viewMode === 'MACRO'
-                                    ? "bg-[var(--accent-primary)] text-white shadow-lg"
-                                    : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                                viewMode === 'MACRO' ? "bg-[var(--accent-primary)] text-white shadow-lg" : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
                             )}
                         >
                             Macro
                         </button>
                     </div>
 
+                    {/* HideBSE Toggle */}
                     <button
-                        onClick={() => {
-                            startTransition(() => {
-                                setHideBSE((prev) => !prev);
-                            });
-                        }}
+                        onClick={() => startTransition(() => setHideBSE(prev => !prev))}
                         className={cn(
                             "flex items-center gap-3 px-5 py-2.5 rounded-full border transition-all duration-700 group/btn",
-                            hideBSE
-                                ? "bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)] shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.1)]"
-                                : "bg-transparent border-[var(--ui-divider)]/40 text-[var(--text-muted)] hover:border-[var(--accent-primary)]/20"
+                            hideBSE ? "bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]" : "bg-transparent border-[var(--ui-divider)]/40 text-[var(--text-muted)]"
                         )}
                     >
-                        <div className={cn(
-                            "w-1.5 h-1.5 rounded-full transition-all duration-700",
-                            hideBSE ? "bg-[var(--accent-primary)] shadow-[0_0_10px_var(--accent-primary)]" : "bg-[var(--text-muted)] opacity-30 group-hover/btn:opacity-100"
-                        )} />
-                        <span className="text-[8.5px] font-black uppercase tracking-[0.25em]">
-                            {hideBSE ? 'NSE ONLY' : 'SHOW ALL'}
-                        </span>
+                        <div className={cn("w-1.5 h-1.5 rounded-full", hideBSE ? "bg-[var(--accent-primary)]" : "bg-[var(--text-muted)] opacity-30")} />
+                        <span className="text-[8.5px] font-black uppercase tracking-[0.25em]">{hideBSE ? 'NSE ONLY' : 'SHOW ALL'}</span>
                     </button>
                 </div>
             </div>
 
             <div className="max-w-full lg:max-w-[1800px] mx-auto">
-                <Legend />
-                <ThemeGridSection
-                    viewMode={viewMode}
-                    macroMap={macroMap}
-                    themeCompaniesMap={themeCompaniesMap}
-                    heatmapData={heatmapData}
-                    loading={loading}
-                    stockPerfMap={stockPerfMap}
-                    highlightedTheme={highlightedTheme}
-                    isMobile={isMobile}
-                />
+                {displayMode === 'HEATMAP' ? (
+                    <>
+                        <Legend />
+                        <ThemeGridSection
+                            viewMode={viewMode}
+                            macroMap={macroMap}
+                            themeCompaniesMap={themeCompaniesMap}
+                            heatmapData={heatmapData}
+                            loading={loading}
+                            stockPerfMap={stockPerfMap}
+                            highlightedTheme={highlightedTheme}
+                            isMobile={isMobile}
+                            onSelectTheme={onEnterCharts}
+                        />
+                    </>
+                ) : (
+                    <ThematicGridChartView
+                        themeName={selectedThemeName}
+                        companies={themeCompaniesMap[selectedThemeName] || []}
+                        onBack={onExitCharts}
+                        onSelectTheme={setSelectedThemeName}
+                        viewMode={viewMode}
+                    />
+                )}
             </div>
-        </ViewWrapper>
+        </ViewWrapper >
     );
 };

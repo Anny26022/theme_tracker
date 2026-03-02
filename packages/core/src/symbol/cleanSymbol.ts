@@ -4,9 +4,13 @@ export function cleanSymbol(symbol?: string | null): string {
   return symbol
     .trim()
     .toUpperCase()
-    .replace(/\.(NS|BO)$/i, "")
+    // Remove common exchange prefixes/suffixes
+    .replace(/^(NSE|BSE|BOM|GOOGLE):/i, "")
     .replace(/:(NSE|BOM|BSE)$/i, "")
-    .replace(/-EQ$/i, "");
+    .replace(/\.(NS|BO)$/i, "")
+    .replace(/-EQ$/i, "")
+    // Final safety — strip any non-identifier characters but keep common ones
+    .split(':')[0]; // Handle cases where extra junk is appended after a colon
 }
 
 export function isNumericSymbol(symbol?: string | null): boolean {

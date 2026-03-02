@@ -35,22 +35,73 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const tooltipHighRef = useRef(null);
     const tooltipLowRef = useRef(null);
     const [zoomDays, _setZoomDays] = useState(() => getZC()[cleaned] || 190);
-    const setZoomDays = useCallback(v => _setZoomDays(prev => { const next = typeof v === 'function' ? v(prev) : v; saveZC(cleaned, next); return next; }), [cleaned]);
+    const [panOffset, setPanOffset] = useState(0);
+    const dragRef = useRef({ isDragging: false, startX: 0, startPan: 0 });
+
+    const setZoomDays = useCallback(v => _setZoomDays(prev => {
+        const next = typeof v === 'function' ? v(prev) : v;
+        saveZC(cleaned, next);
+        return next;
+    }), [cleaned]);
     const rafRef = useRef(null);
 
     const handleWheel = useCallback((e) => {
         e.preventDefault();
-        if (e.deltaY < 0) setZoomDays(p => Math.max(20, Math.round(p * 0.9)));
-        else setZoomDays(p => Math.min(totalPointsRef.current, Math.round(p * 1.1)));
+        const factor = e.deltaY < 0 ? 0.9 : 1.1;
+        setZoomDays(p => {
+            const next = Math.max(20, Math.min(totalPointsRef.current, Math.round(p * factor)));
+            // Clamp panOffset if it would go out of bounds after zoom change
+            setPanOffset(o => Math.max(0, Math.min(totalPointsRef.current - next, o)));
+            return next;
+        });
     }, [setZoomDays]);
 
     useEffect(() => {
         const node = chartAreaRef.current;
         if (!node) return undefined;
-        // Non-passive is required so e.preventDefault() can block the page scroll.
+
+        const onStart = (e) => {
+            const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
+            dragRef.current.isDragging = true;
+            dragRef.current.startX = clientX;
+            dragRef.current.startPan = panOffset;
+        };
+
+        const onMove = (e) => {
+            if (!dragRef.current.isDragging) return;
+            const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
+            const dx = clientX - dragRef.current.startX;
+            const nodeWidth = node.clientWidth || 500;
+            const dxPoints = Math.round((dx / nodeWidth) * zoomDays);
+
+            setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
+
+            if (e.cancelable) e.preventDefault();
+        };
+
+        const onEnd = () => {
+            dragRef.current.isDragging = false;
+        };
+
         node.addEventListener('wheel', handleWheel, { passive: false });
-        return () => node.removeEventListener('wheel', handleWheel);
-    }, [handleWheel]);
+        node.addEventListener('mousedown', onStart);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onEnd);
+
+        node.addEventListener('touchstart', onStart, { passive: true });
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd);
+
+        return () => {
+            node.removeEventListener('wheel', handleWheel);
+            node.removeEventListener('mousedown', onStart);
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onEnd);
+            node.removeEventListener('touchstart', onStart);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onEnd);
+        };
+    }, [handleWheel, panOffset, zoomDays]);
 
     const baseData = useMemo(() => {
         if (!series || series.length === 0) return null;
@@ -95,12 +146,14 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const data = useMemo(() => {
         if (!baseData) return null;
 
-        // 3. Slice for Display
+        // 3. Slice for Display using panOffset
         const sliceCount = Math.min(zoomDays, baseData.allPoints.length);
-        const visibleIdx = baseData.allPoints.length - sliceCount;
-        const points = baseData.allPoints.slice(visibleIdx).map(p => ({ ...p }));
-        const sma50 = baseData.sma50Arr.slice(visibleIdx);
-        const sma200 = baseData.sma200Arr.slice(visibleIdx);
+        const endIdx = Math.max(sliceCount, baseData.allPoints.length - panOffset);
+        const startIdx = Math.max(0, endIdx - sliceCount);
+
+        const points = baseData.allPoints.slice(startIdx, endIdx).map(p => ({ ...p }));
+        const sma50 = baseData.sma50Arr.slice(startIdx, endIdx);
+        const sma200 = baseData.sma200Arr.slice(startIdx, endIdx);
 
         // 4. Subtle Synthesis (Only if data is totally flat)
         points.forEach((p, i) => {
@@ -132,7 +185,7 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays]);
+    }, [baseData, zoomDays, panOffset]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -171,9 +224,12 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         points.forEach((p, i) => {
             const d = new Date(p.time);
             const m = d.getMonth();
+            const y = d.getFullYear();
             const x = getX(i);
-            if (m !== prevM && (x - lastX) > 45) {
-                labels.push({ x, text: d.toLocaleDateString('en-US', { month: 'short' }) });
+            if (m !== prevM && (x - lastX) > 40) {
+                const isYear = m === 0;
+                const text = isYear ? y.toString() : d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
+                labels.push({ x, text, isYear });
                 prevM = m;
                 lastX = x;
             }
@@ -321,9 +377,26 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
                     }, [points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown])}
 
                     <g transform={`translate(${W - paddingX + 5}, 0)`}>
-                        {[0, 0.25, 0.5, 0.75, 1].map(v => <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">{(maxP - (maxP - minP) * v).toFixed(1)}</text>)}
+                        {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                            <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                                {(maxP - (maxP - minP) * v).toFixed(1)}
+                            </text>
+                        ))}
                     </g>
-                    {monthLabels.map((m, i) => <text key={i} x={m.x} y={H - 8} fill="#444" fontSize="10" fontWeight="black" textAnchor="middle">{m.text.toUpperCase()}</text>)}
+                    {monthLabels.map((m, i) => (
+                        <text
+                            key={i}
+                            x={m.x}
+                            y={H - 8}
+                            fill={m.isYear ? "#888" : "#444"}
+                            fontSize={m.isYear ? "11" : "10"}
+                            fontWeight={m.isYear ? "900" : "800"}
+                            fontFamily="monospace"
+                            textAnchor="middle"
+                        >
+                            {m.text}
+                        </text>
+                    ))}
                 </svg>
 
                 <div

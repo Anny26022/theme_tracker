@@ -32,7 +32,7 @@ export const IndustryView = ({ sector, industry, companies, sectors, hierarchy, 
     const [filter, setFilter] = useState('');
     const { subscribeLiveSymbols } = useMarketDataRegistry();
     const allSymbols = useMemo(() => companies.map(c => c.symbol), [companies]);
-    useEffect(() => subscribeLiveSymbols(allSymbols), [allSymbols, subscribeLiveSymbols]);
+    useEffect(() => subscribeLiveSymbols(allSymbols, { skipStrike: true }), [allSymbols, subscribeLiveSymbols]);
 
     const allIndustries = useMemo(() => [
         { name: industry, sector: sector }

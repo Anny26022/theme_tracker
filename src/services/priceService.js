@@ -1517,9 +1517,12 @@ async function fetchFromStrike(symbol) {
 /**
  * Fetch live prices for ALL symbols in ONE HTTP call per 25.
  * @param {string[]} symbols
+ * @param {Object} options
+ * @param {boolean} options.skipStrike
  * @returns {Map<string, priceData>}
  */
-export async function fetchLivePrices(symbols) {
+export async function fetchLivePrices(symbols, options = {}) {
+    const { skipStrike = false } = options;
     const keys = symbols.map(s => cleanSymbol(s));
     const results = new Map();
 
@@ -1582,7 +1585,7 @@ export async function fetchLivePrices(symbols) {
     // Aggressive Parallel Fallback for Indian stocks (NSE)
     // If Google hasn't returned in 1.5s, fire Strike in parallel and race them.
     const missing = uncached.filter(s => !results.has(s) && !/^\d+$/.test(s));
-    if (missing.length > 0) {
+    if (!skipStrike && missing.length > 0) {
         await Promise.allSettled(missing.map(async (sym) => {
             // We don't wait for Google to time out. If we hit this point, 
             // any remaining 'requests' are taking too long.

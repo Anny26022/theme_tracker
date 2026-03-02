@@ -89,6 +89,7 @@ export function MarketDataProvider({ children }) {
     const fundaVersionRef = useRef(0);
     const loopTimerRef = useRef(null);
     const isVisibleRef = useRef(typeof document !== 'undefined' ? document.visibilityState !== 'hidden' : true);
+    const liveSkipStrikeCountRef = useRef(0);
 
     const notifyInterval = useCallback(() => {
         intervalVersionRef.current += 1;
@@ -142,7 +143,7 @@ export function MarketDataProvider({ children }) {
         }
     }, [notifyChart]);
 
-    const refreshLive = useCallback(async (symbolsOverride) => {
+    const refreshLive = useCallback(async (symbolsOverride, options = {}) => {
         const key = 'live';
         if (inFlightRef.current.has(key)) return;
         const symbols = symbolsOverride || Array.from(liveSymbolsRef.current.keys());
@@ -150,7 +151,7 @@ export function MarketDataProvider({ children }) {
 
         inFlightRef.current.add(key);
         try {
-            await fetchLivePrices(symbols);
+            await fetchLivePrices(symbols, options);
             lastLiveRefreshRef.current = Date.now();
             notifyLive();
         } finally {
@@ -204,7 +205,7 @@ export function MarketDataProvider({ children }) {
             });
             const livePromises = [];
             if (liveSymbolsRef.current.size > 0 && now - lastLiveRefreshRef.current >= LIVE_REFRESH_MS) {
-                livePromises.push(refreshLive());
+                livePromises.push(refreshLive(null, { skipStrike: liveSkipStrikeCountRef.current > 0 }));
             }
             const fundaPromises = [];
             if (fundaSymbolsRef.current.size > 0 && now - lastFundaRefreshRef.current >= FUNDA_REFRESH_MS) {
@@ -288,7 +289,8 @@ export function MarketDataProvider({ children }) {
         };
     }, [maybeStartLoop, maybeStopLoop, refreshCharts]);
 
-    const subscribeLiveSymbols = useCallback((symbols) => {
+    const subscribeLiveSymbols = useCallback((symbols, options = {}) => {
+        const { skipStrike = false } = options;
         const normalized = (symbols || []).map((symbol) => cleanSymbol(symbol)).filter(Boolean);
         if (normalized.length === 0) return () => { };
 
@@ -296,10 +298,12 @@ export function MarketDataProvider({ children }) {
             const next = (liveSymbolsRef.current.get(symbol) || 0) + 1;
             liveSymbolsRef.current.set(symbol, next);
         });
+        if (skipStrike) liveSkipStrikeCountRef.current += 1;
         maybeStartLoop();
-        void refreshLive(normalized);
+        void refreshLive(normalized, { skipStrike });
 
         return () => {
+            if (skipStrike) liveSkipStrikeCountRef.current -= 1;
             normalized.forEach((symbol) => {
                 const next = (liveSymbolsRef.current.get(symbol) || 0) - 1;
                 if (next <= 0) {

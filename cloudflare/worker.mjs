@@ -62,6 +62,7 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
+const WORKER_BUILD_ID = '2026-03-02-001';
 
 let cachedDecryptKey = null;
 let lastRefreshState = {
@@ -1580,6 +1581,17 @@ async function handleStatic(request, env, url) {
     return new Response('Not found. Configure ASSETS binding or ORIGIN_BASE_URL.', { status: 404 });
 }
 
+async function handleWorkerVersion(request) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return createMethodNotAllowedResponse('GET, HEAD');
+    }
+    return createJsonResponse(200, {
+        ok: true,
+        buildId: WORKER_BUILD_ID,
+        ts: new Date().toISOString()
+    });
+}
+
 async function handleSnapshotRefresh(request, env, ctx) {
     if (request.method !== 'POST') {
         return createMethodNotAllowedResponse('POST');
@@ -1647,6 +1659,9 @@ async function handleApi(request, env, url, ctx) {
     }
     if (url.pathname === '/api/nse/health') {
         return handleSnapshotHealth(request, env, url);
+    }
+    if (url.pathname === '/api/version') {
+        return handleWorkerVersion(request);
     }
     if (url.pathname === '/api/nse/refresh') {
         return handleSnapshotRefresh(request, env, ctx);

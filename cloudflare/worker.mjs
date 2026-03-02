@@ -1527,7 +1527,55 @@ async function handleStatic(request, env, url) {
     return new Response('Not found. Configure ASSETS binding or ORIGIN_BASE_URL.', { status: 404 });
 }
 
-async function handleApi(request, env, url) {
+async function handleSnapshotRefresh(request, env, ctx) {
+    if (request.method !== 'POST') {
+        return createMethodNotAllowedResponse('POST');
+    }
+
+    const expectedToken = String(env?.NSE_REFRESH_TOKEN || '').trim();
+    if (!expectedToken) {
+        return createJsonResponse(403, { ok: false, error: 'Refresh token not configured' });
+    }
+
+    const providedToken = request.headers.get('x-refresh-token') || '';
+    if (providedToken !== expectedToken) {
+        return createJsonResponse(403, { ok: false, error: 'Unauthorized' });
+    }
+
+    const startedAt = new Date().toISOString();
+    const runner = (async () => {
+        try {
+            await refreshNseSnapshots(env);
+        } catch (error) {
+            console.error('[NSE Snapshot] manual refresh failed', error);
+        }
+        try {
+            await refreshIntervalSnapshots(env);
+        } catch (error) {
+            console.error('[Interval Snapshot] manual refresh failed', error);
+        }
+        try {
+            await refreshPriceSnapshots(env);
+        } catch (error) {
+            console.error('[Price Snapshot] manual refresh failed', error);
+        }
+        try {
+            await refreshChartSnapshots(env);
+        } catch (error) {
+            console.error('[Chart Snapshot] manual refresh failed', error);
+        }
+    })();
+
+    if (ctx?.waitUntil) {
+        ctx.waitUntil(runner);
+    } else {
+        await runner;
+    }
+
+    return createJsonResponse(200, { ok: true, startedAt });
+}
+
+async function handleApi(request, env, url, ctx) {
     if (
         url.pathname === '/api/nse/meta' ||
         url.pathname.startsWith('/api/nse/chunks/')
@@ -1548,6 +1596,9 @@ async function handleApi(request, env, url) {
     }
     if (url.pathname === '/api/nse/health') {
         return handleSnapshotHealth(request, env, url);
+    }
+    if (url.pathname === '/api/nse/refresh') {
+        return handleSnapshotRefresh(request, env, ctx);
     }
 
     switch (url.pathname) {
@@ -1574,12 +1625,12 @@ async function handleApi(request, env, url) {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         normalizeApiPath(url);
 
         if (url.pathname.startsWith('/api/')) {
-            return handleApi(request, env, url);
+            return handleApi(request, env, url, ctx);
         }
 
         return handleStatic(request, env, url);

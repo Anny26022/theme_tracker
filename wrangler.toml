@@ -7,6 +7,36 @@ workers_dev = true
 directory = "dist"
 binding = "ASSETS"
 
+[triggers]
+# Cloudflare cron uses UTC. This maps to every 5 minutes during IST market hours
+# Monday–Friday, 09:15–15:30 IST (UTC 03:45–10:00).
+crons = [
+  "45-59/5 3 * * 1-5",  # 03:45–03:55 UTC
+  "*/5 4-9 * * 1-5",    # 04:00–09:55 UTC
+  "0 10 * * 1-5"        # 10:00 UTC
+]
+
+[[r2_buckets]]
+binding = "NSE_SNAPSHOTS"
+bucket_name = "nexusmap"
+preview_bucket_name = "nexusmap-preview"
+
 [vars]
 # Optional fallback origin. Leave empty for fully standalone Cloudflare mode.
 # ORIGIN_BASE_URL = "https://your-origin.example.com"
+NSE_SNAPSHOT_SOURCE_URL = ""
+NSE_SNAPSHOT_CHUNK_MODE = "alpha2"
+NSE_INTERVAL_SNAPSHOT_ENABLED = "true"
+NSE_INTERVAL_SNAPSHOT_INTERVALS = "1D,5D,1M,3M,6M,YTD,1Y"
+NSE_INTERVAL_SNAPSHOT_BATCH_SIZE = "550"
+NSE_INTERVAL_SNAPSHOT_CONCURRENCY = "3"
+NSE_PRICE_SNAPSHOT_ENABLED = "true"
+NSE_PRICE_SNAPSHOT_BATCH_SIZE = "550"
+NSE_PRICE_SNAPSHOT_CONCURRENCY = "3"
+NSE_FUNDA_SNAPSHOT_ENABLED = "false"
+NSE_FUNDA_SNAPSHOT_BATCH_SIZE = "200"
+NSE_FUNDA_SNAPSHOT_CONCURRENCY = "2"
+NSE_CHART_SNAPSHOT_ENABLED = "true"
+NSE_CHART_SNAPSHOT_INTERVALS = "1D,5D,1M,3M,6M,YTD,1Y,5Y,MAX"
+NSE_CHART_SNAPSHOT_BATCH_SIZE = "200"
+NSE_CHART_SNAPSHOT_CONCURRENCY = "2"

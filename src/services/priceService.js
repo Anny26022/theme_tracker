@@ -28,6 +28,28 @@ const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
 const INTERVAL_SOURCE_LOG_INTERVAL_MS = 15_000;
 const CACHE_METRICS_STATE_KEY = 'tt_cache_metrics_state:v1';
+const INTERVAL_SNAPSHOT_META_URL = '/api/nse/intervals/meta';
+const INTERVAL_SNAPSHOT_META_TTL = 60_000;
+const INTERVAL_SNAPSHOT_CHUNK_CONCURRENCY = Math.max(1, Math.min(
+    Number(import.meta.env?.VITE_INTERVAL_SNAPSHOT_CONCURRENCY || 4),
+    8
+));
+const PRICE_SNAPSHOT_META_URL = '/api/nse/prices/meta';
+const FUNDA_SNAPSHOT_META_URL = '/api/nse/fundamentals/meta';
+const CHART_SNAPSHOT_META_URL = '/api/nse/charts/meta';
+const SNAPSHOT_META_TTL = 60_000;
+const PRICE_SNAPSHOT_CHUNK_CONCURRENCY = Math.max(1, Math.min(
+    Number(import.meta.env?.VITE_PRICE_SNAPSHOT_CONCURRENCY || 4),
+    8
+));
+const FUNDA_SNAPSHOT_CHUNK_CONCURRENCY = Math.max(1, Math.min(
+    Number(import.meta.env?.VITE_FUNDA_SNAPSHOT_CONCURRENCY || 4),
+    8
+));
+const CHART_SNAPSHOT_CONCURRENCY = Math.max(1, Math.min(
+    Number(import.meta.env?.VITE_CHART_SNAPSHOT_CONCURRENCY || 4),
+    8
+));
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
 
@@ -772,6 +794,303 @@ async function runWithConcurrency(items, concurrency, worker) {
     }));
 }
 
+let intervalSnapshotMeta = null;
+let intervalSnapshotMetaFetchedAt = 0;
+let intervalSnapshotMetaPromise = null;
+
+const snapshotMetaState = new Map();
+
+function isIntervalSnapshotEnabled() {
+    if (typeof window !== 'undefined' && window.__TT_INTERVAL_SNAPSHOT__ === false) return false;
+    return String(import.meta.env?.VITE_INTERVAL_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
+}
+
+function isPriceSnapshotEnabled() {
+    if (typeof window !== 'undefined' && window.__TT_PRICE_SNAPSHOT__ === false) return false;
+    return String(import.meta.env?.VITE_PRICE_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
+}
+
+function isFundaSnapshotEnabled() {
+    if (typeof window !== 'undefined' && window.__TT_FUNDA_SNAPSHOT__ === false) return false;
+    return String(import.meta.env?.VITE_FUNDA_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
+}
+
+function isChartSnapshotEnabled() {
+    if (typeof window !== 'undefined' && window.__TT_CHART_SNAPSHOT__ === false) return false;
+    return String(import.meta.env?.VITE_CHART_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
+}
+
+async function fetchSnapshotMeta(url, ttlMs, enabled) {
+    if (!enabled) return null;
+
+    const now = Date.now();
+    const existing = snapshotMetaState.get(url);
+    if (existing?.meta && now - existing.fetchedAt < ttlMs) return existing.meta;
+    if (existing?.promise) return existing.promise;
+
+    const state = existing || { meta: null, fetchedAt: 0, promise: null };
+    state.promise = (async () => {
+        try {
+            const response = await fetch(url, { cache: 'no-store' });
+            if (!response.ok) return null;
+            const json = await response.json();
+            state.meta = json;
+            state.fetchedAt = Date.now();
+            return json;
+        } catch {
+            state.meta = null;
+            state.fetchedAt = Date.now();
+            return null;
+        } finally {
+            state.promise = null;
+        }
+    })();
+
+    snapshotMetaState.set(url, state);
+    return state.promise;
+}
+
+function resolveIntervalChunkMode(meta) {
+    const mode = String(meta?.chunkMode || '').toLowerCase();
+    if (mode === 'alpha1' || mode === 'alpha2') return mode;
+    return 'alpha2';
+}
+
+function resolveIntervalChunkKey(symbol, mode) {
+    const sym = cleanSymbol(symbol);
+    if (!sym) return mode === 'alpha2' ? '__' : '_';
+    const first = sym[0];
+    const isAlpha = first >= 'A' && first <= 'Z';
+    const isDigit = first >= '0' && first <= '9';
+
+    if (mode === 'alpha2') {
+        if (isDigit) return '0-9';
+        if (!isAlpha) return '__';
+        const second = sym.length > 1 ? sym[1] : '_';
+        const secondKey = second >= 'A' && second <= 'Z' ? second : '_';
+        return `${first}${secondKey}`;
+    }
+
+    if (isDigit) return '0-9';
+    if (!isAlpha) return '_';
+    return first;
+}
+
+async function fetchIntervalSnapshotMeta() {
+    if (!isIntervalSnapshotEnabled()) return null;
+
+    const now = Date.now();
+    if (intervalSnapshotMeta && now - intervalSnapshotMetaFetchedAt < INTERVAL_SNAPSHOT_META_TTL) {
+        return intervalSnapshotMeta;
+    }
+    if (intervalSnapshotMetaPromise) return intervalSnapshotMetaPromise;
+
+    intervalSnapshotMetaPromise = (async () => {
+        const json = await fetchSnapshotMeta(INTERVAL_SNAPSHOT_META_URL, INTERVAL_SNAPSHOT_META_TTL, true);
+        intervalSnapshotMeta = json;
+        intervalSnapshotMetaFetchedAt = Date.now();
+        return json;
+    })().finally(() => {
+        intervalSnapshotMetaPromise = null;
+    });
+
+    return intervalSnapshotMetaPromise;
+}
+
+async function fetchIntervalSnapshot(interval, symbols, window, ttl) {
+    const meta = await fetchIntervalSnapshotMeta();
+    if (!meta) return null;
+
+    const intervals = Array.isArray(meta?.intervals) ? meta.intervals : [];
+    if (!intervals.includes(interval)) return null;
+
+    const chunkMode = resolveIntervalChunkMode(meta);
+    const version = meta?.generatedAt || meta?.version || 'snapshot';
+    const chunkKeys = new Set();
+    const symbolMap = new Map();
+
+    symbols.forEach((sym) => {
+        const key = resolveIntervalChunkKey(sym, chunkMode);
+        chunkKeys.add(key);
+    });
+
+    const chunkList = Array.from(chunkKeys);
+    const results = new Map();
+    const satisfied = new Set();
+
+    await runWithConcurrency(chunkList, INTERVAL_SNAPSHOT_CHUNK_CONCURRENCY, async (chunkKey) => {
+        const res = await fetch(`/api/nse/intervals/${interval}/chunks/${encodeURIComponent(chunkKey)}?v=${encodeURIComponent(version)}`, {
+            cache: 'force-cache'
+        });
+        if (!res.ok) return;
+        const chunk = await res.json();
+        if (!chunk || typeof chunk !== 'object') return;
+        Object.entries(chunk).forEach(([key, value]) => {
+            const sym = cleanSymbol(key);
+            if (!sym) return;
+            symbolMap.set(sym, value);
+        });
+    });
+
+    symbols.forEach((sym) => {
+        const key = cleanSymbol(sym);
+        const cacheKey = `${key}:${window}`;
+        if (symbolMap.has(key)) {
+            const data = symbolMap.get(key);
+            const row = buildCacheRow(data, null, ttl);
+            if (row) {
+                intervalCache.set(cacheKey, row);
+                idbHydratedIntervalKeys.delete(cacheKey);
+                sessionHydratedIntervalKeys.delete(cacheKey);
+            }
+            satisfied.add(key);
+            if (data && typeof data.changePct === 'number') {
+                results.set(key, data);
+            }
+        }
+    });
+
+    if (satisfied.size > 0) {
+        scheduleIntervalSave();
+    }
+
+    return { results, satisfied };
+}
+
+async function fetchPriceSnapshot(symbols, ttl) {
+    const meta = await fetchSnapshotMeta(PRICE_SNAPSHOT_META_URL, SNAPSHOT_META_TTL, isPriceSnapshotEnabled());
+    if (!meta) return null;
+
+    const chunkMode = resolveIntervalChunkMode(meta);
+    const version = meta?.generatedAt || meta?.version || 'snapshot';
+    const chunkKeys = new Set();
+    const symbolMap = new Map();
+
+    symbols.forEach((sym) => {
+        const key = resolveIntervalChunkKey(sym, chunkMode);
+        chunkKeys.add(key);
+    });
+
+    const chunkList = Array.from(chunkKeys);
+    const results = new Map();
+    const satisfied = new Set();
+
+    await runWithConcurrency(chunkList, PRICE_SNAPSHOT_CHUNK_CONCURRENCY, async (chunkKey) => {
+        const res = await fetch(`/api/nse/prices/chunks/${encodeURIComponent(chunkKey)}?v=${encodeURIComponent(version)}`, {
+            cache: 'force-cache'
+        });
+        if (!res.ok) return;
+        const chunk = await res.json();
+        if (!chunk || typeof chunk !== 'object') return;
+        Object.entries(chunk).forEach(([key, value]) => {
+            const sym = cleanSymbol(key);
+            if (!sym) return;
+            symbolMap.set(sym, value);
+        });
+    });
+
+    symbols.forEach((sym) => {
+        const key = cleanSymbol(sym);
+        if (!symbolMap.has(key)) return;
+        const data = symbolMap.get(key);
+        const row = buildCacheRow(data, null, ttl);
+        if (row) priceCache.set(key, row);
+        satisfied.add(key);
+        if (data) results.set(key, data);
+    });
+
+    if (satisfied.size > 0) schedulePriceSave();
+    return { results, satisfied };
+}
+
+async function fetchFundaSnapshot(symbols, ttl) {
+    const meta = await fetchSnapshotMeta(FUNDA_SNAPSHOT_META_URL, SNAPSHOT_META_TTL, isFundaSnapshotEnabled());
+    if (!meta) return null;
+
+    const chunkMode = resolveIntervalChunkMode(meta);
+    const version = meta?.generatedAt || meta?.version || 'snapshot';
+    const chunkKeys = new Set();
+    const symbolMap = new Map();
+
+    symbols.forEach((sym) => {
+        const key = resolveIntervalChunkKey(sym, chunkMode);
+        chunkKeys.add(key);
+    });
+
+    const chunkList = Array.from(chunkKeys);
+    const results = new Map();
+    const satisfied = new Set();
+
+    await runWithConcurrency(chunkList, FUNDA_SNAPSHOT_CHUNK_CONCURRENCY, async (chunkKey) => {
+        const res = await fetch(`/api/nse/fundamentals/chunks/${encodeURIComponent(chunkKey)}?v=${encodeURIComponent(version)}`, {
+            cache: 'force-cache'
+        });
+        if (!res.ok) return;
+        const chunk = await res.json();
+        if (!chunk || typeof chunk !== 'object') return;
+        Object.entries(chunk).forEach(([key, value]) => {
+            const sym = cleanSymbol(key);
+            if (!sym) return;
+            symbolMap.set(sym, value);
+        });
+    });
+
+    symbols.forEach((sym) => {
+        const key = cleanSymbol(sym);
+        if (!symbolMap.has(key)) return;
+        const data = symbolMap.get(key);
+        const row = buildCacheRow(data, null, ttl);
+        if (row) fundaCache.set(key, row);
+        satisfied.add(key);
+        if (data) results.set(key, data);
+    });
+
+    if (satisfied.size > 0) scheduleFundaSave();
+    return { results, satisfied };
+}
+
+async function fetchChartSnapshot(interval, symbols, window, ttl) {
+    const meta = await fetchSnapshotMeta(CHART_SNAPSHOT_META_URL, SNAPSHOT_META_TTL, isChartSnapshotEnabled());
+    if (!meta) return null;
+
+    const intervals = Array.isArray(meta?.intervals) ? meta.intervals : [];
+    if (!intervals.includes(interval)) return null;
+
+    const version = meta?.generatedAt || meta?.version || 'snapshot';
+    const results = new Map();
+    const satisfied = new Set();
+
+    await runWithConcurrency(symbols, CHART_SNAPSHOT_CONCURRENCY, async (sym) => {
+        const key = cleanSymbol(sym);
+        if (!key) return;
+        const res = await fetch(`/api/nse/charts/${encodeURIComponent(interval)}/symbols/${encodeURIComponent(key)}?v=${encodeURIComponent(version)}`, {
+            cache: 'force-cache'
+        });
+        if (!res.ok) return;
+        const series = await res.json();
+        if (!Array.isArray(series) || series.length === 0) {
+            const cacheKey = `${key}:${window}:full`;
+            const row = buildCacheRow(null, null, ttl);
+            if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
+            satisfied.add(key);
+            return;
+        }
+
+        const cacheKey = `${key}:${window}:full`;
+        const row = buildCacheRow(series, null, ttl);
+        if (row) {
+            comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
+        } else {
+            comparisonCacheMap.set(cacheKey, { series, timestamp: Date.now(), ttlMs: ttl });
+        }
+        results.set(key, series);
+        satisfied.add(key);
+    });
+
+    if (satisfied.size > 0) await persistComparisonCacheNow();
+    return { results, satisfied };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function getExchange(symbol) {
@@ -1206,7 +1525,7 @@ export async function fetchLivePrices(symbols) {
     const results = new Map();
 
     // Check cache first
-    const uncached = [];
+    let uncached = [];
     for (const key of keys) {
         const cached = priceCache.get(key);
         if (isCacheRowFresh(cached, PRICE_CACHE_TTL)) {
@@ -1220,6 +1539,22 @@ export async function fetchLivePrices(symbols) {
 
     if (IS_DEV) {
         console.debug(`[PriceCache] PRICES — ✅ ${results.size} cache hits, ❌ ${uncached.length} cache misses`, uncached.length ? uncached.slice(0, 5).join(', ') + (uncached.length > 5 ? '...' : '') : '');
+    }
+
+    if (uncached.length === 0) return results;
+
+    if (uncached.length > 0) {
+        try {
+            const snapshot = await fetchPriceSnapshot(uncached, PRICE_CACHE_TTL);
+            if (snapshot?.results) {
+                snapshot.results.forEach((data, sym) => results.set(sym, data));
+            }
+            if (snapshot?.satisfied?.size) {
+                uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
+            }
+        } catch {
+            // Snapshot optional; ignore errors.
+        }
     }
 
     if (uncached.length === 0) return results;
@@ -1316,7 +1651,7 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
     const currentPending = pendingIntervalReqs.get(cacheKeyBase);
 
     // 1. Filter out already cached symbols
-    const uncached = [];
+    let uncached = [];
     const results = new Map();
 
     for (const raw of symbols) {
@@ -1366,6 +1701,20 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
         memoryHits: callMemoryHits,
         misses: callMisses
     });
+
+    if (uncached.length > 0) {
+        try {
+            const snapshot = await fetchIntervalSnapshot(interval, uncached, window, ttl);
+            if (snapshot?.results) {
+                snapshot.results.forEach((data, sym) => results.set(sym, data));
+            }
+            if (snapshot?.satisfied?.size) {
+                uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
+            }
+        } catch {
+            // Snapshot optional; ignore errors and continue to Google.
+        }
+    }
 
     if (uncached.length === 0) {
         // All either cached or already pending. 
@@ -1761,7 +2110,7 @@ function extractFundaFromFrame(payload) {
 export async function fetchFundamentals(symbols) {
     const keys = symbols.map(s => cleanSymbol(s));
     const results = new Map();
-    const uncached = [];
+    let uncached = [];
 
     for (const key of keys) {
         const cached = fundaCache.get(key);
@@ -1771,6 +2120,22 @@ export async function fetchFundamentals(symbols) {
         } else {
             markLocalCacheMiss(cacheLookupMissReason(cached, key), key);
             uncached.push(key);
+        }
+    }
+
+    if (uncached.length === 0) return results;
+
+    if (uncached.length > 0) {
+        try {
+            const snapshot = await fetchFundaSnapshot(uncached, FUNDA_CACHE_TTL);
+            if (snapshot?.results) {
+                snapshot.results.forEach((data, sym) => results.set(sym, data));
+            }
+            if (snapshot?.satisfied?.size) {
+                uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
+            }
+        } catch {
+            // Snapshot optional; ignore errors.
         }
     }
 
@@ -1827,7 +2192,7 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
     const requestPromise = (async () => {
         await ensureComparisonCacheHydrated();
         const results = new Map();
-        const uncached = [];
+        let uncached = [];
 
         for (const sym of keys) {
             const cacheKey = `${sym}:${window}:full`;
@@ -1841,6 +2206,22 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
             } else {
                 markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
                 uncached.push(sym);
+            }
+        }
+
+        if (uncached.length === 0) return results;
+
+        if (uncached.length > 0) {
+            try {
+                const snapshot = await fetchChartSnapshot(interval, uncached, window, COMPARISON_CACHE_TTL);
+                if (snapshot?.results) {
+                    snapshot.results.forEach((data, sym) => results.set(sym, data));
+                }
+                if (snapshot?.satisfied?.size) {
+                    uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
+                }
+            } catch {
+                // Snapshot optional; ignore errors.
             }
         }
 

@@ -62,7 +62,7 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
-const WORKER_BUILD_ID = '2026-03-02-004';
+const WORKER_BUILD_ID = '2026-03-02-005';
 const DEFAULT_SNAPSHOT_SOURCE_URL = 'https://24e8e3a97bab753a1a1d82e0b7a5b283.r2.cloudflarestorage.com/nexusmap/data.json';
 const REFRESH_STATUS_KEY = 'snapshots/system/refresh-status.json';
 
@@ -73,6 +73,7 @@ let lastRefreshState = {
     finishedAt: null,
     status: 'idle',
     errors: {},
+    stages: {},
 };
 
 async function writeRefreshStatus(env, status) {
@@ -646,6 +647,7 @@ async function runRefreshPipeline(env) {
     const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const startedAt = new Date().toISOString();
     const errors = {};
+    const stages = {};
 
     await writeRefreshStatus(env, {
         runId,
@@ -653,30 +655,51 @@ async function runRefreshPipeline(env) {
         finishedAt: null,
         status: 'running',
         errors: {},
+        stages: {},
     });
 
     try {
+        stages.nse = { status: 'running', startedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
         await refreshNseSnapshots(env);
+        stages.nse = { status: 'success', startedAt: stages.nse.startedAt, finishedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
     } catch (error) {
         errors.nse = error?.message || 'NSE snapshot failed';
+        stages.nse = { status: 'error', startedAt: stages.nse?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[NSE Snapshot] refresh failed', error);
     }
     try {
+        stages.intervals = { status: 'running', startedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
         await refreshIntervalSnapshots(env);
+        stages.intervals = { status: 'success', startedAt: stages.intervals.startedAt, finishedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
     } catch (error) {
         errors.intervals = error?.message || 'Interval snapshot failed';
+        stages.intervals = { status: 'error', startedAt: stages.intervals?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[Interval Snapshot] refresh failed', error);
     }
     try {
+        stages.prices = { status: 'running', startedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
         await refreshPriceSnapshots(env);
+        stages.prices = { status: 'success', startedAt: stages.prices.startedAt, finishedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
     } catch (error) {
         errors.prices = error?.message || 'Price snapshot failed';
+        stages.prices = { status: 'error', startedAt: stages.prices?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[Price Snapshot] refresh failed', error);
     }
     try {
+        stages.charts = { status: 'running', startedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
         await refreshChartSnapshots(env);
+        stages.charts = { status: 'success', startedAt: stages.charts.startedAt, finishedAt: new Date().toISOString() };
+        await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
     } catch (error) {
         errors.charts = error?.message || 'Chart snapshot failed';
+        stages.charts = { status: 'error', startedAt: stages.charts?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[Chart Snapshot] refresh failed', error);
     }
 
@@ -1705,6 +1728,7 @@ async function handleSnapshotRefresh(request, env, ctx) {
         finishedAt: null,
         status: 'running',
         errors: {},
+        stages: {},
     };
     await writeRefreshStatus(env, lastRefreshState);
 
@@ -1799,6 +1823,7 @@ export default {
                 finishedAt: null,
                 status: 'running',
                 errors: {},
+                stages: {},
             };
             await writeRefreshStatus(env, lastRefreshState);
             const result = await runRefreshPipeline(env);

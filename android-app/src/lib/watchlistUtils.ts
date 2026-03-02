@@ -1,6 +1,6 @@
 import { cleanSymbol } from '../services/priceService';
 
-export function isNumericSymbol(symbol?: string | null): boolean {
+function isNumericSymbol(symbol?: string | null): boolean {
     return /^\d+$/.test(cleanSymbol(symbol));
 }
 

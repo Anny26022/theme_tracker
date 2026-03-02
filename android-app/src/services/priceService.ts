@@ -4,8 +4,8 @@ import { calculateEMA as sharedCalculateEMA, calculateSMA as sharedCalculateSMA 
 import { getMobileProxyUrl } from './networkConfig';
 
 export { cleanSymbol };
-export const calculateEMA = sharedCalculateEMA;
-export const calculateSMA = sharedCalculateSMA;
+const calculateEMA = sharedCalculateEMA;
+const calculateSMA = sharedCalculateSMA;
 
 const GOOGLE_RPC_PRICE = 'xh8wxf';
 const GOOGLE_RPC_CHART = 'AiCwsd';
@@ -175,7 +175,7 @@ function scheduleFundaSave() {
     }, 500);
 }
 
-export const INTERVAL_WINDOWS: Record<string, number> = {
+const INTERVAL_WINDOWS: Record<string, number> = {
     '1D': 1,
     '5D': 2,
     '1M': 3,
@@ -893,7 +893,7 @@ export async function fetchLivePrices(symbols: string[]) {
     return results;
 }
 
-export async function fetchLivePrice(symbol: string) {
+async function fetchLivePrice(symbol: string) {
     const map = await fetchLivePrices([symbol]);
     return map.get(cleanSymbol(symbol)) || null;
 }
@@ -1289,7 +1289,7 @@ export async function fetchFundamentals(symbols: string[]) {
     return results;
 }
 
-export async function clearPriceCache() {
+async function clearPriceCache() {
     priceCache.clear();
     intervalCache.clear();
     fundaCache.clear();
@@ -1340,7 +1340,7 @@ export function getCachedFundamentals(symbol: string) {
     return null;
 }
 
-export async function fetchTechnicalBreadth(symbols: string[]) {
+async function fetchTechnicalBreadth(symbols: string[]) {
     const keys = symbols.map((symbol) => cleanSymbol(symbol));
     const charts = await fetchComparisonCharts(keys, '1Y');
 

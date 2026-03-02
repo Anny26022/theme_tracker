@@ -96,7 +96,7 @@ function extractSymbols(map: Map<string, Map<string, number>>, interval: string)
     return Array.from(entries.keys());
 }
 
-export function MarketDataProvider({ children }: { children: React.ReactNode }) {
+function useMarketDataController(): MarketDataContextType {
     const intervalSymbolsRef = useRef(new Map<string, Map<string, number>>());
     const chartSymbolsRef = useRef(new Map<string, Map<string, number>>());
     const liveSymbolsRef = useRef(new Map<string, number>());
@@ -434,6 +434,12 @@ export function MarketDataProvider({ children }: { children: React.ReactNode }) 
         subscribeLiveSymbols,
         subscribeLiveVersion,
     ]);
+
+    return contextValue;
+}
+
+export function MarketDataProvider({ children }: { children: React.ReactNode }) {
+    const contextValue = useMarketDataController();
 
     return (
         <MarketDataContext.Provider value={contextValue}>

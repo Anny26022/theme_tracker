@@ -416,7 +416,6 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
                                 placeholderTextColor={colors.uiMuted}
                                 value={searchQuery}
                                 onChangeText={setSearchQuery}
-                                autoFocus={true}
                                 autoCapitalize="characters"
                             />
                             <Pressable onPress={() => setIsSearchOpen(false)}>
@@ -424,8 +423,12 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
                             </Pressable>
                         </View>
                         <ScrollView style={viewStyles.resultsList}>
-                            {searchResults.map((result, idx) => (
-                                <Pressable key={`${result.symbol}-${idx}`} style={viewStyles.resultItem} onPress={() => scrollToBlock(result.blockIdx, result.themeName)}>
+                            {searchResults.map((result) => (
+                                <Pressable
+                                    key={`${result.symbol}-${result.themeName}-${result.blockIdx}`}
+                                    style={viewStyles.resultItem}
+                                    onPress={() => scrollToBlock(result.blockIdx, result.themeName)}
+                                >
                                     <View>
                                         <Text style={[viewStyles.resNameText, { color: colors.textMain }]}>{result.name}</Text>
                                         <Text style={[viewStyles.resSymbolText, { color: colors.textMuted }]}>{result.symbol}</Text>
@@ -454,8 +457,8 @@ const Legend = memo(({ colors }: any) => {
         <View style={[viewStyles.legendContainer, { backgroundColor: colors.glassBg, borderColor: colors.uiDivider }]}>
             <Text style={[viewStyles.legendTitle, { color: colors.textMuted }]}>Analytics</Text>
             <View style={viewStyles.legendItems}>
-                {legendItems.map((item, idx) => (
-                    <View key={idx} style={viewStyles.legendItem}>
+                {legendItems.map((item) => (
+                    <View key={item.label} style={viewStyles.legendItem}>
                         <View style={[viewStyles.legendColor, { backgroundColor: item.color }]} />
                         <Text style={[viewStyles.legendText, { color: colors.textMuted }]}>{item.label}</Text>
                     </View>

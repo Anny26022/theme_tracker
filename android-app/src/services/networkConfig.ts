@@ -18,7 +18,7 @@ function resolveProxyBaseUrl() {
     return null;
 }
 
-export const MOBILE_PROXY_BASE_URL = resolveProxyBaseUrl();
+const MOBILE_PROXY_BASE_URL = resolveProxyBaseUrl();
 
 export function getMobileProxyUrl(path: string) {
     if (!MOBILE_PROXY_BASE_URL) return null;

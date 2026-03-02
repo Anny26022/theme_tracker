@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     Modal,
     View,
@@ -41,6 +41,28 @@ interface CompanyInsightsProps {
     onClose: () => void;
 }
 
+type InsightsTabId = 'SNAPSHOT' | 'FILINGS' | 'NEWS';
+
+type CompanyInsightsModel = {
+    colors: any;
+    isDark: boolean;
+    currentStyles: any;
+    activeTab: InsightsTabId;
+    setActiveTab: (tab: InsightsTabId) => void;
+    tabs: { id: InsightsTabId; label: string; icon: React.ReactNode }[];
+    price: number | null | undefined;
+    changePct: number | null | undefined;
+    changeColor: string;
+    funda: any;
+    fundaLoading: boolean;
+    selectedYear: number;
+    setSelectedYear: (year: number) => void;
+    isin: string | null;
+    filingsLoading: boolean;
+    filingSections: FilingSection[];
+    handleOpenFiling: (item: any) => Promise<void>;
+};
+
 type FilingSection = {
     title: string;
     monthKey: number;
@@ -81,10 +103,230 @@ const Metric = ({ label, value, subValue, icon, colors, currentStyles }: any) =>
     </View>
 );
 
-export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsightsProps) => {
+const InsightsHeader = ({ symbol, name, isin, isDark, colors, currentStyles, onClose }: any) => (
+    <View style={currentStyles.header}>
+        <View style={currentStyles.headerInfo}>
+            <View style={currentStyles.intelSuiteContainer}>
+                <Text style={currentStyles.intelSuiteTitle}>Intel Suite</Text>
+                <View style={currentStyles.tag}>
+                    <Text style={currentStyles.tagText}>{symbol}</Text>
+                </View>
+                {isin && (
+                    <View style={[currentStyles.tag, { backgroundColor: isDark ? 'rgba(197, 160, 89, 0.05)' : 'rgba(197, 160, 89, 0.03)', borderColor: 'rgba(197,160,89,0.1)' }]}>
+                        <Text style={[currentStyles.tagText, { fontSize: 7, opacity: 0.6 }]}>{isin}</Text>
+                    </View>
+                )}
+            </View>
+            <Text style={currentStyles.companyName}>{name}</Text>
+        </View>
+        <Pressable onPress={onClose} style={currentStyles.closeButton}>
+            <X size={20} color={colors.textMuted} />
+        </Pressable>
+    </View>
+);
+
+const InsightsTabs = ({ tabs, activeTab, onTabChange, currentStyles }: any) => (
+    <View style={currentStyles.tabsContainer}>
+        {tabs.map((tab: any) => (
+            <Pressable
+                key={tab.id}
+                onPress={() => onTabChange(tab.id)}
+                style={[currentStyles.tab, activeTab === tab.id && currentStyles.activeTab]}
+            >
+                {tab.icon}
+                <Text style={[currentStyles.tabText, activeTab === tab.id && currentStyles.activeTabText]}>
+                    {tab.label}
+                </Text>
+            </Pressable>
+        ))}
+    </View>
+);
+
+const FilingsPanel = ({
+    isin,
+    filingsLoading,
+    filingSections,
+    selectedYear,
+    onYearChange,
+    colors,
+    currentStyles,
+    handleOpenFiling,
+}: any) => (
+    <View style={currentStyles.filingsBody}>
+        {!isin ? (
+            <View style={currentStyles.centerSection}>
+                <FileText size={32} color={colors.uiMuted} />
+                <Text style={currentStyles.offlineTitle}>ISIN Missing</Text>
+                <Text style={currentStyles.offlineSub}>Cannot resolve ISIN for this symbol</Text>
+            </View>
+        ) : filingsLoading ? (
+            <View style={currentStyles.loadingContainer}>
+                <ActivityIndicator color={colors.accentPrimary} />
+                <Text style={currentStyles.loadingText}>Loading filings...</Text>
+            </View>
+        ) : (
+            <View style={currentStyles.filingsContent}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.yearSelectorScroll}>
+                    <View style={currentStyles.yearSelector}>
+                        {[2026, 2025, 2024, 2023, 2022, 2021].map((year) => (
+                            <Pressable
+                                key={year}
+                                onPress={() => onYearChange(year)}
+                                style={[currentStyles.yearButton, selectedYear === year && currentStyles.yearButtonActive]}
+                            >
+                                <Text style={[currentStyles.yearButtonText, selectedYear === year && currentStyles.yearButtonTextActive]}>
+                                    {year}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+                </ScrollView>
+
+                {filingSections.length > 0 ? (
+                    <View style={currentStyles.timelineListContainer}>
+                        <View style={currentStyles.timelineLine} />
+                        <SectionList
+                            sections={filingSections}
+                            keyExtractor={(item, idx) => {
+                                const title = item.caption || item.title || item.subject || 'Corporate Filing';
+                                const datePart = getFilingDate(item)?.toISOString() || String(idx);
+                                return `${title}-${datePart}-${idx}`;
+                            }}
+                            renderSectionHeader={({ section }) => (
+                                <View style={currentStyles.timelineSectionHeader}>
+                                    <View style={currentStyles.timelineDot} />
+                                    <Text style={currentStyles.timelineMonth}>{section.title}</Text>
+                                </View>
+                            )}
+                            renderItem={({ item }) => {
+                                const title = item.caption || item.title || item.subject || 'Corporate Filing';
+                                const category = item.cat || item.descriptor || item.categoryLabel || item.type || 'Notification';
+                                const dateFormatted = getFilingDate(item)?.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) || '';
+                                const attachment = getFilingUrl(item);
+
+                                return (
+                                    <Pressable
+                                        style={currentStyles.filingCard}
+                                        onPress={() => handleOpenFiling(item)}
+                                    >
+                                        <View style={currentStyles.filingIcon}>
+                                            <FileText size={14} color={colors.textMuted} />
+                                        </View>
+                                        <View style={currentStyles.filingInfo}>
+                                            <View style={currentStyles.filingTitleRow}>
+                                                <Text style={currentStyles.filingTitle} numberOfLines={2}>{title}</Text>
+                                                {attachment && <ExternalLink size={10} color={colors.accentPrimary} style={{ marginTop: 2 }} />}
+                                            </View>
+                                            <View style={currentStyles.filingMeta}>
+                                                <Text style={currentStyles.filingCategory}>{category}</Text>
+                                                <Text style={currentStyles.filingDot}>•</Text>
+                                                <Text style={currentStyles.filingDate}>{dateFormatted}</Text>
+                                            </View>
+                                        </View>
+                                    </Pressable>
+                                );
+                            }}
+                            stickySectionHeadersEnabled={false}
+                            contentContainerStyle={currentStyles.timelineListContent}
+                            showsVerticalScrollIndicator={false}
+                            initialNumToRender={20}
+                            maxToRenderPerBatch={20}
+                            windowSize={7}
+                            removeClippedSubviews={true}
+                        />
+                    </View>
+                ) : (
+                    <View style={currentStyles.centerSection}>
+                        <Text style={currentStyles.offlineSub}>No filings detected for {selectedYear}</Text>
+                    </View>
+                )}
+            </View>
+        )}
+    </View>
+);
+
+const SnapshotPanel = ({ price, changePct, changeColor, fundaLoading, funda, name, colors, currentStyles }: any) => (
+    <View style={currentStyles.section}>
+        <View style={currentStyles.sectionHeader}>
+            <Activity size={12} color={colors.accentPrimary} />
+            <Text style={currentStyles.sectionTitle}>Live Quote</Text>
+        </View>
+
+        <View style={currentStyles.priceCard}>
+            <View>
+                <Text style={currentStyles.priceLabel}>Current Market Price</Text>
+                <Text style={currentStyles.priceValue}>
+                    {price ? `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}{' '}
+                    <Text style={currentStyles.currency}>INR</Text>
+                </Text>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+                <Text style={currentStyles.priceLabel}>Session Change</Text>
+                <Text style={[currentStyles.changeValue, { color: changeColor }]}>
+                    {changePct != null ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%` : '—'}
+                </Text>
+            </View>
+        </View>
+
+        <View style={currentStyles.sectionHeader}>
+            <BarChart3 size={12} color={colors.accentPrimary} />
+            <Text style={currentStyles.sectionTitle}>Fundamental Specs</Text>
+        </View>
+
+        {fundaLoading ? (
+            <View style={currentStyles.loadingContainer}>
+                <ActivityIndicator color={colors.accentPrimary} />
+                <Text style={currentStyles.loadingText}>Loading fundamentals...</Text>
+            </View>
+        ) : funda ? (
+            <View style={currentStyles.metricsGrid}>
+                <Metric label="Market Cap" value={formatIndianNumber(funda.marketCap)} subValue="INR" icon={<PieChart size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                <Metric label="P/E Ratio" value={funda.peRatio ? funda.peRatio.toFixed(2) : '—'} subValue="Multiple" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                <Metric label="Div. Yield" value={formatPercent(funda.yield)} subValue="Yield" icon={<Landmark size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                <Metric label="Volume" value={formatIndianNumber(funda.volume)} subValue="Shares" icon={<BarChart3 size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                <Metric label="EPS (TTM)" value={funda.eps ? funda.eps.toFixed(2) : '—'} subValue="Per Share" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+                <Metric label="52W Range" value={`${formatIndianNumber(funda.low52)} - ${formatIndianNumber(funda.high52)}`} subValue="Price" icon={<Activity size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
+            </View>
+        ) : (
+            <View style={currentStyles.restrictedContainer}>
+                <Text style={currentStyles.restrictedText}>Alpha data restricted</Text>
+            </View>
+        )}
+
+        {funda?.description ? (
+            <View style={{ marginTop: 16 }}>
+                <View style={currentStyles.sectionHeader}>
+                    <Award size={12} color={colors.accentPrimary} />
+                    <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
+                </View>
+                <Text style={currentStyles.description}>{funda.description}</Text>
+            </View>
+        ) : (
+            <View style={{ marginTop: 16 }}>
+                <View style={currentStyles.sectionHeader}>
+                    <Award size={12} color={colors.accentPrimary} />
+                    <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
+                </View>
+                <Text style={currentStyles.description}>
+                    Loading deep-dive intelligence for {name}...
+                </Text>
+            </View>
+        )}
+    </View>
+);
+
+const NewsPanel = ({ colors, currentStyles }: any) => (
+    <View style={currentStyles.centerSection}>
+        <Newspaper size={32} color={colors.uiMuted} />
+        <Text style={currentStyles.offlineTitle}>Wire Feed Offline</Text>
+        <Text style={currentStyles.offlineSub}>Syncing with Bloomberg/Reuters feeds...</Text>
+    </View>
+);
+
+const useCompanyInsightsModel = ({ symbol, isOpen }: CompanyInsightsProps): CompanyInsightsModel => {
     const { colors, theme } = useTheme();
     const { height: screenHeight } = useWindowDimensions();
-    const [activeTab, setActiveTab] = useState('SNAPSHOT');
+    const [activeTab, setActiveTab] = useState<InsightsTabId>('SNAPSHOT');
     const isDark = theme === 'dark';
 
     const { price, changePct } = useLivePrice(isOpen ? (symbol ?? undefined) : undefined);
@@ -94,7 +336,7 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
     const isin = isOpen ? getIsin(symbol) : null;
     const { data: filings, loading: filingsLoading } = useFilings(isin);
 
-    const filingSections = React.useMemo<FilingSection[]>(() => {
+    const filingSections = useMemo<FilingSection[]>(() => {
         if (!Array.isArray(filings)) return [];
 
         const grouped = new Map<string, FilingSection>();
@@ -130,18 +372,16 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
             }));
     }, [filings, selectedYear]);
 
-    const tabs = [
-        { id: 'SNAPSHOT', label: 'Snapshot', icon: <Activity size={12} color={activeTab === 'SNAPSHOT' ? colors.accentPrimary : colors.textMuted} /> },
-        { id: 'FILINGS', label: 'Filings', icon: <FileText size={12} color={activeTab === 'FILINGS' ? colors.accentPrimary : colors.textMuted} /> },
-        { id: 'NEWS', label: 'News', icon: <Newspaper size={12} color={activeTab === 'NEWS' ? colors.accentPrimary : colors.textMuted} /> },
-    ];
+    const tabs = useMemo(() => ([
+        { id: 'SNAPSHOT' as const, label: 'Snapshot', icon: <Activity size={12} color={activeTab === 'SNAPSHOT' ? colors.accentPrimary : colors.textMuted} /> },
+        { id: 'FILINGS' as const, label: 'Filings', icon: <FileText size={12} color={activeTab === 'FILINGS' ? colors.accentPrimary : colors.textMuted} /> },
+        { id: 'NEWS' as const, label: 'News', icon: <Newspaper size={12} color={activeTab === 'NEWS' ? colors.accentPrimary : colors.textMuted} /> },
+    ]), [activeTab, colors]);
 
-    if (!isOpen) return null;
-    const currentStyles = styles(colors, isDark, screenHeight);
-
+    const currentStyles = useMemo(() => styles(colors, isDark, screenHeight), [colors, isDark, screenHeight]);
     const changeColor = (changePct ?? 0) >= 0 ? '#22c55e' : '#ef4444';
 
-    const handleOpenFiling = async (item: any) => {
+    const handleOpenFiling = useCallback(async (item: any) => {
         const url = getFilingUrl(item);
         if (!url) {
             Alert.alert('Document Unavailable', 'This filing has no attachment link.');
@@ -159,235 +399,160 @@ export const CompanyInsights = ({ symbol, name, isOpen, onClose }: CompanyInsigh
             console.warn('[CompanyInsights] Failed to open filing URL:', url, error);
             Alert.alert('Open Failed', 'Unable to open this filing right now. Please try again.');
         }
+    }, []);
+
+    return {
+        colors,
+        isDark,
+        currentStyles,
+        activeTab,
+        setActiveTab,
+        tabs,
+        price,
+        changePct,
+        changeColor,
+        funda,
+        fundaLoading,
+        selectedYear,
+        setSelectedYear,
+        isin,
+        filingsLoading,
+        filingSections,
+        handleOpenFiling,
     };
+};
+
+type CompanyInsightsModalProps = CompanyInsightsProps & CompanyInsightsModel;
+
+const CompanyInsightsBody = ({
+    activeTab,
+    isin,
+    filingsLoading,
+    filingSections,
+    selectedYear,
+    setSelectedYear,
+    colors,
+    currentStyles,
+    handleOpenFiling,
+    price,
+    changePct,
+    changeColor,
+    fundaLoading,
+    funda,
+    name,
+}: any) => {
+    if (activeTab === 'FILINGS') {
+        return (
+            <FilingsPanel
+                isin={isin}
+                filingsLoading={filingsLoading}
+                filingSections={filingSections}
+                selectedYear={selectedYear}
+                onYearChange={setSelectedYear}
+                colors={colors}
+                currentStyles={currentStyles}
+                handleOpenFiling={handleOpenFiling}
+            />
+        );
+    }
 
     return (
-        <Modal
-            visible={isOpen}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={onClose}
-        >
-            <View style={currentStyles.overlay}>
-                <Pressable style={currentStyles.closer} onPress={onClose} />
-                <View style={currentStyles.content}>
-                    {/* Header */}
-                    <View style={currentStyles.header}>
-                        <View style={currentStyles.headerInfo}>
-                            <View style={currentStyles.intelSuiteContainer}>
-                                <Text style={currentStyles.intelSuiteTitle}>Intel Suite</Text>
-                                <View style={currentStyles.tag}>
-                                    <Text style={currentStyles.tagText}>{symbol}</Text>
-                                </View>
-                                {isin && (
-                                    <View style={[currentStyles.tag, { backgroundColor: isDark ? 'rgba(197, 160, 89, 0.05)' : 'rgba(197, 160, 89, 0.03)', borderColor: 'rgba(197,160,89,0.1)' }]}>
-                                        <Text style={[currentStyles.tagText, { fontSize: 7, opacity: 0.6 }]}>{isin}</Text>
-                                    </View>
-                                )}
-                            </View>
-                            <Text style={currentStyles.companyName}>{name}</Text>
-                        </View>
-                        <Pressable onPress={onClose} style={currentStyles.closeButton}>
-                            <X size={20} color={colors.textMuted} />
-                        </Pressable>
-                    </View>
+        <ScrollView style={currentStyles.scrollView} showsVerticalScrollIndicator={false}>
+            {activeTab === 'SNAPSHOT' && (
+                <SnapshotPanel
+                    price={price}
+                    changePct={changePct}
+                    changeColor={changeColor}
+                    fundaLoading={fundaLoading}
+                    funda={funda}
+                    name={name}
+                    colors={colors}
+                    currentStyles={currentStyles}
+                />
+            )}
 
-                    {/* Tabs */}
-                    <View style={currentStyles.tabsContainer}>
-                        {tabs.map(tab => (
-                            <Pressable
-                                key={tab.id}
-                                onPress={() => setActiveTab(tab.id)}
-                                style={[currentStyles.tab, activeTab === tab.id && currentStyles.activeTab]}
-                            >
-                                {tab.icon}
-                                <Text style={[currentStyles.tabText, activeTab === tab.id && currentStyles.activeTabText]}>
-                                    {tab.label}
-                                </Text>
-                            </Pressable>
-                        ))}
-                    </View>
+            {activeTab === 'NEWS' && (
+                <NewsPanel colors={colors} currentStyles={currentStyles} />
+            )}
 
-                    {/* Body */}
-                    {activeTab === 'FILINGS' ? (
-                        <View style={currentStyles.filingsBody}>
-                            {!isin ? (
-                                <View style={currentStyles.centerSection}>
-                                    <FileText size={32} color={colors.uiMuted} />
-                                    <Text style={currentStyles.offlineTitle}>ISIN Missing</Text>
-                                    <Text style={currentStyles.offlineSub}>Cannot resolve ISIN for this symbol</Text>
-                                </View>
-                            ) : filingsLoading ? (
-                                <View style={currentStyles.loadingContainer}>
-                                    <ActivityIndicator color={colors.accentPrimary} />
-                                    <Text style={currentStyles.loadingText}>Loading filings...</Text>
-                                </View>
-                            ) : (
-                                <View style={currentStyles.filingsContent}>
-                                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.yearSelectorScroll}>
-                                        <View style={currentStyles.yearSelector}>
-                                            {[2026, 2025, 2024, 2023, 2022, 2021].map(year => (
-                                                <Pressable
-                                                    key={year}
-                                                    onPress={() => setSelectedYear(year)}
-                                                    style={[currentStyles.yearButton, selectedYear === year && currentStyles.yearButtonActive]}
-                                                >
-                                                    <Text style={[currentStyles.yearButtonText, selectedYear === year && currentStyles.yearButtonTextActive]}>
-                                                        {year}
-                                                    </Text>
-                                                </Pressable>
-                                            ))}
-                                        </View>
-                                    </ScrollView>
-
-                                    {filingSections.length > 0 ? (
-                                        <View style={currentStyles.timelineListContainer}>
-                                            <View style={currentStyles.timelineLine} />
-                                            <SectionList
-                                                sections={filingSections}
-                                                keyExtractor={(item, idx) => {
-                                                    const title = item.caption || item.title || item.subject || 'Corporate Filing';
-                                                    const datePart = getFilingDate(item)?.toISOString() || String(idx);
-                                                    return `${title}-${datePart}-${idx}`;
-                                                }}
-                                                renderSectionHeader={({ section }) => (
-                                                    <View style={currentStyles.timelineSectionHeader}>
-                                                        <View style={currentStyles.timelineDot} />
-                                                        <Text style={currentStyles.timelineMonth}>{section.title}</Text>
-                                                    </View>
-                                                )}
-                                                renderItem={({ item }) => {
-                                                    const title = item.caption || item.title || item.subject || 'Corporate Filing';
-                                                    const category = item.cat || item.descriptor || item.categoryLabel || item.type || 'Notification';
-                                                    const dateFormatted = getFilingDate(item)?.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) || '';
-                                                    const attachment = getFilingUrl(item);
-
-                                                    return (
-                                                        <Pressable
-                                                            style={currentStyles.filingCard}
-                                                            onPress={() => handleOpenFiling(item)}
-                                                        >
-                                                            <View style={currentStyles.filingIcon}>
-                                                                <FileText size={14} color={colors.textMuted} />
-                                                            </View>
-                                                            <View style={currentStyles.filingInfo}>
-                                                                <View style={currentStyles.filingTitleRow}>
-                                                                    <Text style={currentStyles.filingTitle} numberOfLines={2}>{title}</Text>
-                                                                    {attachment && <ExternalLink size={10} color={colors.accentPrimary} style={{ marginTop: 2 }} />}
-                                                                </View>
-                                                                <View style={currentStyles.filingMeta}>
-                                                                    <Text style={currentStyles.filingCategory}>{category}</Text>
-                                                                    <Text style={currentStyles.filingDot}>•</Text>
-                                                                    <Text style={currentStyles.filingDate}>{dateFormatted}</Text>
-                                                                </View>
-                                                            </View>
-                                                        </Pressable>
-                                                    );
-                                                }}
-                                                stickySectionHeadersEnabled={false}
-                                                contentContainerStyle={currentStyles.timelineListContent}
-                                                showsVerticalScrollIndicator={false}
-                                                initialNumToRender={20}
-                                                maxToRenderPerBatch={20}
-                                                windowSize={7}
-                                                removeClippedSubviews={true}
-                                            />
-                                        </View>
-                                    ) : (
-                                        <View style={currentStyles.centerSection}>
-                                            <Text style={currentStyles.offlineSub}>No filings detected for {selectedYear}</Text>
-                                        </View>
-                                    )}
-                                </View>
-                            )}
-                        </View>
-                    ) : (
-                        <ScrollView style={currentStyles.scrollView} showsVerticalScrollIndicator={false}>
-                            {activeTab === 'SNAPSHOT' && (
-                                <View style={currentStyles.section}>
-                                    <View style={currentStyles.sectionHeader}>
-                                        <Activity size={12} color={colors.accentPrimary} />
-                                        <Text style={currentStyles.sectionTitle}>Live Quote</Text>
-                                    </View>
-
-                                    <View style={currentStyles.priceCard}>
-                                        <View>
-                                            <Text style={currentStyles.priceLabel}>Current Market Price</Text>
-                                            <Text style={currentStyles.priceValue}>
-                                                {price ? `₹${price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}{' '}
-                                                <Text style={currentStyles.currency}>INR</Text>
-                                            </Text>
-                                        </View>
-                                        <View style={{ alignItems: 'flex-end' }}>
-                                            <Text style={currentStyles.priceLabel}>Session Change</Text>
-                                            <Text style={[currentStyles.changeValue, { color: changeColor }]}>
-                                                {changePct != null ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%` : '—'}
-                                            </Text>
-                                        </View>
-                                    </View>
-
-                                    <View style={currentStyles.sectionHeader}>
-                                        <BarChart3 size={12} color={colors.accentPrimary} />
-                                        <Text style={currentStyles.sectionTitle}>Fundamental Specs</Text>
-                                    </View>
-
-                                    {fundaLoading ? (
-                                        <View style={currentStyles.loadingContainer}>
-                                            <ActivityIndicator color={colors.accentPrimary} />
-                                            <Text style={currentStyles.loadingText}>Loading fundamentals...</Text>
-                                        </View>
-                                    ) : funda ? (
-                                        <View style={currentStyles.metricsGrid}>
-                                            <Metric label="Market Cap" value={formatIndianNumber(funda.marketCap)} subValue="INR" icon={<PieChart size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                            <Metric label="P/E Ratio" value={funda.peRatio ? funda.peRatio.toFixed(2) : '—'} subValue="Multiple" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                            <Metric label="Div. Yield" value={formatPercent(funda.yield)} subValue="Yield" icon={<Landmark size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                            <Metric label="Volume" value={formatIndianNumber(funda.volume)} subValue="Shares" icon={<BarChart3 size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                            <Metric label="EPS (TTM)" value={funda.eps ? funda.eps.toFixed(2) : '—'} subValue="Per Share" icon={<TrendingUp size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                            <Metric label="52W Range" value={`${formatIndianNumber(funda.low52)} - ${formatIndianNumber(funda.high52)}`} subValue="Price" icon={<Activity size={12} color={colors.textMuted} />} colors={colors} currentStyles={currentStyles} />
-                                        </View>
-                                    ) : (
-                                        <View style={currentStyles.restrictedContainer}>
-                                            <Text style={currentStyles.restrictedText}>Alpha data restricted</Text>
-                                        </View>
-                                    )}
-
-                                    {funda?.description ? (
-                                        <View style={{ marginTop: 16 }}>
-                                            <View style={currentStyles.sectionHeader}>
-                                                <Award size={12} color={colors.accentPrimary} />
-                                                <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
-                                            </View>
-                                            <Text style={currentStyles.description}>{funda.description}</Text>
-                                        </View>
-                                    ) : (
-                                        <View style={{ marginTop: 16 }}>
-                                            <View style={currentStyles.sectionHeader}>
-                                                <Award size={12} color={colors.accentPrimary} />
-                                                <Text style={currentStyles.sectionTitle}>Corporate Profile</Text>
-                                            </View>
-                                            <Text style={currentStyles.description}>
-                                                Loading deep-dive intelligence for {name}...
-                                            </Text>
-                                        </View>
-                                    )}
-                                </View>
-                            )}
-
-                            {activeTab === 'NEWS' && (
-                                <View style={currentStyles.centerSection}>
-                                    <Newspaper size={32} color={colors.uiMuted} />
-                                    <Text style={currentStyles.offlineTitle}>Wire Feed Offline</Text>
-                                    <Text style={currentStyles.offlineSub}>Syncing with Bloomberg/Reuters feeds...</Text>
-                                </View>
-                            )}
-
-                            <View style={{ height: 40 }} />
-                        </ScrollView>
-                    )}
-                </View>
-            </View>
-        </Modal>
+            <View style={{ height: 40 }} />
+        </ScrollView>
     );
+};
+
+const CompanyInsightsModal = ({
+    symbol,
+    name,
+    isOpen,
+    onClose,
+    colors,
+    isDark,
+    currentStyles,
+    activeTab,
+    setActiveTab,
+    tabs,
+    isin,
+    filingsLoading,
+    filingSections,
+    selectedYear,
+    setSelectedYear,
+    handleOpenFiling,
+    price,
+    changePct,
+    changeColor,
+    fundaLoading,
+    funda,
+}: CompanyInsightsModalProps) => (
+    <Modal
+        visible={isOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={onClose}
+    >
+        <View style={currentStyles.overlay}>
+            <Pressable style={currentStyles.closer} onPress={onClose} />
+            <View style={currentStyles.content}>
+                <InsightsHeader
+                    symbol={symbol}
+                    name={name}
+                    isin={isin}
+                    isDark={isDark}
+                    colors={colors}
+                    currentStyles={currentStyles}
+                    onClose={onClose}
+                />
+                <InsightsTabs
+                    tabs={tabs}
+                    activeTab={activeTab}
+                    onTabChange={setActiveTab}
+                    currentStyles={currentStyles}
+                />
+                <CompanyInsightsBody
+                    activeTab={activeTab}
+                    isin={isin}
+                    filingsLoading={filingsLoading}
+                    filingSections={filingSections}
+                    selectedYear={selectedYear}
+                    setSelectedYear={setSelectedYear}
+                    colors={colors}
+                    currentStyles={currentStyles}
+                    handleOpenFiling={handleOpenFiling}
+                    price={price}
+                    changePct={changePct}
+                    changeColor={changeColor}
+                    fundaLoading={fundaLoading}
+                    funda={funda}
+                    name={name}
+                />
+            </View>
+        </View>
+    </Modal>
+);
+
+export const CompanyInsights = (props: CompanyInsightsProps) => {
+    const model = useCompanyInsightsModel(props);
+    if (!props.isOpen) return null;
+    return <CompanyInsightsModal {...props} {...model} />;
 };
 
 const styles = (colors: any, isDark: boolean, screenHeight: number) => StyleSheet.create({

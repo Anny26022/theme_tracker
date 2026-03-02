@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useReducer, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import { Search, X, TrendingUp, BarChart3, Activity, Plus } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,40 +19,285 @@ const COLORS = ['#c5a059', '#4f46e5', '#10b981', '#f43f5e', '#8b5cf6', '#f59e0b'
 const MAX_CHART_SYMBOLS = 60;
 const STORAGE_KEY = 'tt_comparison_symbols:v2';
 
+type ComparisonState = {
+    selectedSymbols: any[];
+    timeframe: string;
+    searchQuery: string;
+    exchangePreference: 'ALL' | 'NSE' | 'BSE';
+    isLoaded: boolean;
+};
+
+type ComparisonAction =
+    | { type: 'hydrate'; symbols: any[] }
+    | { type: 'setTimeframe'; value: string }
+    | { type: 'setSearchQuery'; value: string }
+    | { type: 'setExchange'; value: 'ALL' | 'NSE' | 'BSE' }
+    | { type: 'setSelected'; symbols: any[]; clearSearch?: boolean };
+
+const INITIAL_STATE: ComparisonState = {
+    selectedSymbols: [],
+    timeframe: '1M',
+    searchQuery: '',
+    exchangePreference: 'ALL',
+    isLoaded: false,
+};
+
+function comparisonReducer(state: ComparisonState, action: ComparisonAction): ComparisonState {
+    switch (action.type) {
+        case 'hydrate':
+            return {
+                ...state,
+                selectedSymbols: action.symbols,
+                isLoaded: true,
+            };
+        case 'setTimeframe':
+            return { ...state, timeframe: action.value };
+        case 'setSearchQuery':
+            return { ...state, searchQuery: action.value };
+        case 'setExchange':
+            return { ...state, exchangePreference: action.value };
+        case 'setSelected':
+            return {
+                ...state,
+                selectedSymbols: action.symbols,
+                searchQuery: action.clearSearch ? '' : state.searchQuery,
+            };
+        default:
+            return state;
+    }
+}
+
+const ComparisonHeader = ({ timeframe, onTimeframeChange, currentStyles }: any) => (
+    <View style={currentStyles.header}>
+        <View style={currentStyles.headerText}>
+            <Text style={currentStyles.title}>COMPARISON ENGINE</Text>
+            <Text style={currentStyles.subtitle}>CROSS-VECTOR PERFORMANCE ANALYSIS</Text>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.intervalBar} contentInsetAdjustmentBehavior="automatic">
+            {INTERVALS.map(tf => (
+                <Pressable
+                    key={tf}
+                    onPress={() => onTimeframeChange(tf)}
+                    style={[
+                        currentStyles.intervalBtn,
+                        timeframe === tf && currentStyles.intervalBtnActive
+                    ]}
+                >
+                    <Text style={[
+                        currentStyles.intervalText,
+                        timeframe === tf && currentStyles.intervalTextActive
+                    ]}>{tf}</Text>
+                </Pressable>
+            ))}
+        </ScrollView>
+    </View>
+);
+
+const SelectionArea = ({
+    selectedSymbols,
+    searchQuery,
+    searchResults,
+    exchangePreference,
+    onToggleSymbol,
+    onSearchChange,
+    onExchangeChange,
+    onOpenInsights,
+    colors,
+    currentStyles,
+}: any) => (
+    <View style={currentStyles.selectionArea}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.selectedList} contentInsetAdjustmentBehavior="automatic">
+            {selectedSymbols.map((item: any, idx: number) => (
+                <Pressable
+                    key={item.id}
+                    style={[
+                        currentStyles.symbolChip,
+                        { borderColor: COLORS[idx % COLORS.length] + '44' }
+                    ]}
+                    onPress={() => item.type === 'STOCK' && onOpenInsights?.({ symbol: item.id, name: item.name })}
+                >
+                    <View style={[currentStyles.dot, { backgroundColor: COLORS[idx % COLORS.length] }]} />
+                    <View style={currentStyles.chipInfo}>
+                        <Text style={currentStyles.chipText} numberOfLines={1}>
+                            {item.type === 'STOCK' ? item.name : item.id}
+                        </Text>
+                        {item.type === 'INDUSTRY' && (
+                            <Text style={currentStyles.chipSubtext}>INDEX</Text>
+                        )}
+                    </View>
+                    <Pressable onPress={() => onToggleSymbol({ clean: item.id })}>
+                        <X size={10} color={colors.textMuted} />
+                    </Pressable>
+                </Pressable>
+            ))}
+        </ScrollView>
+
+        <View style={currentStyles.searchAndFilter}>
+            <View style={currentStyles.exchangeBar}>
+                {['ALL', 'NSE', 'BSE'].map(ex => (
+                    <Pressable
+                        key={ex}
+                        onPress={() => onExchangeChange(ex)}
+                        style={[
+                            currentStyles.exchangeBtn,
+                            exchangePreference === ex && currentStyles.exchangeBtnActive
+                        ]}
+                    >
+                        <Text style={[
+                            currentStyles.exchangeText,
+                            exchangePreference === ex && currentStyles.exchangeTextActive
+                        ]}>{ex}</Text>
+                    </Pressable>
+                ))}
+            </View>
+
+            <View style={currentStyles.searchBarContainer}>
+                <View style={currentStyles.searchBar}>
+                    <Search size={14} color={colors.textMuted} />
+                    <TextInput
+                        style={currentStyles.searchInput}
+                        placeholder="COMPARE SYMBOL..."
+                        placeholderTextColor={colors.uiMuted}
+                        value={searchQuery}
+                        onChangeText={onSearchChange}
+                        autoCapitalize="characters"
+                    />
+                </View>
+
+                {searchQuery.length > 0 && searchResults.length > 0 && (
+                    <View style={currentStyles.searchResults}>
+                        <ScrollView keyboardShouldPersistTaps="always" contentInsetAdjustmentBehavior="automatic">
+                            {searchResults.map((res: any) => (
+                                <Pressable
+                                    key={res.clean + res.type}
+                                    style={currentStyles.searchResultItem}
+                                    onPress={() => onToggleSymbol(res)}
+                                >
+                                    <View style={currentStyles.resHeader}>
+                                        <Text style={currentStyles.resSymbol}>{res.symbol}</Text>
+                                        {res.type === 'INDUSTRY' && (
+                                            <View style={currentStyles.indexBadge}>
+                                                <Text style={currentStyles.indexBadgeText}>INDEX</Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                    <Text style={currentStyles.resName} numberOfLines={1}>{res.name}</Text>
+                                    <View pointerEvents="none" style={currentStyles.resPlus}>
+                                        <Plus size={12} color={colors.accentPrimary} />
+                                    </View>
+                                </Pressable>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+            </View>
+        </View>
+    </View>
+);
+
+const ComparisonChartSection = ({
+    loading,
+    totalChartSymbols,
+    chartData,
+    chartSymbols,
+    symbolNames,
+    timeframe,
+    colors,
+    currentStyles,
+}: any) => {
+    const hasData = useMemo(() => {
+        if (!chartData || chartData.size === 0) return false;
+        return Array.from(chartData.values()).some((v: any) => v && v.length > 0);
+    }, [chartData]);
+
+    return (
+        <View style={currentStyles.chartContainer}>
+            {loading && (
+                <View style={currentStyles.chartLoader}>
+                    <ActivityIndicator color={colors.accentPrimary} />
+                </View>
+            )}
+            {totalChartSymbols > MAX_CHART_SYMBOLS && (
+                <View style={currentStyles.limitBadge}>
+                    <Text style={currentStyles.limitText}>SHOWING {MAX_CHART_SYMBOLS} / {totalChartSymbols}</Text>
+                </View>
+            )}
+
+            {hasData ? (
+                <View style={currentStyles.chartWrapper}>
+                    <ComparisonChart
+                        data={chartData}
+                        symbols={chartSymbols}
+                        labels={symbolNames}
+                        interval={timeframe}
+                        height={280}
+                    />
+                </View>
+            ) : (
+                <View style={currentStyles.placeholderChart}>
+                    <Activity size={48} color={colors.uiDivider} />
+                    <Text style={currentStyles.placeholderText}>COMPARISON ENGINE</Text>
+                    <Text style={currentStyles.placeholderSubtext}>
+                        {chartSymbols.length > 0 ? `Analysing ${chartSymbols.length} Vectors...` : 'Select symbols to compare performance'}
+                    </Text>
+                </View>
+            )}
+        </View>
+    );
+};
+
+const ComparisonFooter = ({ colors, currentStyles }: any) => (
+    <View style={currentStyles.footer}>
+        <View style={currentStyles.footerItem}>
+            <TrendingUp size={12} color={colors.textMuted} />
+            <Text style={currentStyles.footerText}>NORMALIZED YIELDS</Text>
+        </View>
+        <View style={currentStyles.footerItem}>
+            <BarChart3 size={12} color={colors.textMuted} />
+            <Text style={currentStyles.footerText}>INTRADAY PRECISION</Text>
+        </View>
+    </View>
+);
+
 export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
     const { colors, isDark } = useTheme();
     const { hierarchy } = useMarketData();
-    const [selectedSymbols, setSelectedSymbols] = useState<any[]>([]);
-    const [timeframe, setTimeframe] = useState('1M');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [exchangePreference, setExchangePreference] = useState<'ALL' | 'NSE' | 'BSE'>('ALL');
-    const [isLoaded, setIsLoaded] = useState(false);
+    const [state, dispatch] = useReducer(comparisonReducer, INITIAL_STATE);
 
+    const { selectedSymbols, timeframe, searchQuery, exchangePreference, isLoaded } = state;
     const currentStyles = styles(colors, isDark);
 
-    // Persistence: Load from AsyncStorage
     useEffect(() => {
+        let cancelled = false;
         const load = async () => {
             try {
                 const saved = await AsyncStorage.getItem(STORAGE_KEY);
-                if (saved) {
-                    setSelectedSymbols(JSON.parse(saved));
-                } else {
-                    setSelectedSymbols([
-                        { id: 'RELIANCE', name: 'RELIANCE INDUSTRIES', type: 'STOCK' },
-                        { id: 'HDFCBANK', name: 'HDFC BANK', type: 'STOCK' }
-                    ]);
-                }
+                const fallback = [
+                    { id: 'RELIANCE', name: 'RELIANCE INDUSTRIES', type: 'STOCK' },
+                    { id: 'HDFCBANK', name: 'HDFC BANK', type: 'STOCK' }
+                ];
+                const symbols = saved ? JSON.parse(saved) : fallback;
+                if (!cancelled) dispatch({ type: 'hydrate', symbols });
             } catch (e) {
                 console.warn('Failed to load comparison symbols', e);
-            } finally {
-                setIsLoaded(true);
+                if (!cancelled) {
+                    dispatch({
+                        type: 'hydrate',
+                        symbols: [
+                            { id: 'RELIANCE', name: 'RELIANCE INDUSTRIES', type: 'STOCK' },
+                            { id: 'HDFCBANK', name: 'HDFC BANK', type: 'STOCK' }
+                        ]
+                    });
+                }
             }
         };
         load();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
-    // Persistence: Save to AsyncStorage
     useEffect(() => {
         if (!isLoaded) return;
         const save = async () => {
@@ -143,189 +388,78 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
 
     const { data: chartData, loading } = useComparisonData(chartSymbols, timeframe);
 
-    const toggleSymbol = (item: any) => {
+    const handleTimeframeChange = useCallback((tf: string) => {
+        dispatch({ type: 'setTimeframe', value: tf });
+    }, []);
+
+    const handleSearchChange = useCallback((value: string) => {
+        dispatch({ type: 'setSearchQuery', value });
+    }, []);
+
+    const handleExchangeChange = useCallback((value: 'ALL' | 'NSE' | 'BSE') => {
+        dispatch({ type: 'setExchange', value });
+    }, []);
+
+    const toggleSymbol = useCallback((item: any) => {
         const id = item.clean || item.symbol;
         const existing = selectedSymbols.find(s => s.id === id);
         if (existing) {
-            setSelectedSymbols(prev => prev.filter(s => s.id !== id));
-        } else {
-            if (selectedSymbols.length >= 7) return;
-            setSelectedSymbols(prev => [...prev, {
-                id,
-                name: item.name,
-                type: item.type
-            }]);
-            setSearchQuery('');
+            dispatch({
+                type: 'setSelected',
+                symbols: selectedSymbols.filter(s => s.id !== id)
+            });
+            return;
         }
-    };
 
-    const hasData = useMemo(() => {
-        if (!chartData || chartData.size === 0) return false;
-        return Array.from(chartData.values()).some((v: any) => v && v.length > 0);
-    }, [chartData]);
+        if (selectedSymbols.length >= 7) return;
+        dispatch({
+            type: 'setSelected',
+            symbols: [...selectedSymbols, { id, name: item.name, type: item.type }],
+            clearSearch: true
+        });
+    }, [selectedSymbols]);
 
-    if (!isLoaded) return <ViewWrapper><ActivityIndicator size="large" color={colors.accentPrimary} /></ViewWrapper>;
+    if (!isLoaded) {
+        return (
+            <ViewWrapper>
+                <ActivityIndicator size="large" color={colors.accentPrimary} />
+            </ViewWrapper>
+        );
+    }
 
     return (
         <ViewWrapper style={currentStyles.container}>
-            {/* Header Area */}
-            <View style={currentStyles.header}>
-                <View style={currentStyles.headerText}>
-                    <Text style={currentStyles.title}>COMPARISON ENGINE</Text>
-                    <Text style={currentStyles.subtitle}>CROSS-VECTOR PERFORMANCE ANALYSIS</Text>
-                </View>
+            <ComparisonHeader
+                timeframe={timeframe}
+                onTimeframeChange={handleTimeframeChange}
+                currentStyles={currentStyles}
+            />
 
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.intervalBar} contentInsetAdjustmentBehavior="automatic">
-                    {INTERVALS.map(tf => (
-                        <Pressable
-                            key={tf}
-                            onPress={() => setTimeframe(tf)}
-                            style={[
-                                currentStyles.intervalBtn,
-                                timeframe === tf && currentStyles.intervalBtnActive
-                            ]}
-                        >
-                            <Text style={[
-                                currentStyles.intervalText,
-                                timeframe === tf && currentStyles.intervalTextActive
-                            ]}>{tf}</Text>
-                        </Pressable>
-                    ))}
-                </ScrollView>
-            </View>
+            <SelectionArea
+                selectedSymbols={selectedSymbols}
+                searchQuery={searchQuery}
+                searchResults={searchResults}
+                exchangePreference={exchangePreference}
+                onToggleSymbol={toggleSymbol}
+                onSearchChange={handleSearchChange}
+                onExchangeChange={handleExchangeChange}
+                onOpenInsights={onOpenInsights}
+                colors={colors}
+                currentStyles={currentStyles}
+            />
 
-            <View style={currentStyles.selectionArea}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.selectedList} contentInsetAdjustmentBehavior="automatic">
-                    {selectedSymbols.map((item, idx) => (
-                        <Pressable
-                            key={item.id}
-                            style={[
-                                currentStyles.symbolChip,
-                                { borderColor: COLORS[idx % COLORS.length] + '44' }
-                            ]}
-                            onPress={() => item.type === 'STOCK' && onOpenInsights?.({ symbol: item.id, name: item.name })}
-                        >
-                            <View style={[currentStyles.dot, { backgroundColor: COLORS[idx % COLORS.length] }]} />
-                            <View style={currentStyles.chipInfo}>
-                                <Text style={currentStyles.chipText} numberOfLines={1}>
-                                    {item.type === 'STOCK' ? item.name : item.id}
-                                </Text>
-                                {item.type === 'INDUSTRY' && (
-                                    <Text style={currentStyles.chipSubtext}>INDEX</Text>
-                                )}
-                            </View>
-                            <Pressable onPress={() => toggleSymbol({ clean: item.id })}>
-                                <X size={10} color={colors.textMuted} />
-                            </Pressable>
-                        </Pressable>
-                    ))}
-                </ScrollView>
+            <ComparisonChartSection
+                loading={loading}
+                totalChartSymbols={totalChartSymbols}
+                chartData={chartData}
+                chartSymbols={chartSymbols}
+                symbolNames={symbolNames}
+                timeframe={timeframe}
+                colors={colors}
+                currentStyles={currentStyles}
+            />
 
-                <View style={currentStyles.searchAndFilter}>
-                    <View style={currentStyles.exchangeBar}>
-                        {['ALL', 'NSE', 'BSE'].map(ex => (
-                            <Pressable
-                                key={ex}
-                                onPress={() => setExchangePreference(ex as any)}
-                                style={[
-                                    currentStyles.exchangeBtn,
-                                    exchangePreference === ex && currentStyles.exchangeBtnActive
-                                ]}
-                            >
-                                <Text style={[
-                                    currentStyles.exchangeText,
-                                    exchangePreference === ex && currentStyles.exchangeTextActive
-                                ]}>{ex}</Text>
-                            </Pressable>
-                        ))}
-                    </View>
-
-                    <View style={currentStyles.searchBarContainer}>
-                        <View style={currentStyles.searchBar}>
-                            <Search size={14} color={colors.textMuted} />
-                            <TextInput
-                                style={currentStyles.searchInput}
-                                placeholder="COMPARE SYMBOL..."
-                                placeholderTextColor={colors.uiMuted}
-                                value={searchQuery}
-                                onChangeText={setSearchQuery}
-                                autoCapitalize="characters"
-                            />
-                        </View>
-
-                        {searchQuery.length > 0 && searchResults.length > 0 && (
-                            <View style={currentStyles.searchResults}>
-                                <ScrollView keyboardShouldPersistTaps="always" contentInsetAdjustmentBehavior="automatic">
-                                    {searchResults.map(res => (
-                                        <Pressable
-                                            key={res.clean + res.type}
-                                            style={currentStyles.searchResultItem}
-                                            onPress={() => toggleSymbol(res)}
-                                        >
-                                            <View style={currentStyles.resHeader}>
-                                                <Text style={currentStyles.resSymbol}>{res.symbol}</Text>
-                                                {res.type === 'INDUSTRY' && (
-                                                    <View style={currentStyles.indexBadge}>
-                                                        <Text style={currentStyles.indexBadgeText}>INDEX</Text>
-                                                    </View>
-                                                )}
-                                            </View>
-                                            <Text style={currentStyles.resName} numberOfLines={1}>{res.name}</Text>
-                                            <View pointerEvents="none" style={currentStyles.resPlus}>
-                                                <Plus size={12} color={colors.accentPrimary} />
-                                            </View>
-                                        </Pressable>
-                                    ))}
-                                </ScrollView>
-                            </View>
-                        )}
-                    </View>
-                </View>
-            </View>
-
-            <View style={currentStyles.chartContainer}>
-                {loading && (
-                    <View style={currentStyles.chartLoader}>
-                        <ActivityIndicator color={colors.accentPrimary} />
-                    </View>
-                )}
-                {totalChartSymbols > MAX_CHART_SYMBOLS && (
-                    <View style={currentStyles.limitBadge}>
-                        <Text style={currentStyles.limitText}>SHOWING {MAX_CHART_SYMBOLS} / {totalChartSymbols}</Text>
-                    </View>
-                )}
-
-                {hasData ? (
-                    <View style={currentStyles.chartWrapper}>
-                        <ComparisonChart
-                            data={chartData}
-                            symbols={chartSymbols}
-                            labels={symbolNames}
-                            interval={timeframe}
-                            height={280}
-                        />
-                    </View>
-                ) : (
-                    <View style={currentStyles.placeholderChart}>
-                        <Activity size={48} color={colors.uiDivider} />
-                        <Text style={currentStyles.placeholderText}>COMPARISON ENGINE</Text>
-                        <Text style={currentStyles.placeholderSubtext}>
-                            {chartSymbols.length > 0 ? `Analysing ${chartSymbols.length} Vectors...` : 'Select symbols to compare performance'}
-                        </Text>
-                    </View>
-                )}
-            </View>
-
-            <View style={currentStyles.footer}>
-                <View style={currentStyles.footerItem}>
-                    <TrendingUp size={12} color={colors.textMuted} />
-                    <Text style={currentStyles.footerText}>NORMALIZED YIELDS</Text>
-                </View>
-                <View style={currentStyles.footerItem}>
-                    <BarChart3 size={12} color={colors.textMuted} />
-                    <Text style={currentStyles.footerText}>INTRADAY PRECISION</Text>
-                </View>
-            </View>
+            <ComparisonFooter colors={colors} currentStyles={currentStyles} />
         </ViewWrapper>
     );
 };

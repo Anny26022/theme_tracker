@@ -37,21 +37,3 @@ export const LIGHT_THEME = {
     rose: { border: "rgba(244, 63, 94, 0.15)", text: "#e11d48" },
     cyan: { border: "rgba(6, 182, 212, 0.15)", text: "#0891b2" },
 };
-
-export const COLORS = DARK_THEME;
-
-export const TYPOGRAPHY = {
-    fontFamily: "Outfit", // You may need to import Outfit in RN
-    textLuxury: {
-        fontWeight: "500",
-        letterSpacing: 2,
-        textTransform: "uppercase",
-        color: "#ffffff",
-    },
-    smallBold: {
-        fontSize: 9,
-        fontWeight: "bold",
-        letterSpacing: 2,
-        textTransform: "uppercase",
-    }
-};

@@ -64,6 +64,7 @@ const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
 const WORKER_BUILD_ID = '2026-03-02-002';
 const DEFAULT_SNAPSHOT_ORIGIN = 'https://nexus.themetracker.workers.dev';
+const REFRESH_STATUS_KEY = 'snapshots/system/refresh-status.json';
 
 let cachedDecryptKey = null;
 let lastRefreshState = {
@@ -73,6 +74,27 @@ let lastRefreshState = {
     status: 'idle',
     errors: {},
 };
+
+async function writeRefreshStatus(env, status) {
+    if (!env?.NSE_SNAPSHOTS?.put) return;
+    try {
+        await putSnapshotObject(env, REFRESH_STATUS_KEY, status, { gzip: false, cacheControl: 'no-store' });
+    } catch (error) {
+        console.error('[Refresh Status] write failed', error);
+    }
+}
+
+async function readRefreshStatus(env) {
+    if (!env?.NSE_SNAPSHOTS?.get) return null;
+    try {
+        const object = await env.NSE_SNAPSHOTS.get(REFRESH_STATUS_KEY);
+        if (!object) return null;
+        const text = await object.text();
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
 
 function getNoStoreHeaders() {
     return {
@@ -574,6 +596,14 @@ async function runRefreshPipeline(env) {
     const startedAt = new Date().toISOString();
     const errors = {};
 
+    await writeRefreshStatus(env, {
+        runId,
+        startedAt,
+        finishedAt: null,
+        status: 'running',
+        errors: {},
+    });
+
     try {
         await refreshNseSnapshots(env);
     } catch (error) {
@@ -600,7 +630,15 @@ async function runRefreshPipeline(env) {
     }
 
     const finishedAt = new Date().toISOString();
-    return { runId, startedAt, finishedAt, errors, ok: Object.keys(errors).length === 0 };
+    const result = { runId, startedAt, finishedAt, errors, ok: Object.keys(errors).length === 0 };
+    await writeRefreshStatus(env, {
+        runId,
+        startedAt,
+        finishedAt,
+        status: result.ok ? 'success' : 'error',
+        errors,
+    });
+    return result;
 }
 
 async function refreshIntervalSnapshots(env) {
@@ -1212,7 +1250,13 @@ async function handleSnapshotHealth(request, env, url) {
         }
     }));
 
-    return createJsonResponse(200, { ok: true, fetchedAt, results, lastRefresh: lastRefreshState });
+    const storedRefresh = await readRefreshStatus(env);
+    return createJsonResponse(200, {
+        ok: true,
+        fetchedAt,
+        results,
+        lastRefresh: storedRefresh || lastRefreshState
+    });
 }
 
 function createOptionsResponse(allowMethods, allowHeaders = 'Content-Type') {
@@ -1611,6 +1655,7 @@ async function handleSnapshotRefresh(request, env, ctx) {
         status: 'running',
         errors: {},
     };
+    await writeRefreshStatus(env, lastRefreshState);
 
     const runner = (async () => {
         const result = await runRefreshPipeline(envWithOrigin);
@@ -1704,6 +1749,7 @@ export default {
                 status: 'running',
                 errors: {},
             };
+            await writeRefreshStatus(env, lastRefreshState);
             const result = await runRefreshPipeline(env);
             lastRefreshState = {
                 runId: result.runId,

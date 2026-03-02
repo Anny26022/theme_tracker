@@ -58,8 +58,6 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         });
     }, [setZoomDays]);
 
-    const interactionRafRef = useRef(null);
-
     useEffect(() => {
         const node = chartAreaRef.current;
         if (!node) return undefined;
@@ -68,55 +66,34 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
             const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
             const rect = node.getBoundingClientRect();
+            const isRight = (clientX - rect.left) > (rect.width - 50);
 
-            // If dragging on the right side (price axis area), do vertical scale
-            const isRightSide = (clientX - rect.left) > (rect.width - 50);
-
-            if (isRightSide) {
-                dragRef.current.isYDragging = true;
-                dragRef.current.startY = clientY;
-                dragRef.current.startVScale = vScale;
+            if (isRight) {
+                dragRef.current = { ...dragRef.current, isYDragging: true, startY: clientY, startVScale: vScale };
             } else {
-                dragRef.current.isDragging = true;
-                dragRef.current.startX = clientX;
-                dragRef.current.startPan = panOffset;
+                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startPan: panOffset };
             }
         };
 
         const onMove = (e) => {
+            if (!dragRef.current.isYDragging && !dragRef.current.isDragging) return;
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
             const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
+            if (e.cancelable) e.preventDefault();
 
-            if (dragRef.current.isYDragging || dragRef.current.isDragging) {
-                if (e.cancelable) e.preventDefault();
-
-                if (interactionRafRef.current) cancelAnimationFrame(interactionRafRef.current);
-                interactionRafRef.current = requestAnimationFrame(() => {
-                    if (dragRef.current.isYDragging) {
-                        const dy = dragRef.current.startY - clientY;
-                        const sensitivity = 0.005;
-                        setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * sensitivity)));
-                    } else if (dragRef.current.isDragging) {
-                        const dx = clientX - dragRef.current.startX;
-                        const nodeWidth = node.clientWidth || 500;
-                        const dxPoints = Math.round((dx / nodeWidth) * zoomDays);
-                        setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
-                    }
-                });
+            if (dragRef.current.isYDragging) {
+                const dy = dragRef.current.startY - clientY;
+                setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
+            } else {
+                const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDays);
+                setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
             }
         };
 
-        const onEnd = () => {
-            dragRef.current.isDragging = false;
-            dragRef.current.isYDragging = false;
-            if (interactionRafRef.current) cancelAnimationFrame(interactionRafRef.current);
-        };
-
+        const onEnd = () => { dragRef.current.isDragging = false; dragRef.current.isYDragging = false; };
         const onDblClick = (e) => {
             const rect = node.getBoundingClientRect();
-            if ((e.clientX - rect.left) > (rect.width - 50)) {
-                setVScale(1.0);
-            }
+            if ((e.clientX - rect.left) > (rect.width - 50)) setVScale(1.0);
         };
 
         node.addEventListener('wheel', handleWheel, { passive: false });
@@ -124,7 +101,6 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         node.addEventListener('dblclick', onDblClick);
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onEnd);
-
         node.addEventListener('touchstart', onStart, { passive: true });
         window.addEventListener('touchmove', onMove, { passive: false });
         window.addEventListener('touchend', onEnd);
@@ -138,7 +114,6 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             node.removeEventListener('touchstart', onStart);
             window.removeEventListener('touchmove', onMove);
             window.removeEventListener('touchend', onEnd);
-            if (interactionRafRef.current) cancelAnimationFrame(interactionRafRef.current);
         };
     }, [handleWheel, panOffset, zoomDays, vScale]);
 
@@ -148,42 +123,30 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         // 1. Process points
         let ordered = [...series].sort((a, b) => a.time - b.time);
 
-        // 2. Aggregate if needed
         if (timeframe !== '1D') {
-            const buckets = new Map();
+            const b = new Map();
             ordered.forEach(p => {
-                const date = new Date(p.time);
-                let key;
+                const d = new Date(p.time);
+                let k;
                 if (timeframe === '1W') {
-                    // Monday-based week grouping
-                    const d = new Date(date);
                     const day = d.getDay();
-                    const diff = d.getDate() - (day === 0 ? 6 : day - 1);
-                    const monday = new Date(d.getFullYear(), d.getMonth(), diff, 0, 0, 0, 0);
-                    key = monday.getTime();
+                    k = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (day === 0 ? 6 : day - 1), 0, 0, 0, 0).getTime();
                 } else if (timeframe === '1M') {
-                    key = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0, 0).getTime();
+                    k = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
                 } else if (timeframe === '1Y') {
-                    key = new Date(date.getFullYear(), 0, 1, 0, 0, 0, 0).getTime();
+                    k = new Date(d.getFullYear(), 0, 1).getTime();
                 }
 
-                const open = p.open ?? p.close ?? 0;
-                const high = p.high ?? p.close ?? 0;
-                const low = p.low ?? p.close ?? 0;
-                const close = p.close ?? 0;
-                const vol = p.volume ?? 0;
-
-                if (!buckets.has(key)) {
-                    buckets.set(key, { time: key, open, high, low, close, volume: vol });
-                } else {
-                    const b = buckets.get(key);
-                    b.high = Math.max(b.high, high);
-                    b.low = Math.min(b.low, low);
-                    b.close = close; // Last close in group
-                    b.volume += vol;
+                if (!b.has(k)) b.set(k, { time: k, open: p.open ?? p.close, high: p.high ?? p.close, low: p.low ?? p.close, close: p.close, volume: p.volume ?? 0 });
+                else {
+                    const cur = b.get(k);
+                    cur.high = Math.max(cur.high, p.high ?? p.close);
+                    cur.low = Math.min(cur.low, p.low ?? p.close);
+                    cur.close = p.close;
+                    cur.volume += (p.volume ?? 0);
                 }
             });
-            ordered = Array.from(buckets.values());
+            ordered = Array.from(b.values());
         }
 
         const allPoints = ordered
@@ -405,11 +368,10 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
                     </div>
                 </div>
 
-                {/* Ultra-Mini Controls */}
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
                     <button onClick={() => setZoomDays(prev => Math.max(20, Math.round(prev * 0.7)))} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
                     <button onClick={() => setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4)))} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
-                    <button onClick={() => { setZoomDays(data.totalPoints); setPanOffset(0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
+                    <button onClick={() => { setZoomDays(190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
                 </div>
 
                 <div

@@ -515,7 +515,7 @@ const DeferredThemeBlock = React.memo(({
 });
 DeferredThemeBlock.displayName = 'DeferredThemeBlock';
 
-const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) => {
+const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile }) => {
     const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
@@ -560,8 +560,6 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) 
     }, [attachNodeRef]);
 
     useEffect(() => {
-        if (!isActive) return undefined;
-
         if (typeof window === 'undefined' || !('IntersectionObserver' in window)) {
             setVisibleIds(() => new Set(mapSource.map((block) => makeBlockId(block.title))));
             return undefined;
@@ -593,7 +591,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) 
         });
 
         return () => observer.disconnect();
-    }, [isActive, mapSource, isMobile]);
+    }, [mapSource, isMobile]);
 
     return (
         <div className={gridClassName}>
@@ -624,7 +622,6 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
                 <ThemeGrid
                     mapSource={THEMATIC_MAP}
                     gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3 md:auto-rows-fr"
-                    isActive={isActive}
                     isMobile={isMobile}
                 />
             </ThemeGridDataContext.Provider>
@@ -648,7 +645,6 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
                 <ThemeGrid
                     mapSource={macroMap}
                     gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 md:auto-rows-fr"
-                    isActive={isActive}
                     isMobile={isMobile}
                 />
             </ThemeGridDataContext.Provider>

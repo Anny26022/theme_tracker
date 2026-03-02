@@ -5,7 +5,34 @@ import { ChevronLeft, ChevronDown, Layers } from 'lucide-react';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
-const DeferredFinvizChart = ({ company, chartData, height }) => {
+const ChartSkeleton = ({ company, height }) => (
+    <div
+        className="w-full bg-[#0b0e14] border border-[#23272d] rounded-md animate-pulse flex items-center justify-center"
+        style={{ height }}
+    >
+        <div className="flex flex-col items-center gap-2 opacity-20">
+            <span className="text-[10px] font-black uppercase tracking-widest">{company.name}</span>
+            <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-tighter">{company.symbol}</span>
+        </div>
+    </div>
+);
+
+const FinvizChartCard = React.memo(({ company, series, height }) => (
+    <FinvizChart
+        symbol={company.symbol}
+        name={company.name}
+        series={series}
+        height={height}
+    />
+), (prevProps, nextProps) => {
+    if (prevProps.series !== nextProps.series) return false;
+    if (prevProps.height !== nextProps.height) return false;
+    if (prevProps.company?.symbol !== nextProps.company?.symbol) return false;
+    if (prevProps.company?.name !== nextProps.company?.name) return false;
+    return true;
+});
+
+const DeferredFinvizChart = ({ company, series, height }) => {
     const [isVisible, setIsVisible] = useState(false);
     const containerRef = useRef(null);
 
@@ -27,25 +54,22 @@ const DeferredFinvizChart = ({ company, chartData, height }) => {
         return () => observer.disconnect();
     }, []);
 
+    const hasSeries = series.length > 0;
+
     return (
         <div ref={containerRef} style={{ minHeight: height }}>
             {isVisible ? (
-                <FinvizChart
-                    symbol={company.symbol}
-                    name={company.name}
-                    series={chartData.get(cleanSymbol(company.symbol)) || []}
-                    height={height}
-                />
+                hasSeries ? (
+                    <FinvizChartCard
+                        company={company}
+                        series={series}
+                        height={height}
+                    />
+                ) : (
+                    <ChartSkeleton company={company} height={height} />
+                )
             ) : (
-                <div
-                    className="w-full bg-[#0b0e14] border border-[#23272d] rounded-md animate-pulse flex items-center justify-center"
-                    style={{ height }}
-                >
-                    <div className="flex flex-col items-center gap-2 opacity-20">
-                        <span className="text-[10px] font-black uppercase tracking-widest">{company.name}</span>
-                        <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-tighter">{company.symbol}</span>
-                    </div>
-                </div>
+                <ChartSkeleton company={company} height={height} />
             )}
         </div>
     );
@@ -103,7 +127,7 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
         return subscribeChartSymbols('MAX', normalizedSymbols);
     }, [normalizedSymbols, subscribeChartSymbols]);
 
-    const chartData = useMemo(() => {
+    const seriesBySymbol = useMemo(() => {
         const map = new Map();
         normalizedSymbols.forEach((symbol) => {
             const series = getCachedComparisonSeries(symbol, 'MAX', { silent: true });
@@ -111,6 +135,13 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
         });
         return map;
     }, [normalizedSymbols, chartVersion]);
+
+    const companySeries = useMemo(() => {
+        return companies.map((company) => ({
+            company,
+            series: seriesBySymbol.get(cleanSymbol(company.symbol)) || []
+        }));
+    }, [companies, seriesBySymbol]);
 
 
     return (
@@ -210,11 +241,11 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
 
             {/* Virtualized Chart Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {companies.map((company) => (
+                {companies.map((company, idx) => (
                     <DeferredFinvizChart
                         key={company.symbol}
                         company={company}
-                        chartData={chartData}
+                        series={companySeries[idx]?.series || []}
                         height={280}
                     />
                 ))}

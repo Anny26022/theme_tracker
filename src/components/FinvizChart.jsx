@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useCallback, useState, useEffect } from 'react';
+import React, { useMemo, useRef, useCallback, useState } from 'react';
 import { calculateSMA, cleanSymbol } from '../services/priceService';
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
@@ -8,9 +8,29 @@ import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
  */
 const FinvizChart = ({ symbol, name, series, height = 300 }) => {
     const containerRef = useRef(null);
+    const totalPointsRef = useRef(9999);
     const cleaned = useMemo(() => cleanSymbol(symbol), [symbol]);
-    const [hover, setHover] = useState(null);
+    const hoverIndexRef = useRef(null);
+    const tooltipRef = useRef(null);
+    const tooltipDateRef = useRef(null);
+    const tooltipOpenRef = useRef(null);
+    const tooltipCloseRef = useRef(null);
+    const tooltipHighRef = useRef(null);
+    const tooltipLowRef = useRef(null);
     const [zoomDays, setZoomDays] = useState(190);
+    const rafRef = useRef(null);
+
+    // Callback ref: attaches a non-passive wheel listener once on mount.
+    // Non-passive is required so e.preventDefault() can block the page scroll.
+    const chartAreaRef = useCallback((node) => {
+        if (!node) return;
+        node.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (e.deltaY < 0) setZoomDays(p => Math.max(20, Math.round(p * 0.9)));
+            else setZoomDays(p => Math.min(totalPointsRef.current, Math.round(p * 1.1)));
+        }, { passive: false });
+    }, []);
+
 
     const data = useMemo(() => {
         if (!series || series.length === 0) return null;
@@ -74,6 +94,9 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
         };
     }, [series, zoomDays]);
 
+    // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
+    if (data) totalPointsRef.current = data.totalPoints;
+
     const paddingX = 40, paddingLeft = 35, paddingTop = 35, paddingBottom = 25;
     const W = 600, H = height;
     const chartW = W - paddingX - paddingLeft;
@@ -83,22 +106,12 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
     const getX = useCallback((idx) => data ? paddingLeft + (idx / (data.points.length - 1 || 1)) * chartW : paddingLeft, [data, chartW]);
     const getY = useCallback((p) => data ? paddingTop + (chartH - ((p - data.minP) / (data.pRange || 1)) * chartH) : paddingTop, [data, chartH]);
 
-    if (!data) return <div className="bg-[#0b0e14] animate-pulse rounded-md" style={{ height }} />;
-
-    const { points, sma50, sma200, maxV, minP, maxP } = data;
-    const last = points[points.length - 1];
-    const prevC = points[points.length - 2]?.close || points[0].close;
-    const change = last.close - prevC;
-    const changePct = (change / (prevC || 1)) * 100;
-
-    const colorUp = '#00c805'; // Vibrant Finviz Green
-    const colorDown = '#ff2e2e'; // Sharp Finviz Red (updated from #ff2e35)
-    const colorSma50 = '#f8d347'; // Premium SMA50 Yellow
-    const colorSma200 = '#9d27b0'; // Premium SMA200 Purple
-
-    // Normal Candle Gap (0.82 factor for clean separation)
-    const candleWidth = Math.max(1.8, (chartW / points.length) * 0.82);
-
+    const points = data?.points ?? [];
+    const sma50 = data?.sma50 ?? [];
+    const sma200 = data?.sma200 ?? [];
+    const maxV = data?.maxV ?? 0;
+    const minP = data?.minP ?? 0;
+    const maxP = data?.maxP ?? 0;
     const renderLine = (arr, color) => {
         const pts = arr.map((val, i) => val ? `${i === 0 || !arr[i - 1] ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(val).toFixed(1)}` : '').filter(Boolean);
         return pts.length > 1 ? <path d={pts.join(' ')} fill="none" stroke={color} strokeWidth="1" opacity="0.8" style={{ shapeRendering: 'auto' }} /> : null;
@@ -121,6 +134,57 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
         });
         return labels;
     };
+
+    const updateTooltip = useCallback((idx) => {
+        if (!points.length) return;
+        const point = points[idx];
+        if (!point) return;
+        if (tooltipRef.current) {
+            tooltipRef.current.style.opacity = '1';
+        }
+        if (tooltipDateRef.current) {
+            tooltipDateRef.current.textContent = new Date(point.time).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+        }
+        if (tooltipOpenRef.current) tooltipOpenRef.current.textContent = `O: ${point.open.toFixed(1)}`;
+        if (tooltipCloseRef.current) tooltipCloseRef.current.textContent = `C: ${point.close.toFixed(1)}`;
+        if (tooltipHighRef.current) tooltipHighRef.current.textContent = `H: ${point.high.toFixed(1)}`;
+        if (tooltipLowRef.current) tooltipLowRef.current.textContent = `L: ${point.low.toFixed(1)}`;
+    }, [points]);
+
+    const handleMouseMove = useCallback((e) => {
+        if (!points.length) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const xRatio = (e.clientX - rect.left - paddingLeft) / chartW;
+        const idx = Math.min(points.length - 1, Math.max(0, Math.round(xRatio * (points.length - 1))));
+        if (idx === hoverIndexRef.current) return;
+        hoverIndexRef.current = idx;
+
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => {
+            updateTooltip(idx);
+        });
+    }, [chartW, paddingLeft, points.length, updateTooltip]);
+
+    const handleMouseLeave = useCallback(() => {
+        hoverIndexRef.current = null;
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        if (tooltipRef.current) tooltipRef.current.style.opacity = '0';
+    }, []);
+
+    if (!data || points.length < 2) return <div className="bg-[#0b0e14] animate-pulse rounded-md" style={{ height }} />;
+
+    const last = points[points.length - 1];
+    const prevC = points[points.length - 2]?.close || points[0].close;
+    const change = last.close - prevC;
+    const changePct = (change / (prevC || 1)) * 100;
+
+    const colorUp = '#00c805'; // Vibrant Finviz Green
+    const colorDown = '#ff2e2e'; // Sharp Finviz Red (updated from #ff2e35)
+    const colorSma50 = '#f8d347'; // Premium SMA50 Yellow
+    const colorSma200 = '#9d27b0'; // Premium SMA200 Purple
+
+    // Normal Candle Gap (0.82 factor for clean separation)
+    const candleWidth = Math.max(1.8, (chartW / points.length) * 0.82);
 
     return (
         <div ref={containerRef} className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden" style={{ height }}>
@@ -152,15 +216,12 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
                 <button onClick={() => setZoomDays(190)} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
             </div>
 
-            <div className="flex-1 relative cursor-crosshair mt-2" onMouseMove={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const xRatio = (e.clientX - rect.left - paddingLeft) / chartW;
-                const idx = Math.min(points.length - 1, Math.max(0, Math.round(xRatio * (points.length - 1))));
-                setHover({ idx, x: e.clientX - rect.left });
-            }} onMouseLeave={() => setHover(null)} onWheel={(e) => {
-                if (e.deltaY < 0) setZoomDays(p => Math.max(20, p * 0.9));
-                else setZoomDays(p => Math.min(data.totalPoints, p * 1.1));
-            }}>
+            <div
+                ref={chartAreaRef}
+                className="flex-1 relative cursor-crosshair mt-2"
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+            >
                 <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
 
                     {/* Volume Labels (Left Axis) */}
@@ -210,17 +271,19 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
                     {getMonthsLabel().map((m, i) => <text key={i} x={m.x} y={H - 8} fill="#444" fontSize="10" fontWeight="black" textAnchor="middle">{m.text.toUpperCase()}</text>)}
                 </svg>
 
-                {hover && points[hover.idx] && (
-                    <div className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none">
-                        <span className="font-black border-b border-gray-700 block mb-1">{new Date(points[hover.idx].time).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</span>
-                        <div className="grid grid-cols-2 gap-x-2">
-                            <span>O: {points[hover.idx].open.toFixed(1)}</span>
-                            <span>C: {points[hover.idx].close.toFixed(1)}</span>
-                            <span className="text-[#00c3a5]">H: {points[hover.idx].high.toFixed(1)}</span>
-                            <span className="text-[#ff4d52]">L: {points[hover.idx].low.toFixed(1)}</span>
-                        </div>
+                <div
+                    ref={tooltipRef}
+                    className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
+                    style={{ opacity: 0 }}
+                >
+                    <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
+                    <div className="grid grid-cols-2 gap-x-2">
+                        <span ref={tooltipOpenRef}>O: —</span>
+                        <span ref={tooltipCloseRef}>C: —</span>
+                        <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
+                        <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
                     </div>
-                )}
+                </div>
             </div>
         </div>
     );

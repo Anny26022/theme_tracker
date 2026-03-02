@@ -68,6 +68,48 @@ function createTextResponse(status, text, extraHeaders = {}) {
     });
 }
 
+const CF_BROTLI_MIN_BYTES = 1024;
+
+function pickEncoding(headerValue) {
+    const header = String(headerValue || '').toLowerCase();
+    if (header.includes('br')) return 'br';
+    if (header.includes('gzip')) return 'gzip';
+    return null;
+}
+
+async function createCompressedTextResponse(request, status, text, extraHeaders = {}) {
+    const encoding = pickEncoding(request.headers.get('accept-encoding'));
+    const payload = typeof text === 'string' ? text : String(text ?? '');
+
+    const baseHeaders = {
+        'Content-Type': 'text/plain; charset=utf-8',
+        ...getNoStoreHeaders(),
+        ...extraHeaders,
+        'Vary': 'Accept-Encoding',
+    };
+
+    if (!encoding || payload.length < CF_BROTLI_MIN_BYTES || typeof CompressionStream === 'undefined') {
+        return new Response(payload, { status, headers: baseHeaders });
+    }
+
+    try {
+        const stream = new CompressionStream(encoding);
+        const writer = stream.writable.getWriter();
+        await writer.write(new TextEncoder().encode(payload));
+        await writer.close();
+
+        return new Response(stream.readable, {
+            status,
+            headers: {
+                ...baseHeaders,
+                'Content-Encoding': encoding,
+            },
+        });
+    } catch {
+        return new Response(payload, { status, headers: baseHeaders });
+    }
+}
+
 function createOptionsResponse(allowMethods, allowHeaders = 'Content-Type') {
     return new Response(null, {
         status: 204,
@@ -196,8 +238,8 @@ async function handleGoogleBatch(request, url, { encryptedPost }) {
         });
 
         const text = await upstream.text();
-        if (!upstream.ok) return createTextResponse(upstream.status, text || `Upstream Error: ${upstream.status}`);
-        return createTextResponse(200, text);
+        if (!upstream.ok) return createCompressedTextResponse(request, upstream.status, text || `Upstream Error: ${upstream.status}`);
+        return createCompressedTextResponse(request, 200, text);
     } catch (error) {
         return createJsonResponse(500, { error: 'Proxy error', details: error?.message || 'Unknown error' });
     }

@@ -450,6 +450,7 @@ async function executeBatch(entries: any[], timeoutMs = 12_000) {
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
                         'x-rpc-ids': rpcIds.join(','),
+                        'Accept-Encoding': 'gzip',
                     },
                     body,
                 },

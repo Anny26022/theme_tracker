@@ -11,6 +11,10 @@ function pickEncoding(acceptEncoding) {
     return null;
 }
 
+const BROTLI_QUALITY = 11;
+const BROTLI_LGWIN = 22;
+const GZIP_LEVEL = 9;
+
 export async function sendCompressedText(req, res, text, status = 200) {
     const payload = Buffer.isBuffer(text) ? text : Buffer.from(String(text ?? ''), 'utf-8');
     const acceptEncoding = req.headers?.['accept-encoding'];
@@ -28,12 +32,14 @@ export async function sendCompressedText(req, res, text, status = 200) {
         if (encoding === 'br') {
             compressed = await brotliCompressAsync(payload, {
                 params: {
-                    [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
+                    [zlibConstants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
+                    [zlibConstants.BROTLI_PARAM_LGWIN]: BROTLI_LGWIN,
                     [zlibConstants.BROTLI_PARAM_MODE]: zlibConstants.BROTLI_MODE_TEXT,
+                    [zlibConstants.BROTLI_PARAM_SIZE_HINT]: payload.byteLength,
                 },
             });
         } else {
-            compressed = await gzipAsync(payload, { level: 6 });
+            compressed = await gzipAsync(payload, { level: GZIP_LEVEL });
         }
 
         if (!compressed || compressed.byteLength >= payload.byteLength) {

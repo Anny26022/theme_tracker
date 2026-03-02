@@ -515,11 +515,12 @@ const DeferredThemeBlock = React.memo(({
 });
 DeferredThemeBlock.displayName = 'DeferredThemeBlock';
 
-const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile }) => {
+const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, onVisibleThemesChange }) => {
     const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
     const refCallbacks = useRef(new Map());
+    const lastVisibleKeyRef = useRef('');
 
     useEffect(() => {
         const initialIds = buildInitialVisibleIds(mapSource);
@@ -541,6 +542,20 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile }) => {
         visibilityRef.current = nextVisibility;
         setVisibleIds(initialIds);
     }, [mapSource]);
+
+    useEffect(() => {
+        if (!onVisibleThemesChange || !isActive) return;
+        const nextThemes = [];
+        mapSource.forEach((block) => {
+            const id = makeBlockId(block.title);
+            if (!visibleIds.has(id)) return;
+            (block.themes || []).forEach((theme) => nextThemes.push(theme.name));
+        });
+        const key = nextThemes.join('|');
+        if (key === lastVisibleKeyRef.current) return;
+        lastVisibleKeyRef.current = key;
+        onVisibleThemesChange(nextThemes);
+    }, [visibleIds, mapSource, onVisibleThemesChange, isActive]);
 
     const attachNodeRef = useCallback((blockId, node) => {
         if (node) {
@@ -613,7 +628,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile }) => {
 });
 ThemeGrid.displayName = 'ThemeGrid';
 
-const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, isMobile }) => {
+const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, isMobile, onVisibleThemesChange }) => {
     if (!isMounted) return null;
 
     return (
@@ -623,6 +638,8 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
                     mapSource={THEMATIC_MAP}
                     gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3 md:auto-rows-fr"
                     isMobile={isMobile}
+                    isActive={isActive}
+                    onVisibleThemesChange={onVisibleThemesChange}
                 />
             </ThemeGridDataContext.Provider>
         </div>
@@ -636,7 +653,7 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
 });
 ThematicGridPane.displayName = 'ThematicGridPane';
 
-const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue, isMobile }) => {
+const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue, isMobile, onVisibleThemesChange }) => {
     if (!isMounted) return null;
 
     return (
@@ -646,6 +663,8 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
                     mapSource={macroMap}
                     gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 md:auto-rows-fr"
                     isMobile={isMobile}
+                    isActive={isActive}
+                    onVisibleThemesChange={onVisibleThemesChange}
                 />
             </ThemeGridDataContext.Provider>
         </div>
@@ -660,7 +679,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
 });
 MacroGridPane.displayName = 'MacroGridPane';
 
-const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, onSelectTheme }) => {
+const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, onSelectTheme, onVisibleThemesChange }) => {
     const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
 
     useEffect(() => {
@@ -686,6 +705,7 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
                 isMounted={true}
                 gridContextValue={gridContextValue}
                 isMobile={isMobile}
+                onVisibleThemesChange={onVisibleThemesChange}
             />
             <MacroGridPane
                 isActive={viewMode === 'MACRO'}
@@ -693,6 +713,7 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
                 macroMap={macroMap}
                 gridContextValue={gridContextValue}
                 isMobile={isMobile}
+                onVisibleThemesChange={onVisibleThemesChange}
             />
         </>
     );
@@ -727,6 +748,7 @@ export const MarketMapView = ({ hierarchy }) => {
     const [viewMode, setViewMode] = useState('THEMATIC'); // 'THEMATIC' or 'MACRO'
     const [displayMode, setDisplayMode] = useState('HEATMAP'); // 'HEATMAP' or 'CHARTS'
     const scrollPosRef = useRef(0);
+    const [visibleThemeNames, setVisibleThemeNames] = useState([]);
 
     const onEnterCharts = useCallback((name) => {
         scrollPosRef.current = window.scrollY;
@@ -862,7 +884,11 @@ export const MarketMapView = ({ hierarchy }) => {
         }
     };
 
-    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress } = useThematicHeatmap(THEMATIC_MAP, filteredHierarchy);
+    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress } = useThematicHeatmap(
+        THEMATIC_MAP,
+        filteredHierarchy,
+        { activeThemeNames: visibleThemeNames }
+    );
     const hasHeatmapData = Object.keys(heatmapData || {}).length > 0;
     const pendingLabel = pendingIntervals
         .map((interval) => {
@@ -1050,6 +1076,7 @@ export const MarketMapView = ({ hierarchy }) => {
                             highlightedTheme={highlightedTheme}
                             isMobile={isMobile}
                             onSelectTheme={onEnterCharts}
+                            onVisibleThemesChange={setVisibleThemeNames}
                         />
                     </>
                 ) : (

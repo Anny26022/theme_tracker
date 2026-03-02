@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useCallback } from 'react';
+import { useMemo, useEffect, useCallback, useRef } from 'react';
 import { fetchUnifiedTrackerData, cleanSymbol } from '../services/priceService';
 import { useAsync } from './useAsync';
 import { buildItemToCompanies, collectUniqueSymbols, computeTrackerUpdates } from '../../packages/core/src/tracker/aggregation';
@@ -7,9 +7,11 @@ import { useChartVersion, useIntervalVersion, useMarketDataRegistry } from '../c
 
 export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', options = {}) {
     const includeBreadth = options?.includeBreadth !== false;
+    const activeItems = Array.isArray(options?.activeItems) ? options.activeItems : [];
     const { subscribeIntervalSymbols, subscribeChartSymbols, refreshIntervals, refreshCharts } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
     const chartVersion = useChartVersion();
+    const lastRefreshKeyRef = useRef('');
     const itemToSymbols = useMemo(() => {
         if (type === 'thematic') {
             const themeByName = new Map();
@@ -101,6 +103,21 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
     }, [items, hierarchy, type]);
 
     const symbolsArray = useMemo(() => collectUniqueSymbols(itemToSymbols), [itemToSymbols]);
+    const activeSymbolsArray = useMemo(() => {
+        if (!activeItems.length) return symbolsArray;
+        const activeSymbols = new Set();
+        activeItems.forEach((name) => {
+            const companies = itemToSymbols.get(name) || [];
+            companies.forEach((company) => {
+                if (company?.symbol) activeSymbols.add(company.symbol);
+            });
+        });
+        return [...activeSymbols];
+    }, [activeItems, itemToSymbols, symbolsArray]);
+    const activeSymbolsNormalized = useMemo(
+        () => Array.from(new Set(activeSymbolsArray.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
+        [activeSymbolsArray]
+    );
 
     const fetchFunc = useCallback(async () => {
         if (symbolsArray.length === 0) return {};
@@ -108,30 +125,35 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
         // Performance mode can reuse interval cache and skip 1Y chart fetches.
         const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval, { includeBreadth, cacheOnly: true });
 
-        // Hybrid warm-up: if cache is empty, trigger registry refresh in background.
-        if (rawResults instanceof Map ? rawResults.size === 0 : Object.keys(rawResults).length === 0) {
-            void refreshIntervals([interval], symbolsArray);
-            if (includeBreadth) {
-                void refreshCharts('1Y', symbolsArray);
+        const missingActive = activeSymbolsNormalized.filter((symbol) => !rawResults.has(symbol));
+        if (missingActive.length > 0) {
+            const refreshKey = missingActive.join(',');
+            if (refreshKey !== lastRefreshKeyRef.current) {
+                lastRefreshKeyRef.current = refreshKey;
+                void refreshIntervals([interval], missingActive);
+                if (includeBreadth) {
+                    void refreshCharts('1Y', missingActive);
+                }
             }
         }
+
         return computeTrackerUpdates(items, itemToSymbols, rawResults);
-    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth, refreshIntervals, refreshCharts]);
+    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth, refreshIntervals, refreshCharts, activeSymbolsNormalized]);
 
     useEffect(() => {
-        if (symbolsArray.length === 0) return;
-        const intervalUnsub = subscribeIntervalSymbols([interval], symbolsArray);
-        const chartUnsub = includeBreadth ? subscribeChartSymbols('1Y', symbolsArray) : () => { };
+        if (activeSymbolsNormalized.length === 0) return;
+        const intervalUnsub = subscribeIntervalSymbols([interval], activeSymbolsNormalized);
+        const chartUnsub = includeBreadth ? subscribeChartSymbols('1Y', activeSymbolsNormalized) : () => { };
         return () => {
             intervalUnsub?.();
             chartUnsub?.();
         };
-    }, [symbolsArray, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
+    }, [activeSymbolsNormalized, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
 
     const refreshSignal = includeBreadth ? chartVersion : 0;
     const { data: trackerMap, loading, execute } = useAsync(
         fetchFunc,
-        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal]
+        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal, activeSymbolsNormalized]
     );
 
     const resolvedMap = trackerMap || {};

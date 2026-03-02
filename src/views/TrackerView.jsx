@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { m } from 'framer-motion';
 import { ArrowUp, ArrowDown, Info } from 'lucide-react';
 import { TrackerRow } from '../components/TrackerRow';
@@ -39,6 +39,10 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     const [trackingType, setTrackingType] = useState('INDUSTRY'); // 'INDUSTRY' | 'THEMATIC'
     const [sectorSortDesc, setSectorSortDesc] = useState(true);
     const [industrySortDesc, setIndustrySortDesc] = useState(true);
+    const leftRangeRef = useRef(null);
+    const rightRangeRef = useRef(null);
+    const leftRangeTimerRef = useRef(null);
+    const rightRangeTimerRef = useRef(null);
 
     const activeEMAKey = RANGE_TO_EMA[timeframe] || 'above200EMA';
     const activeEMALabel = RANGE_LABEL[timeframe] || '200 EMA';
@@ -79,11 +83,30 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     const leftItems = trackingType === 'INDUSTRY' ? sectors : thematicPillars;
     const rightItems = trackingType === 'INDUSTRY' ? industryNames : thematicThemes;
 
+    const [visibleLeftItems, setVisibleLeftItems] = useState(() => leftItems.slice(0, 20));
+    const [visibleRightItems, setVisibleRightItems] = useState(() => rightItems.slice(0, 30));
+
+    useEffect(() => {
+        setVisibleLeftItems(leftItems.slice(0, 20));
+    }, [leftItems]);
+
+    useEffect(() => {
+        setVisibleRightItems(rightItems.slice(0, 30));
+    }, [rightItems]);
+
     const { trackerMap: leftData, loading: leftLoading } = useUnifiedTracker(
-        leftItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'sector' : 'thematic', { includeBreadth: viewMode === 'breadth' }
+        leftItems,
+        hierarchy,
+        timeframe,
+        trackingType === 'INDUSTRY' ? 'sector' : 'thematic',
+        { includeBreadth: viewMode === 'breadth', activeItems: visibleLeftItems }
     );
     const { trackerMap: rightData, loading: rightLoading } = useUnifiedTracker(
-        rightItems, hierarchy, timeframe, trackingType === 'INDUSTRY' ? 'industry' : 'thematic', { includeBreadth: viewMode === 'breadth' }
+        rightItems,
+        hierarchy,
+        timeframe,
+        trackingType === 'INDUSTRY' ? 'industry' : 'thematic',
+        { includeBreadth: viewMode === 'breadth', activeItems: visibleRightItems }
     );
 
     // Sorting Logic
@@ -136,6 +159,31 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     }, [rightItems, rightData, viewMode, industrySortDesc, activeEMAKey, trackingType]);
 
     const isGlobalLoading = leftLoading || rightLoading;
+
+    const handleLeftRangeChanged = useCallback((range) => {
+        leftRangeRef.current = range;
+        if (leftRangeTimerRef.current) return;
+        leftRangeTimerRef.current = setTimeout(() => {
+            leftRangeTimerRef.current = null;
+            const { startIndex = 0, endIndex = 0 } = leftRangeRef.current || {};
+            setVisibleLeftItems(sortedLeft.slice(startIndex, endIndex + 1));
+        }, 120);
+    }, [sortedLeft]);
+
+    const handleRightRangeChanged = useCallback((range) => {
+        rightRangeRef.current = range;
+        if (rightRangeTimerRef.current) return;
+        rightRangeTimerRef.current = setTimeout(() => {
+            rightRangeTimerRef.current = null;
+            const { startIndex = 0, endIndex = 0 } = rightRangeRef.current || {};
+            setVisibleRightItems(sortedRight.slice(startIndex, endIndex + 1));
+        }, 120);
+    }, [sortedRight]);
+
+    useEffect(() => () => {
+        if (leftRangeTimerRef.current) clearTimeout(leftRangeTimerRef.current);
+        if (rightRangeTimerRef.current) clearTimeout(rightRangeTimerRef.current);
+    }, []);
 
     return (
         <ViewWrapper id="tracker">
@@ -234,6 +282,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                             <Virtuoso
                                 data={sortedLeft}
                                 computeItemKey={(_, item) => item}
+                                rangeChanged={handleLeftRangeChanged}
                                 itemContent={(_, item) => {
                                     const data = leftData[item];
                                     const companies = (trackingType === 'INDUSTRY') ? (hierarchy[item] ? Object.values(hierarchy[item]).flat() : []) : [];
@@ -278,6 +327,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                             <Virtuoso
                                 data={sortedRight}
                                 computeItemKey={(_, item) => item}
+                                rangeChanged={handleRightRangeChanged}
                                 itemContent={(_, item) => {
                                     const data = rightData[item];
                                     return (

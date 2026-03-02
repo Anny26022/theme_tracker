@@ -62,8 +62,8 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
-const WORKER_BUILD_ID = '2026-03-02-003';
-const DEFAULT_SNAPSHOT_SOURCE_URL = 'https://nexus.themetracker.workers.dev/data.json?v=0.0.0';
+const WORKER_BUILD_ID = '2026-03-02-004';
+const DEFAULT_SNAPSHOT_SOURCE_URL = 'https://24e8e3a97bab753a1a1d82e0b7a5b283.r2.cloudflarestorage.com/nexusmap/data.json';
 const REFRESH_STATUS_KEY = 'snapshots/system/refresh-status.json';
 
 let cachedDecryptKey = null;
@@ -287,6 +287,45 @@ function resolveSnapshotSourceUrl(env) {
     return candidates[0] || '';
 }
 
+function buildUniverseFetchCandidates(env) {
+    const direct = String(env?.NSE_SNAPSHOT_SOURCE_URL || '').trim();
+    const manualOrigin = String(env?._manualOrigin || '').trim();
+    const origin = String(env?.ORIGIN_BASE_URL || '').trim();
+    const fallback = String(env?.NSE_SNAPSHOT_FALLBACK_URL || '').trim();
+
+    const urls = [
+        direct,
+        manualOrigin ? new URL('/data.json', manualOrigin).toString() : '',
+        origin ? new URL('/data.json', origin).toString() : '',
+        fallback,
+        DEFAULT_SNAPSHOT_SOURCE_URL,
+    ].filter(Boolean);
+
+    const seen = new Set();
+    const list = [];
+    urls.forEach((url) => {
+        if (seen.has(url)) return;
+        seen.add(url);
+        list.push({ type: 'url', url });
+    });
+    if (env?.ASSETS?.fetch) list.push({ type: 'assets' });
+    return list;
+}
+
+async function mirrorUniverseToR2(env, payload) {
+    if (!env?.NSE_SNAPSHOTS?.put) return;
+    try {
+        await env.NSE_SNAPSHOTS.put('data.json', JSON.stringify(payload), {
+            httpMetadata: {
+                contentType: 'application/json; charset=utf-8',
+                cacheControl: 'public, max-age=300'
+            }
+        });
+    } catch (error) {
+        console.error('[Universe Mirror] failed', error);
+    }
+}
+
 function parseIntervalListValue(value) {
     const raw = String(value || '').trim();
     if (!raw) return DEFAULT_INTERVALS.slice();
@@ -483,25 +522,37 @@ function extractIntervalFromFrame(payload, interval) {
 }
 
 async function fetchUniverseData(env) {
-    const snapshotUrl = resolveSnapshotSourceUrl(env);
-    if (snapshotUrl) {
-        const response = await fetch(snapshotUrl, {
-            headers: buildSourceHeaders(env),
-            signal: env?._abortSignal,
-        });
-        if (!response.ok) throw new Error(`Universe fetch failed: ${response.status}`);
-        return await response.json();
+    const candidates = buildUniverseFetchCandidates(env);
+    let lastError = null;
+
+    for (const candidate of candidates) {
+        try {
+            if (candidate.type === 'assets') {
+                const response = await env.ASSETS.fetch(new Request('https://assets.local/data.json'), {
+                    signal: env?._abortSignal,
+                });
+                if (!response.ok) throw new Error(`Asset universe fetch failed: ${response.status}`);
+                const json = await response.json();
+                await mirrorUniverseToR2(env, json);
+                return json;
+            }
+
+            const response = await fetch(candidate.url, {
+                headers: buildSourceHeaders(env),
+                signal: env?._abortSignal,
+            });
+            if (!response.ok) throw new Error(`Universe fetch failed: ${response.status}`);
+            const json = await response.json();
+            if (candidate.url !== DEFAULT_SNAPSHOT_SOURCE_URL) {
+                await mirrorUniverseToR2(env, json);
+            }
+            return json;
+        } catch (error) {
+            lastError = error;
+        }
     }
 
-    if (env?.ASSETS?.fetch) {
-        const response = await env.ASSETS.fetch(new Request('https://assets.local/data.json'), {
-            signal: env?._abortSignal,
-        });
-        if (!response.ok) throw new Error(`Asset universe fetch failed: ${response.status}`);
-        return await response.json();
-    }
-
-    throw new Error('No universe source available');
+    throw lastError || new Error('No universe source available');
 }
 
 async function putSnapshotObject(env, key, payload, { gzip = true, cacheControl } = {}) {

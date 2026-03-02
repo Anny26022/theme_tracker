@@ -4,10 +4,15 @@ import { useIntervalVersion, useMarketDataRegistry } from '../context/MarketData
 
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
 
-function buildHeatmap(themeToSymbols, intervalResults) {
+function buildHeatmap(themeToSymbols, intervalResults, themeNames) {
     const heatmap = {};
+    const names = Array.isArray(themeNames) && themeNames.length > 0
+        ? themeNames
+        : Array.from(themeToSymbols.keys());
 
-    themeToSymbols.forEach((symbols, themeName) => {
+    names.forEach((themeName) => {
+        const symbols = themeToSymbols.get(themeName);
+        if (!symbols) return;
         heatmap[themeName] = {};
         HEATMAP_INTERVALS.forEach((interval) => {
             const perfMap = intervalResults.get(interval);
@@ -42,6 +47,10 @@ export function useThematicHeatmap(thematicMap, hierarchy, options = {}) {
     const { subscribeIntervalSymbols } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
     const activeThemeNames = Array.isArray(options?.activeThemeNames) ? options.activeThemeNames : [];
+    const activeThemeList = useMemo(
+        () => Array.from(new Set(activeThemeNames)),
+        [activeThemeNames]
+    );
 
     const themeMappings = useMemo(() => {
         const themeToSymbols = new Map();
@@ -84,16 +93,16 @@ export function useThematicHeatmap(thematicMap, hierarchy, options = {}) {
 
     const { themeToSymbols, allSymbols } = themeMappings;
     const activeSymbols = useMemo(() => {
-        if (!activeThemeNames.length) return allSymbols;
+        if (!activeThemeList.length) return allSymbols;
         const activeSet = new Set();
-        activeThemeNames.forEach((name) => {
+        activeThemeList.forEach((name) => {
             const symbols = themeToSymbols.get(name);
             if (symbols?.length) {
                 symbols.forEach((sym) => activeSet.add(sym));
             }
         });
         return Array.from(activeSet);
-    }, [activeThemeNames, allSymbols, themeToSymbols]);
+    }, [activeThemeList, allSymbols, themeToSymbols]);
     const normalizedSymbols = useMemo(
         () => Array.from(new Set(activeSymbols.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
         [activeSymbols]
@@ -136,14 +145,14 @@ export function useThematicHeatmap(thematicMap, hierarchy, options = {}) {
             if (!done) pending.push(interval);
         });
 
-        const heatmap = buildHeatmap(themeToSymbols, intervalResults);
+        const heatmap = buildHeatmap(themeToSymbols, intervalResults, activeThemeList);
         return {
             heatmapData: heatmap,
             stockPerfMap: intervalResults,
             intervalProgress: progress,
             pendingIntervals: pending
         };
-    }, [normalizedSymbols, themeToSymbols, intervalVersion]);
+    }, [normalizedSymbols, themeToSymbols, intervalVersion, activeThemeList]);
 
     const loading = normalizedSymbols.length > 0 && !hasAnyHeatmapValues(heatmapData);
 

@@ -591,9 +591,8 @@ function markLocalCacheHit() {
 }
 
 function markLocalCacheMiss(reason = 'cold', cacheKey = 'unknown') {
-    if (IS_DEV) {
-        console.warn(`[PriceService][CacheMiss] Key: ${cacheKey} | Reason: ${reason}`);
-    }
+    // Silenced console.warn to avoid flooding the console on large datasets (e.g. Tracker view with 1000+ symbols)
+    // Metrics are still tracked in the background via cacheMetrics.
     incrementMetric('localMisses');
     incrementMetric('cacheLookupMisses');
     markMissReason(reason);

@@ -1,4 +1,4 @@
-import React, { startTransition, useMemo, useState, useRef, useEffect, useContext, useCallback } from 'react';
+import React, { startTransition, useDeferredValue, useMemo, useState, useRef, useEffect, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
@@ -22,11 +22,12 @@ const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
 const BLOCK_PREFETCH_ROOT_MARGIN = '320px 0px';
 const INITIAL_VISIBLE_BLOCKS = 3;
+const EMPTY_STOCK_PERF_REF = { current: EMPTY_OBJECT };
 const EMPTY_GRID_CONTEXT = Object.freeze({
     themeCompaniesMap: EMPTY_OBJECT,
     heatmapData: EMPTY_OBJECT,
     loading: false,
-    stockPerfMap: EMPTY_OBJECT,
+    stockPerfMapRef: EMPTY_STOCK_PERF_REF,
     highlightedTheme: null,
     isMobile: false
 });
@@ -158,18 +159,19 @@ const getHeatmapColor = (value) => {
     return 'bg-[var(--ui-muted)]/10 border border-[var(--ui-divider)]/20 text-[var(--text-muted)]';
 };
 
-const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) => {
+const CompositionCard = ({ theme, companies, stockPerfMap, stockPerfMapRef, onClose, isMobile }) => {
     const count = companies.length;
+    const perfMap = stockPerfMapRef?.current ?? stockPerfMap;
     const hasAnyMissingData = useMemo(() => {
-        if (!stockPerfMap || stockPerfMap.size === 0) return false;
+        if (!perfMap || perfMap.size === 0) return false;
         return companies.some(stock => {
             const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
             return COLUMNS.some(col => {
-                const val = stockPerfMap.get(col.key)?.get(cleaned)?.changePct;
+                const val = perfMap.get(col.key)?.get(cleaned)?.changePct;
                 return val === null || val === undefined;
             });
         });
-    }, [companies, stockPerfMap]);
+    }, [companies, perfMap]);
 
     return (
         <div className="flex flex-col gap-3">
@@ -228,7 +230,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                                         {(() => {
                                             const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
                                             const hasData = COLUMNS.some(col => {
-                                                const val = stockPerfMap.get(col.key)?.get(cleaned)?.changePct;
+                                                const val = perfMap?.get(col.key)?.get(cleaned)?.changePct;
                                                 return val !== null && val !== undefined;
                                             });
                                             return !hasData && <span className="text-[var(--accent-primary)] animate-pulse">*</span>;
@@ -241,8 +243,8 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                             </div>
                             <div className="flex items-center gap-0.5 flex-shrink-0">
                                 {COLUMNS.map(col => {
-                                    const perfMap = stockPerfMap.get(col.key);
-                                    const data = perfMap?.get(cleaned);
+                                    const intervalMap = perfMap?.get(col.key);
+                                    const data = intervalMap?.get(cleaned);
                                     const val = data?.changePct;
                                     const displayVal = val !== null && val !== undefined ? (val > 0 ? `+${val.toFixed(1)}` : val.toFixed(1)) : '-';
                                     return (
@@ -283,7 +285,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
     );
 };
 
-const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted, isMobile, alignPopover = 'right', onSelect }) => {
+const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMapRef, isHighlighted, isMobile, alignPopover = 'right', onSelect }) => {
     const [isHovered, setIsHovered] = useState(false);
     const count = companies.length;
 
@@ -330,7 +332,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                                 <CompositionCard
                                     theme={theme}
                                     companies={companies}
-                                    stockPerfMap={stockPerfMap}
+                                    stockPerfMapRef={stockPerfMapRef}
                                     onClose={() => setIsHovered(false)}
                                     isMobile={true}
                                 />
@@ -349,7 +351,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                             <CompositionCard
                                 theme={theme}
                                 companies={companies}
-                                stockPerfMap={stockPerfMap}
+                                stockPerfMapRef={stockPerfMapRef}
                                 isMobile={false}
                             />
                         </div>
@@ -378,7 +380,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     if (prevProps.loading !== nextProps.loading) return false;
     if (prevProps.theme !== nextProps.theme) return false;
     if (prevProps.companies !== nextProps.companies) return false;
-    if (prevProps.stockPerfMap !== nextProps.stockPerfMap) return false;
+    if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
     if (prevProps.isHighlighted !== nextProps.isHighlighted) return false;
     if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (prevProps.alignPopover !== nextProps.alignPopover) return false;
@@ -386,7 +388,7 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     return COLUMNS.every(({ key }) => prevProps.themePerf[key] === nextProps.themePerf[key]);
 });
 
-const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, alignPopover, onSelect }) => {
+const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, alignPopover, onSelect }) => {
     return (
         <div className="flex flex-col h-full group/block transition-all duration-700">
             <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2 group/header relative">
@@ -416,9 +418,9 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                 <table className="w-full text-left border-separate border-spacing-x-1 border-spacing-y-1.5 table-fixed">
                     <thead>
                         <tr className="opacity-40">
-                            <th className="px-1 text-[8px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] w-[40%]">Cluster</th>
+                            <th className="px-1 text-[8px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] w-[37%]">Cluster</th>
                             {COLUMNS.map(col => (
-                                <th key={col.key} className="px-0 text-[8px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] text-center w-[12%]">{col.label}</th>
+                                <th key={col.key} className="px-0 text-[8px] font-black uppercase tracking-[0.1em] text-[var(--text-muted)] text-center w-[9%]">{col.label}</th>
                             ))}
                         </tr>
                     </thead>
@@ -430,7 +432,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                                 companies={themeCompaniesMap[theme.name] || EMPTY_ARRAY}
                                 themePerf={heatmapData[theme.name] || EMPTY_THEME_PERF}
                                 loading={loading}
-                                stockPerfMap={stockPerfMap}
+                                stockPerfMapRef={stockPerfMapRef}
                                 isHighlighted={highlightedTheme === theme.name}
                                 isMobile={isMobile}
                                 alignPopover={alignPopover}
@@ -449,7 +451,7 @@ const ContextThemeBlock = React.memo(({ block, alignPopover }) => {
         themeCompaniesMap,
         heatmapData,
         loading,
-        stockPerfMap,
+        stockPerfMapRef,
         highlightedTheme,
         isMobile,
         onSelect
@@ -461,7 +463,7 @@ const ContextThemeBlock = React.memo(({ block, alignPopover }) => {
             themeCompaniesMap={themeCompaniesMap}
             heatmapData={heatmapData}
             loading={loading}
-            stockPerfMap={stockPerfMap}
+            stockPerfMapRef={stockPerfMapRef}
             highlightedTheme={highlightedTheme}
             isMobile={isMobile}
             alignPopover={alignPopover}
@@ -679,7 +681,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
 });
 MacroGridPane.displayName = 'MacroGridPane';
 
-const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, onSelectTheme, onVisibleThemesChange }) => {
+const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme, onVisibleThemesChange }) => {
     const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
 
     useEffect(() => {
@@ -692,11 +694,11 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
         themeCompaniesMap,
         heatmapData,
         loading,
-        stockPerfMap,
+        stockPerfMapRef,
         highlightedTheme,
         isMobile,
         onSelect: onSelectTheme
-    }), [themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, onSelectTheme]);
+    }), [themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme]);
 
     return (
         <>
@@ -749,6 +751,9 @@ export const MarketMapView = ({ hierarchy }) => {
     const [displayMode, setDisplayMode] = useState('HEATMAP'); // 'HEATMAP' or 'CHARTS'
     const scrollPosRef = useRef(0);
     const [visibleThemeNames, setVisibleThemeNames] = useState([]);
+    const handleVisibleThemesChange = useCallback((themes) => {
+        startTransition(() => setVisibleThemeNames(themes));
+    }, []);
 
     const onEnterCharts = useCallback((name) => {
         scrollPosRef.current = window.scrollY;
@@ -889,6 +894,11 @@ export const MarketMapView = ({ hierarchy }) => {
         filteredHierarchy,
         { activeThemeNames: visibleThemeNames }
     );
+    const deferredHeatmapData = useDeferredValue(heatmapData);
+    const stockPerfMapRef = useRef(stockPerfMap);
+    useEffect(() => {
+        stockPerfMapRef.current = stockPerfMap;
+    }, [stockPerfMap]);
     const hasHeatmapData = Object.keys(heatmapData || {}).length > 0;
     const pendingLabel = pendingIntervals
         .map((interval) => {
@@ -905,10 +915,10 @@ export const MarketMapView = ({ hierarchy }) => {
         .join(' | ');
 
     return (
-        <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 !overflow-visible relative">
+        <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 overflow-x-hidden relative">
             {loading && !hasHeatmapData && <UniverseLoader />}
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60] !overflow-visible">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60]">
                 <div className="space-y-1 relative z-10 w-full md:w-auto">
                     <h2 className="text-xl md:text-3xl font-light tracking-[0.15em] md:tracking-[0.5em] uppercase opacity-90 text-glow-gold leading-tight">
                         Market <span className="text-[var(--accent-primary)]">Architecture</span>
@@ -923,8 +933,8 @@ export const MarketMapView = ({ hierarchy }) => {
                     )}
                 </div>
 
-                {/* Visual Flair (Hidden on mobile to prevent overflow) */}
-                <div className="hidden md:block absolute top-0 right-0 w-80 h-80 bg-[var(--accent-primary)]/10 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2 animate-pulse" />
+                {/* Visual Flair (Stay within bounds to prevent horizontal overflow) */}
+                <div className="hidden md:block absolute top-0 right-20 w-80 h-80 bg-[var(--accent-primary)]/10 rounded-full blur-[120px] -translate-y-1/2 animate-pulse" />
 
                 <div className="flex items-center gap-6 relative z-10 w-full md:w-auto">
                     {/* Display Mode Toggle */}
@@ -1062,7 +1072,7 @@ export const MarketMapView = ({ hierarchy }) => {
                 </div>
             </div>
 
-            <div className="max-w-full lg:max-w-[1800px] mx-auto">
+            <div className="w-full">
                 {displayMode === 'HEATMAP' ? (
                     <>
                         <Legend />
@@ -1070,23 +1080,23 @@ export const MarketMapView = ({ hierarchy }) => {
                             viewMode={viewMode}
                             macroMap={macroMap}
                             themeCompaniesMap={themeCompaniesMap}
-                            heatmapData={heatmapData}
+                            heatmapData={deferredHeatmapData}
                             loading={loading}
-                            stockPerfMap={stockPerfMap}
+                            stockPerfMapRef={stockPerfMapRef}
                             highlightedTheme={highlightedTheme}
                             isMobile={isMobile}
                             onSelectTheme={onEnterCharts}
-                            onVisibleThemesChange={setVisibleThemeNames}
+                            onVisibleThemesChange={handleVisibleThemesChange}
                         />
                     </>
                 ) : (
-                    <ThematicGridChartView
-                        themeName={selectedThemeName}
-                        companies={themeCompaniesMap[selectedThemeName] || []}
-                        onBack={onExitCharts}
-                        onSelectTheme={setSelectedThemeName}
-                        viewMode={viewMode}
-                    />
+                        <ThematicGridChartView
+                            themeName={selectedThemeName}
+                            companies={themeCompaniesMap[selectedThemeName] || []}
+                            onBack={onExitCharts}
+                            onSelectTheme={setSelectedThemeName}
+                            viewMode={viewMode}
+                        />
                 )}
             </div>
         </ViewWrapper >

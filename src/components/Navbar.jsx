@@ -28,7 +28,10 @@ export const Navbar = React.memo(({ view, navigate }) => {
 
     return (
         <nav className="fixed top-0 inset-x-0 z-50 px-4 md:px-8 py-3 border-b border-[var(--ui-divider)] bg-[var(--nav-bg)] backdrop-blur-xl transition-colors duration-200">
-            <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className={cn(
+                "mx-auto flex items-center justify-between transition-all duration-400",
+                view === VIEWS.MARKET_MAP ? "max-w-[1800px]" : "max-w-7xl"
+            )}>
                 <div className="flex items-center gap-4 md:gap-6">
                     <button
                         type="button"

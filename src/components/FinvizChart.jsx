@@ -1,13 +1,26 @@
-import React, { useMemo, useRef, useCallback, useState } from 'react';
-import { calculateSMA, cleanSymbol } from '../services/priceService';
+import React, { useMemo, useRef, useCallback, useState, useEffect } from 'react';
+import { cleanSymbol } from '../services/priceService';
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
 /**
  * AUTHENTIC Finviz Replica Component.
  * Fixed: "Normal" candle proportions and consistent SMA logic.
  */
-const FinvizChart = ({ symbol, name, series, height = 300 }) => {
+const buildSmaSeries = (values, period) => {
+    if (!values?.length) return [];
+    const result = new Array(values.length).fill(null);
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {
+        sum += values[i];
+        if (i >= period) sum -= values[i - period];
+        if (i >= period - 1) result[i] = sum / period;
+    }
+    return result;
+};
+
+const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, height = 300 }) {
     const containerRef = useRef(null);
+    const chartAreaRef = useRef(null);
     const totalPointsRef = useRef(9999);
     const cleaned = useMemo(() => cleanSymbol(symbol), [symbol]);
     const hoverIndexRef = useRef(null);
@@ -20,23 +33,34 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
     const [zoomDays, setZoomDays] = useState(190);
     const rafRef = useRef(null);
 
-    // Callback ref: attaches a non-passive wheel listener once on mount.
-    // Non-passive is required so e.preventDefault() can block the page scroll.
-    const chartAreaRef = useCallback((node) => {
-        if (!node) return;
-        node.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            if (e.deltaY < 0) setZoomDays(p => Math.max(20, Math.round(p * 0.9)));
-            else setZoomDays(p => Math.min(totalPointsRef.current, Math.round(p * 1.1)));
-        }, { passive: false });
+    const handleWheel = useCallback((e) => {
+        e.preventDefault();
+        if (e.deltaY < 0) setZoomDays(p => Math.max(20, Math.round(p * 0.9)));
+        else setZoomDays(p => Math.min(totalPointsRef.current, Math.round(p * 1.1)));
     }, []);
 
+    useEffect(() => {
+        const node = chartAreaRef.current;
+        if (!node) return undefined;
+        // Non-passive is required so e.preventDefault() can block the page scroll.
+        node.addEventListener('wheel', handleWheel, { passive: false });
+        return () => node.removeEventListener('wheel', handleWheel);
+    }, [handleWheel]);
 
-    const data = useMemo(() => {
+    const baseData = useMemo(() => {
         if (!series || series.length === 0) return null;
 
         // 1. Process points
-        const allPoints = series
+        let needsSort = false;
+        for (let i = 1; i < series.length; i++) {
+            if (series[i - 1].time > series[i].time) {
+                needsSort = true;
+                break;
+            }
+        }
+
+        const ordered = needsSort ? [...series].sort((a, b) => a.time - b.time) : series;
+        const allPoints = ordered
             .map(p => ({
                 time: p.time,
                 open: p.open ?? p.close ?? 0,
@@ -46,21 +70,32 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
                 volume: p.volume ?? 0,
             }))
             .filter(p => p.time > 0 && isFinite(p.close) && p.close > 0)
-            .sort((a, b) => a.time - b.time);
+            ;
 
         if (allPoints.length < 2) return null;
 
         // 2. Full-History SMA (Crucial for correctness)
         const allCloses = allPoints.map(p => p.close);
-        const sma50Arr = allPoints.map((_, i) => calculateSMA(allCloses.slice(0, i + 1), 50));
-        const sma200Arr = allPoints.map((_, i) => calculateSMA(allCloses.slice(0, i + 1), 200));
+        const sma50Arr = buildSmaSeries(allCloses, 50);
+        const sma200Arr = buildSmaSeries(allCloses, 200);
+
+        return {
+            allPoints,
+            sma50Arr,
+            sma200Arr,
+            totalPoints: allPoints.length
+        };
+    }, [series]);
+
+    const data = useMemo(() => {
+        if (!baseData) return null;
 
         // 3. Slice for Display
-        const sliceCount = Math.min(zoomDays, allPoints.length);
-        const visibleIdx = allPoints.length - sliceCount;
-        const points = allPoints.slice(visibleIdx).map(p => ({ ...p }));
-        const sma50 = sma50Arr.slice(visibleIdx);
-        const sma200 = sma200Arr.slice(visibleIdx);
+        const sliceCount = Math.min(zoomDays, baseData.allPoints.length);
+        const visibleIdx = baseData.allPoints.length - sliceCount;
+        const points = baseData.allPoints.slice(visibleIdx).map(p => ({ ...p }));
+        const sma50 = baseData.sma50Arr.slice(visibleIdx);
+        const sma200 = baseData.sma200Arr.slice(visibleIdx);
 
         // 4. Subtle Synthesis (Only if data is totally flat)
         points.forEach((p, i) => {
@@ -90,9 +125,9 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
 
         return {
             points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP,
-            totalPoints: allPoints.length
+            totalPoints: baseData.totalPoints
         };
-    }, [series, zoomDays]);
+    }, [baseData, zoomDays]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -287,6 +322,12 @@ const FinvizChart = ({ symbol, name, series, height = 300 }) => {
             </div>
         </div>
     );
-};
+}, (prevProps, nextProps) => {
+    if (prevProps.height !== nextProps.height) return false;
+    if (prevProps.symbol !== nextProps.symbol) return false;
+    if (prevProps.name !== nextProps.name) return false;
+    if (prevProps.series !== nextProps.series) return false;
+    return true;
+});
 
 export default FinvizChart;

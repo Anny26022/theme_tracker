@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ArrowLeft, Search } from 'lucide-react';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { CompanyCardLite } from '../components/CompanyCardLite';
@@ -6,6 +6,7 @@ import { ViewWrapper } from '../components/ViewWrapper';
 import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
+import { useMarketDataRegistry } from '../context/MarketDataContext';
 
 const IndustryGridComponents = {
     List: React.forwardRef(({ style, children, ...props }, ref) => (
@@ -29,6 +30,9 @@ IndustryGridComponents.List.displayName = 'IndustryGridList';
 
 export const IndustryView = ({ sector, industry, companies, sectors, hierarchy, onBack, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
+    const { subscribeLiveSymbols } = useMarketDataRegistry();
+    const allSymbols = useMemo(() => companies.map(c => c.symbol), [companies]);
+    useEffect(() => subscribeLiveSymbols(allSymbols), [allSymbols, subscribeLiveSymbols]);
 
     const allIndustries = useMemo(() => [
         { name: industry, sector: sector }

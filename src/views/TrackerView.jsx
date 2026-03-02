@@ -159,6 +159,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     }, [rightItems, rightData, viewMode, industrySortDesc, activeEMAKey, trackingType]);
 
     const isGlobalLoading = leftLoading || rightLoading;
+    const isInitialLoading = (leftLoading && Object.keys(leftData).length === 0) || (rightLoading && Object.keys(rightData).length === 0);
 
     const handleLeftRangeChanged = useCallback((range) => {
         leftRangeRef.current = range;
@@ -187,7 +188,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
 
     return (
         <ViewWrapper id="tracker">
-            {isGlobalLoading && <UniverseLoader />}
+            {isInitialLoading && <UniverseLoader />}
             <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-[var(--ui-divider)] pb-6">
                 <div className="space-y-1 w-full xl:max-w-xl shrink-0">
                     <div className="flex items-center gap-3 mb-2">
@@ -207,7 +208,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                         </div>
                     </div>
                     <p className="text-[9px] font-bold leading-relaxed tracking-[0.2em] text-[var(--accent-primary)] uppercase">
-                        {isGlobalLoading ? 'Loading metrics...' : viewMode === 'performance' ? 'Real-time Performance Metrics' : 'Technical Breadth & Health'}
+                        {(leftLoading || rightLoading) ? 'Syncing...' : viewMode === 'performance' ? 'Real-time Performance Metrics' : 'Technical Breadth & Health'}
                     </p>
                 </div>
 
@@ -258,7 +259,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
             </div>
 
             <div className="relative">
-                <div className={`grid grid-cols-1 xl:grid-cols-2 gap-12 xl:gap-20 transition-opacity duration-300 ${isGlobalLoading ? 'opacity-30' : 'opacity-100'}`}>
+                <div className={`grid grid-cols-1 xl:grid-cols-2 gap-12 xl:gap-20 transition-opacity duration-300 ${isInitialLoading ? 'opacity-30' : 'opacity-100'}`}>
                     {/* SECTORS / PILLARS */}
                     <div className="space-y-6">
                         <div className="flex items-center gap-3 border-b border-[var(--ui-divider)] pb-4">

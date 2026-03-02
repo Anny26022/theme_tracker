@@ -33,7 +33,7 @@ const FinvizChartCard = React.memo(({ company, series, height }) => (
     return true;
 });
 
-const DeferredFinvizChart = ({ company, series, height }) => {
+const DeferredFinvizChart = React.memo(({ company, series, height }) => {
     const [isVisible, setIsVisible] = useState(false);
     const containerRef = useRef(null);
 
@@ -74,7 +74,13 @@ const DeferredFinvizChart = ({ company, series, height }) => {
             )}
         </div>
     );
-};
+}, (prevProps, nextProps) => {
+    if (prevProps.series !== nextProps.series) return false;
+    if (prevProps.height !== nextProps.height) return false;
+    if (prevProps.company?.symbol !== nextProps.company?.symbol) return false;
+    if (prevProps.company?.name !== nextProps.company?.name) return false;
+    return true;
+});
 
 const ChartGridComponents = {
     List: React.forwardRef(({ style, children, ...props }, ref) => (

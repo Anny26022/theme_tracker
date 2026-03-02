@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
-import { getCachedPrice } from '../services/priceService';
+import { getCachedPrice, getCachedInterval } from '../services/priceService';
 import { useLiveVersion, useMarketDataRegistry } from './MarketDataContext';
 
 export function PriceProvider({ children }) {
@@ -8,22 +8,30 @@ export function PriceProvider({ children }) {
 
 /**
  * Hook to consume live price from the shared market data registry.
- * Caches are keyed by cleaned symbol; updates are driven by live version ticks.
+ * Checks interval cache first so navigating from Tracker/Theme shows data instantly.
  */
 export function useLivePrice(symbol) {
     const { subscribeLiveSymbols } = useMarketDataRegistry();
     const liveVersion = useLiveVersion();
 
+    const hasCache = !!getCachedPrice(symbol) || !!getCachedInterval(symbol, '1D', { silent: true })?.close;
+
     useEffect(() => {
-        if (!symbol) return;
+        if (!symbol || hasCache) return;
         return subscribeLiveSymbols([symbol]);
-    }, [symbol, subscribeLiveSymbols]);
+    }, [symbol, hasCache, subscribeLiveSymbols]);
 
     const data = useMemo(() => {
         const cacheVersion = liveVersion;
         if (cacheVersion < 0) return null;
         if (!symbol) return null;
-        return getCachedPrice(symbol);
+        // Primary: live price cache
+        const live = getCachedPrice(symbol);
+        if (live) return live;
+        // Fallback: reuse interval cache (close + changePct from Tracker/Theme)
+        const interval = getCachedInterval(symbol, '1D', { silent: true });
+        if (interval?.close) return { price: interval.close, change: null, changePct: interval.changePct, prevClose: null, source: 'interval' };
+        return null;
     }, [symbol, liveVersion]);
 
     return {

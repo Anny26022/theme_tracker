@@ -189,7 +189,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                         <span className="text-[7.5px] font-black text-[var(--text-muted)] opacity-80 uppercase tracking-widest">{count} Stocks</span>
                         <div className="flex gap-0.5 mt-1">
                             {COLUMNS.map(col => (
-                                <span key={col.key} className="w-7 text-center text-[5.5px] font-black text-[var(--text-muted)] opacity-40 uppercase">{col.label}</span>
+                                <span key={col.key} className="w-9 text-center text-[7px] font-black text-[var(--text-muted)] opacity-40 uppercase">{col.label}</span>
                             ))}
                         </div>
                     </div>
@@ -247,7 +247,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
                                         <div
                                             key={col.key}
                                             className={cn(
-                                                "w-7 h-4 flex items-center justify-center text-[6px] rounded-[2px] border transition-colors",
+                                                "w-9 h-5 flex items-center justify-center text-[8.5px] rounded-[2px] border transition-colors",
                                                 getHeatmapColor(val)
                                             )}
                                         >
@@ -281,7 +281,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, onClose, isMobile }) 
     );
 };
 
-const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted, isMobile }) => {
+const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMap, isHighlighted, isMobile, alignPopover = 'right' }) => {
     const [isHovered, setIsHovered] = useState(false);
     const count = companies.length;
 
@@ -335,9 +335,10 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                     ) : (
                         <div
                             className={cn(
-                                "absolute left-full top-8 ml-6 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
+                                "absolute top-8 z-[100] glass-card p-4 border border-[var(--accent-primary)]/30 shadow-[0_40px_120px_rgba(0,0,0,0.9)] pointer-events-none",
                                 "!bg-[var(--bg-main)] !opacity-100",
-                                companies.length > 15 ? "w-[680px]" : "w-[340px]"
+                                companies.length > 15 ? "w-[800px]" : "w-[400px]",
+                                alignPopover === 'right' ? "left-full ml-6" : "right-full mr-6"
                             )}
                         >
                             <CompositionCard
@@ -375,11 +376,12 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     if (prevProps.stockPerfMap !== nextProps.stockPerfMap) return false;
     if (prevProps.isHighlighted !== nextProps.isHighlighted) return false;
     if (prevProps.isMobile !== nextProps.isMobile) return false;
+    if (prevProps.alignPopover !== nextProps.alignPopover) return false;
 
     return COLUMNS.every(({ key }) => prevProps.themePerf[key] === nextProps.themePerf[key]);
 });
 
-const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile }) => {
+const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMap, highlightedTheme, isMobile, alignPopover }) => {
     return (
         <div className="flex flex-col h-full group/block transition-all duration-700">
             <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2">
@@ -409,6 +411,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                                 stockPerfMap={stockPerfMap}
                                 isHighlighted={highlightedTheme === theme.name}
                                 isMobile={isMobile}
+                                alignPopover={alignPopover}
                             />
                         ))}
                     </tbody>
@@ -418,7 +421,7 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
     );
 });
 
-const ContextThemeBlock = React.memo(({ block }) => {
+const ContextThemeBlock = React.memo(({ block, alignPopover }) => {
     const {
         themeCompaniesMap,
         heatmapData,
@@ -437,6 +440,7 @@ const ContextThemeBlock = React.memo(({ block }) => {
             stockPerfMap={stockPerfMap}
             highlightedTheme={highlightedTheme}
             isMobile={isMobile}
+            alignPopover={alignPopover}
         />
     );
 });
@@ -471,12 +475,13 @@ const DeferredThemeBlock = React.memo(({
     block,
     blockId,
     isVisible,
-    attachRef
+    attachRef,
+    alignPopover
 }) => {
     return (
         <div id={blockId} ref={attachRef} data-block-id={blockId} className="scroll-mt-32 min-h-[220px]">
             {isVisible ? (
-                <ContextThemeBlock block={block} />
+                <ContextThemeBlock block={block} alignPopover={alignPopover} />
             ) : (
                 <ThemeBlockSkeleton themeCount={block?.themes?.length || 1} />
             )}
@@ -576,6 +581,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isActive, isMobile }) 
                         blockId={blockId}
                         isVisible={visibleIds.has(blockId)}
                         attachRef={getAttachRef(blockId)}
+                        alignPopover={idx % 3 === 2 ? 'left' : 'right'}
                     />
                 );
             })}
@@ -592,7 +598,7 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
             <ThemeGridDataContext.Provider value={gridContextValue}>
                 <ThemeGrid
                     mapSource={THEMATIC_MAP}
-                    gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 md:auto-rows-fr"
+                    gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3 md:auto-rows-fr"
                     isActive={isActive}
                     isMobile={isMobile}
                 />
@@ -864,7 +870,8 @@ export const MarketMapView = ({ hierarchy }) => {
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 onFocus={() => setIsSearchFocused(true)}
                                 placeholder="FIND STOCKS..."
-                                className="bg-transparent border-none outline-none text-[7.5px] font-bold uppercase tracking-[0.15em] text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-30 w-full"
+                                aria-label="SEARCH STOCKS"
+                                className="bg-transparent border-none outline-none text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-30 w-full"
                             />
                         </div>
 
@@ -888,14 +895,14 @@ export const MarketMapView = ({ hierarchy }) => {
                                             className="w-full flex items-center justify-between py-1.5 px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
                                         >
                                             <div className="flex flex-col items-start min-w-0">
-                                                <span className="text-[7.5px] font-bold uppercase tracking-tight text-[var(--text-main)]/90 truncate">
+                                                <span className="text-[10px] font-bold uppercase tracking-tight text-[var(--text-main)]/90 truncate">
                                                     {result.name}
                                                 </span>
-                                                <span className="text-[5.5px] font-medium text-[var(--text-muted)] opacity-30 uppercase">
+                                                <span className="text-[8px] font-medium text-[var(--text-muted)] opacity-30 uppercase">
                                                     {result.symbol}
                                                 </span>
                                             </div>
-                                            <span className="text-[5px] font-black text-[var(--accent-primary)]/60 uppercase tracking-tighter bg-[var(--accent-primary)]/5 px-1 py-0.5 rounded-sm flex-shrink-0 ml-2">
+                                            <span className="text-[8px] font-black text-[var(--accent-primary)]/60 uppercase tracking-tighter bg-[var(--accent-primary)]/5 px-1.5 py-1 rounded-sm flex-shrink-0 ml-2">
                                                 {result.groupTitle.split(' ')[0]}
                                             </span>
                                         </button>

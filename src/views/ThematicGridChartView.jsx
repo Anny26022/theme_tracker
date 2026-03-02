@@ -4,6 +4,7 @@ import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService
 import { ChevronLeft, ChevronDown, Layers } from 'lucide-react';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
+import { VirtuosoGrid } from 'react-virtuoso';
 
 const ChartSkeleton = ({ company, height }) => (
     <div
@@ -74,6 +75,26 @@ const DeferredFinvizChart = ({ company, series, height }) => {
         </div>
     );
 };
+
+const ChartGridComponents = {
+    List: React.forwardRef(({ style, children, ...props }, ref) => (
+        <div
+            ref={ref}
+            {...props}
+            style={style}
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-12"
+        >
+            {children}
+        </div>
+    )),
+    Item: ({ children, ...props }) => (
+        <div {...props} className="w-full">
+            {children}
+        </div>
+    )
+};
+
+ChartGridComponents.List.displayName = 'ChartGridList';
 
 const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectTheme, viewMode = 'THEMATIC' }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -240,16 +261,22 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
             </div>
 
             {/* Virtualized Chart Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {companies.map((company, idx) => (
-                    <DeferredFinvizChart
-                        key={company.symbol}
-                        company={company}
-                        series={companySeries[idx]?.series || []}
-                        height={280}
-                    />
-                ))}
-            </div>
+            {companySeries.length > 0 ? (
+                <VirtuosoGrid
+                    useWindowScroll
+                    data={companySeries}
+                    components={ChartGridComponents}
+                    computeItemKey={(_, item) => item.company.symbol}
+                    increaseViewportBy={{ top: 400, bottom: 1200 }}
+                    itemContent={(idx, item) => (
+                        <DeferredFinvizChart
+                            company={item.company}
+                            series={item.series || []}
+                            height={280}
+                        />
+                    )}
+                />
+            ) : null}
 
             {companies.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 opacity-20">

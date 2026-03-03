@@ -1065,11 +1065,11 @@ export const MarketMapView = ({ hierarchy }) => {
                     <button
                         onClick={() => startTransition(() => setHideBSE(prev => !prev))}
                         className={cn(
-                            "flex items-center gap-3 px-5 py-2.5 rounded-full border transition-all duration-700 group/btn",
+                            "flex items-center gap-2 px-4 py-1.5 rounded-full border transition-all duration-700 group/btn whitespace-nowrap",
                             hideBSE ? "bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]" : "bg-transparent border-[var(--ui-divider)]/40 text-[var(--text-muted)]"
                         )}
                     >
-                        <div className={cn("w-1.5 h-1.5 rounded-full", hideBSE ? "bg-[var(--accent-primary)]" : "bg-[var(--text-muted)] opacity-30")} />
+                        <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", hideBSE ? "bg-[var(--accent-primary)]" : "bg-[var(--text-muted)] opacity-30")} />
                         <span className="text-[8.5px] font-black uppercase tracking-[0.25em]">{hideBSE ? 'NSE ONLY' : 'SHOW ALL'}</span>
                     </button>
                 </div>

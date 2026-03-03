@@ -111,7 +111,7 @@ const FinvizChart = React.memo(function FinvizChart({
     // When rendered inside a mobile gallery or pure display mode, disable interaction hooks 
     // to allow native browser swiping (overflow-x-auto) to work properly.
     useEffect(() => {
-        if (!isProMode) return; // Allow everything ONLY in Pro Mode
+        if (!isProMode && typeof window !== 'undefined' && window.innerWidth < 768) return; // Disable ONLY on mobile mini-charts
         const node = chartAreaRef.current;
         if (!node) return undefined;
 

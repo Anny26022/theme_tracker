@@ -9,12 +9,14 @@ import { isNumericSymbol } from '@core/symbol/cleanSymbol';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { useTheme } from '../contexts/ThemeContext';
 import { ComparisonChart } from '../components/ComparisonChart';
+import { THEMATIC_MAP } from '@core/market/thematicMap';
+import { UniverseLoader } from '../components/UniverseLoader';
 
 interface ComparisonViewProps {
     onOpenInsights: (company: any) => void;
 }
 
-const INTERVALS = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
+const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 const COLORS = ['#c5a059', '#4f46e5', '#10b981', '#f43f5e', '#8b5cf6', '#f59e0b', '#06b6d4'];
 const MAX_CHART_SYMBOLS = 60;
 const STORAGE_KEY = 'tt_comparison_symbols:v2';
@@ -23,6 +25,7 @@ type ComparisonState = {
     selectedSymbols: any[];
     timeframe: string;
     searchQuery: string;
+    searchMode: 'INDUSTRY' | 'THEMATIC';
     exchangePreference: 'ALL' | 'NSE' | 'BSE';
     isLoaded: boolean;
 };
@@ -31,6 +34,7 @@ type ComparisonAction =
     | { type: 'hydrate'; symbols: any[] }
     | { type: 'setTimeframe'; value: string }
     | { type: 'setSearchQuery'; value: string }
+    | { type: 'setSearchMode'; value: 'INDUSTRY' | 'THEMATIC' }
     | { type: 'setExchange'; value: 'ALL' | 'NSE' | 'BSE' }
     | { type: 'setSelected'; symbols: any[]; clearSearch?: boolean };
 
@@ -38,6 +42,7 @@ const INITIAL_STATE: ComparisonState = {
     selectedSymbols: [],
     timeframe: '1M',
     searchQuery: '',
+    searchMode: 'INDUSTRY',
     exchangePreference: 'ALL',
     isLoaded: false,
 };
@@ -54,6 +59,8 @@ function comparisonReducer(state: ComparisonState, action: ComparisonAction): Co
             return { ...state, timeframe: action.value };
         case 'setSearchQuery':
             return { ...state, searchQuery: action.value };
+        case 'setSearchMode':
+            return { ...state, searchMode: action.value, selectedSymbols: [] };
         case 'setExchange':
             return { ...state, exchangePreference: action.value };
         case 'setSelected':
@@ -102,9 +109,11 @@ const SelectionArea = ({
     onToggleSymbol,
     onSearchChange,
     onExchangeChange,
+    onSearchModeChange,
     onOpenInsights,
     colors,
     currentStyles,
+    searchMode,
 }: any) => (
     <View style={currentStyles.selectionArea}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={currentStyles.selectedList} contentInsetAdjustmentBehavior="automatic">
@@ -134,6 +143,24 @@ const SelectionArea = ({
         </ScrollView>
 
         <View style={currentStyles.searchAndFilter}>
+            <View style={currentStyles.exchangeBar}>
+                {['INDUSTRY', 'THEMATIC'].map(mode => (
+                    <Pressable
+                        key={mode}
+                        onPress={() => onSearchModeChange(mode as any)}
+                        style={[
+                            currentStyles.exchangeBtn,
+                            searchMode === mode && currentStyles.exchangeBtnActive
+                        ]}
+                    >
+                        <Text style={[
+                            currentStyles.exchangeText,
+                            searchMode === mode && currentStyles.exchangeTextActive
+                        ]}>{mode}</Text>
+                    </Pressable>
+                ))}
+            </View>
+
             <View style={currentStyles.exchangeBar}>
                 {['ALL', 'NSE', 'BSE'].map(ex => (
                     <Pressable
@@ -215,7 +242,7 @@ const ComparisonChartSection = ({
         <View style={currentStyles.chartContainer}>
             {loading && (
                 <View style={currentStyles.chartLoader}>
-                    <ActivityIndicator color={colors.accentPrimary} />
+                    <UniverseLoader />
                 </View>
             )}
             {totalChartSymbols > MAX_CHART_SYMBOLS && (
@@ -265,7 +292,7 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
     const { hierarchy } = useMarketData();
     const [state, dispatch] = useReducer(comparisonReducer, INITIAL_STATE);
 
-    const { selectedSymbols, timeframe, searchQuery, exchangePreference, isLoaded } = state;
+    const { selectedSymbols, timeframe, searchQuery, searchMode, exchangePreference, isLoaded } = state;
     const currentStyles = styles(colors, isDark);
 
     useEffect(() => {
@@ -334,6 +361,26 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
         return { allCompanies: companies, allIndustries: industries, symbolNames: names };
     }, [hierarchy]);
 
+    const allClusters = useMemo(() => {
+        const clusters = new Map<string, string[]>();
+        THEMATIC_MAP.forEach(block => {
+            block.themes.forEach(theme => {
+                const symbols = new Set<string>();
+                if (theme.industries) {
+                    theme.industries.forEach(indName => {
+                        const members = allIndustries.get(indName) || [];
+                        members.forEach(s => symbols.add(s));
+                    });
+                }
+                if (theme.symbols) {
+                    theme.symbols.forEach(s => symbols.add(cleanSymbol(s)));
+                }
+                clusters.set(theme.name, Array.from(symbols));
+            });
+        });
+        return clusters;
+    }, [allIndustries]);
+
     const searchResults = useMemo(() => {
         if (!searchQuery.trim()) return [];
         const q = searchQuery.toLowerCase();
@@ -343,6 +390,35 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
                 c.symbol.toLowerCase().includes(q) ||
                 c.name.toLowerCase().includes(q)
             ).map(s => ({ ...s, type: 'STOCK' as const }));
+
+        if (state.searchMode === 'THEMATIC') {
+            const directClusterMatches = Array.from(allClusters.keys())
+                .filter(name => name.toLowerCase().includes(q));
+
+            const relatedClusters = new Set<string>();
+            stockMatches.forEach(stock => {
+                allClusters.forEach((constituents, clusterName) => {
+                    if (constituents.includes(stock.clean)) {
+                        relatedClusters.add(clusterName);
+                    }
+                });
+            });
+
+            const mergedClusterNames = Array.from(new Set([
+                ...directClusterMatches,
+                ...Array.from(relatedClusters)
+            ]));
+
+            const clusterResults = mergedClusterNames.map(name => ({
+                symbol: name,
+                clean: name,
+                name: 'Thematic Cluster',
+                type: 'THEMATIC' as const,
+                constituents: allClusters.get(name)
+            }));
+
+            return [...clusterResults, ...stockMatches].slice(0, 10);
+        }
 
         const relatedIndustries = new Set(stockMatches.map(s => s.industry));
         const directIndustryMatches = Array.from(allIndustries.keys())
@@ -361,13 +437,13 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
         }));
 
         return [...industryResults, ...stockMatches].slice(0, 10);
-    }, [allCompanies, allIndustries, searchQuery]);
+    }, [allCompanies, allIndustries, allClusters, searchQuery, state.searchMode]);
 
     const { chartSymbols, totalChartSymbols } = useMemo(() => {
         const unique = new Set<string>();
         selectedSymbols.forEach(s => {
-            if (s.type === 'INDUSTRY') {
-                const members = allIndustries.get(s.id) || [];
+            if (s.type === 'INDUSTRY' || s.type === 'THEMATIC') {
+                const members = (s.type === 'INDUSTRY' ? allIndustries.get(s.id) : allClusters.get(s.id)) || [];
                 members.forEach(m => {
                     const numeric = isNumericSymbol(m);
                     if (exchangePreference === 'ALL') unique.add(m);
@@ -384,7 +460,7 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
             totalChartSymbols: all.length,
             chartSymbols: all.slice(0, MAX_CHART_SYMBOLS)
         };
-    }, [selectedSymbols, allIndustries, exchangePreference]);
+    }, [selectedSymbols, allIndustries, allClusters, exchangePreference]);
 
     const { data: chartData, loading } = useComparisonData(chartSymbols, timeframe);
 
@@ -443,9 +519,11 @@ export const ComparisonView = ({ onOpenInsights }: ComparisonViewProps) => {
                 onToggleSymbol={toggleSymbol}
                 onSearchChange={handleSearchChange}
                 onExchangeChange={handleExchangeChange}
+                onSearchModeChange={(mode: any) => dispatch({ type: 'setSearchMode', value: mode })}
                 onOpenInsights={onOpenInsights}
                 colors={colors}
                 currentStyles={currentStyles}
+                searchMode={searchMode}
             />
 
             <ComparisonChartSection

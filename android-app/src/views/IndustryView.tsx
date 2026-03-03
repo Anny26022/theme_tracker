@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet, FlatList, Pressable } from 'react-native';
-import { ArrowLeft, Search } from 'lucide-react-native';
+import { ArrowLeft, Search, LayoutGrid, List } from 'lucide-react-native';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { CompanyCardLite } from '../components/CompanyCardLite';
+import { ThematicGridChartView } from './ThematicGridChartView';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface IndustryViewProps {
@@ -16,6 +17,7 @@ interface IndustryViewProps {
 export const IndustryView = ({ sector, industry, companies, onBack, onOpenInsights }: IndustryViewProps) => {
     const { colors, isDark } = useTheme();
     const [filter, setFilter] = useState('');
+    const [isGridView, setIsGridView] = useState(false);
 
     const filteredCompanies = useMemo(() => {
         if (!filter) return companies;
@@ -39,6 +41,16 @@ export const IndustryView = ({ sector, industry, companies, onBack, onOpenInsigh
                         <Text style={currentStyles.sectorText}>{sector}</Text>
                         <Text style={currentStyles.title}>{industry}</Text>
                     </View>
+                    <Pressable
+                        onPress={() => setIsGridView(!isGridView)}
+                        style={currentStyles.toggleButton}
+                    >
+                        {isGridView ? (
+                            <List size={16} color={colors.accentPrimary} />
+                        ) : (
+                            <LayoutGrid size={16} color={colors.accentPrimary} />
+                        )}
+                    </Pressable>
                 </View>
 
                 <View style={currentStyles.searchContainer}>
@@ -58,28 +70,40 @@ export const IndustryView = ({ sector, industry, companies, onBack, onOpenInsigh
                 </View>
             </View>
 
-            <FlatList
-                data={filteredCompanies}
-                contentInsetAdjustmentBehavior="automatic"
-                keyExtractor={(item) => item.symbol}
-                numColumns={2}
-                columnWrapperStyle={currentStyles.row}
-                renderItem={({ item, index }) => (
-                    <View style={currentStyles.column}>
-                        <CompanyCardLite
-                            item={item}
-                            index={index}
-                            onClick={() => onOpenInsights(item)}
-                        />
-                    </View>
-                )}
-                contentContainerStyle={currentStyles.listContent}
-                ListEmptyComponent={
-                    <View style={currentStyles.emptyContainer}>
-                        <Text style={currentStyles.emptyText}>No matches found for &quot;{filter}&quot;</Text>
-                    </View>
-                }
-            />
+            {isGridView ? (
+                <View style={{ flex: 1, marginTop: -16 }}>
+                    <ThematicGridChartView
+                        themeName={industry}
+                        companies={filteredCompanies}
+                        onBack={() => setIsGridView(false)}
+                        onOpenInsights={onOpenInsights}
+                        onSelectTheme={() => { }}
+                    />
+                </View>
+            ) : (
+                <FlatList
+                    data={filteredCompanies}
+                    contentInsetAdjustmentBehavior="automatic"
+                    keyExtractor={(item) => item.symbol}
+                    numColumns={2}
+                    columnWrapperStyle={currentStyles.row}
+                    renderItem={({ item, index }) => (
+                        <View style={currentStyles.column}>
+                            <CompanyCardLite
+                                item={item}
+                                index={index}
+                                onClick={() => onOpenInsights(item)}
+                            />
+                        </View>
+                    )}
+                    contentContainerStyle={currentStyles.listContent}
+                    ListEmptyComponent={
+                        <View style={currentStyles.emptyContainer}>
+                            <Text style={currentStyles.emptyText}>No matches found for &quot;{filter}&quot;</Text>
+                        </View>
+                    }
+                />
+            )}
         </ViewWrapper>
     );
 };
@@ -103,6 +127,13 @@ const styles = (colors: any, isDark: boolean) => StyleSheet.create({
         gap: 16,
     },
     backButton: {
+        padding: 8,
+        backgroundColor: colors.glassBg,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: colors.glassBorder,
+    },
+    toggleButton: {
         padding: 8,
         backgroundColor: colors.glassBg,
         borderRadius: 4,

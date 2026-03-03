@@ -10,10 +10,13 @@ import { ComparisonView } from "../views/ComparisonView";
 import { DomainView } from "../views/DomainView";
 import { Navbar } from "../components/Navbar";
 import { useMarketData } from "../hooks/useMarketData";
+import { MarketMapView } from "../views/MarketMapView";
+import { MapperView } from "../views/MapperView";
+import { useTheme } from "../contexts/ThemeContext";
 import { BackgroundAmbience } from "../components/BackgroundAmbience";
 import { CompanyInsights } from "../components/CompanyInsights";
-import { MarketMapView } from "../views/MarketMapView";
-import { useTheme } from "../contexts/ThemeContext";
+import { ThematicGridChartView } from "../views/ThematicGridChartView";
+import { useThematicData } from "../hooks/useThematicData";
 
 export const VIEWS = {
   UNIVERSE: 'UNIVERSE',
@@ -22,7 +25,9 @@ export const VIEWS = {
   INDUSTRY: 'INDUSTRY',
   TRACKER: 'TRACKER',
   COMPARE: 'COMPARE',
-  MARKET_MAP: 'MARKET_MAP'
+  MARKET_MAP: 'MARKET_MAP',
+  MAPPER: 'MAPPER',
+  GRID_CHART: 'GRID_CHART'
 };
 
 export default function Index() {
@@ -31,10 +36,14 @@ export default function Index() {
     view?: string;
     sector?: string;
     industry?: string;
+    theme?: string;
   }>();
   const { isDark, colors } = useTheme();
   const [insightsCompany, setInsightsCompany] = useState<any | null>(null);
+  const [gridTheme, setGridTheme] = useState<{ name: string, companies: any[] } | null>(null);
   const { hierarchy } = useMarketData();
+  const { themeCompaniesMap } = useThematicData();
+  const [viewMode, setViewMode] = useState<'THEMATIC' | 'MACRO'>('THEMATIC');
 
   const view = useMemo(() => {
     const raw = typeof params.view === "string" ? params.view.toUpperCase() : VIEWS.UNIVERSE;
@@ -81,6 +90,16 @@ export default function Index() {
   const handleCloseInsights = useCallback(() => {
     setInsightsCompany(null);
   }, []);
+
+  const handleThemeSelect = useCallback((name: string, companies: any[]) => {
+    setGridTheme({ name, companies });
+    router.setParams({ view: VIEWS.GRID_CHART, theme: name });
+  }, [router]);
+
+  const handleGridBack = useCallback(() => {
+    router.setParams({ view: VIEWS.MARKET_MAP, theme: undefined });
+    setGridTheme(null);
+  }, [router]);
 
   const currentIndustries = useMemo(() => {
     if (!sector || !hierarchy[sector]) return [];
@@ -142,6 +161,24 @@ export default function Index() {
           <MarketMapView
             hierarchy={hierarchy}
             onOpenInsights={handleOpenInsights}
+            onSelect={handleThemeSelect}
+          />
+        )}
+        {view === VIEWS.MAPPER && (
+          <MapperView />
+        )}
+        {view === VIEWS.GRID_CHART && (
+          <ThematicGridChartView
+            themeName={params.theme || gridTheme?.name || 'Theme'}
+            companies={themeCompaniesMap[params.theme || ''] || gridTheme?.companies || []}
+            onBack={handleGridBack}
+            onOpenInsights={handleOpenInsights}
+            onSelectTheme={(name) => {
+              setGridTheme({ name, companies: themeCompaniesMap[name] || [] });
+              router.setParams({ theme: name });
+            }}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
           />
         )}
       </View>

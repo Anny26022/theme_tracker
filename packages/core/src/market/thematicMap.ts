@@ -316,3 +316,29 @@ export const THEMATIC_MAP: BlockDefinition[] = [
         ]
     }
 ];
+export const MACRO_PILLARS = [
+    {
+        title: "I. FINANCIAL BACKBONE",
+        blocks: ["BANKING & FINANCIAL SERVICES", "PROFESSIONAL SERVICES"]
+    },
+    {
+        title: "II. INDUSTRIAL & DEFENSE ALPHA",
+        blocks: ["AUTOMOTIVE (STOCKS)", "AUTOMOTIVE COMPONENTS", "ENGINEERING & MANUFACTURING", "DEFENSE & AEROSPACE SYSTEMS"]
+    },
+    {
+        title: "III. DIGITAL ECONOMY & TECH",
+        blocks: ["INFORMATION TECHNOLOGY & TECHNOLOGY", "DATA CENTER ECOSYSTEM"]
+    },
+    {
+        title: "IV. CONSUMPTION & LIFESTYLE",
+        blocks: ["Lifestyle & Retail", "Consumer Durables", "Media & Leisure", "FMCG", "Food & Beverages", "TRAVEL & HOSPITALITY", "Healthcare Segments", "Agri Business"]
+    },
+    {
+        title: "V. NATION BUILDING (INFRA/RE)",
+        blocks: ["Const. & Materials", "Real Estate Segments", "Logistics & Trans", "Env & Sustainability"]
+    },
+    {
+        title: "VI. COMMODITIES & RESOURCES",
+        blocks: ["CHEMICALS SECTOR", "METALS & MINING", "ENERGY, OIL & GAS", "DIVERSIFIED & TRADING"]
+    }
+];

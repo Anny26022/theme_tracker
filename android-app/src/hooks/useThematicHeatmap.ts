@@ -3,7 +3,7 @@ import { cleanSymbol, getCachedInterval } from '../services/priceService';
 import { THEMATIC_MAP, BlockDefinition } from '@core/market/thematicMap';
 import { useMarketDataRegistry, useIntervalVersion } from '../contexts/MarketDataContext';
 
-const HEATMAP_INTERVALS = ['1D', '5D', '1M', '6M', 'YTD'];
+const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
 
 export function useThematicHeatmap(hierarchy: any) {
     const thematicMap = THEMATIC_MAP;

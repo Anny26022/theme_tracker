@@ -67,6 +67,7 @@ type UnifiedData = {
         ema150: number | null;
         ema200: number | null;
     };
+    hasBreadth: boolean;
 };
 
 const comparisonCacheMap = new Map<string, { series: any[]; timestamp: number; ttlMs?: number }>();
@@ -179,6 +180,7 @@ const INTERVAL_WINDOWS: Record<string, number> = {
     '1D': 1,
     '5D': 2,
     '1M': 3,
+    '3M': 3.5,
     '6M': 4,
     YTD: 5,
     '1Y': 6,
@@ -190,6 +192,7 @@ const INTERVAL_CACHE_TTL: Record<string, number> = {
     '1D': 300_000,
     '5D': 300_000,
     '1M': 600_000,
+    '3M': 600_000,
     '6M': 600_000,
     YTD: 600_000,
     '1Y': 600_000,
@@ -577,6 +580,8 @@ function extractWideChartFromFrame(payload: any) {
     if (!Array.isArray(root)) return null;
 
     const symbolInfo = root[0];
+    const absolutePrice = symbolInfo?.[2];
+
     let points = root[3]?.[0]?.[1];
     if (!Array.isArray(points) || points.length < 2) {
         points = root[3]?.[1];
@@ -592,26 +597,45 @@ function extractWideChartFromFrame(payload: any) {
         return 0;
     };
 
-    const series: { time: number; changePct: number; price: number; value: number }[] = points
-        .map((point: any) => ({
-            time: parseTime(point[0]),
-            changePct: (point?.[1]?.[2] || 0) * 100,
-            price: point?.[1]?.[0] || 0,
-            value: 0,
-        }))
-        .filter((point) => isFinite(point.changePct) && point.time > 0)
-        .sort((a, b) => a.time - b.time);
+    const rawSeries = points.map((p: any) => {
+        const stats = p[1];
+        const time = parseTime(p[0]);
+        const close = stats?.[0] || 0;
+        const changePct = (stats?.[2] || 0) * 100;
 
-    series.forEach((point: any) => {
-        point.value = point.changePct;
-    });
+        const validateAbs = (val: any) => {
+            if (!val || val <= 0) return close;
+            if (val < close * 0.1) return close;
+            return val;
+        };
 
-    if (series.length > 0) {
-        const startVal = series[0].value;
-        series.forEach((point: any) => {
-            point.value -= startVal;
-        });
-    }
+        const high = validateAbs(stats?.[3]);
+        const low = validateAbs(stats?.[4]);
+        const open = validateAbs(stats?.[5]);
+        const volume = p[2] || 0;
+
+        return { time, close, open, high, low, volume, changePct };
+    }).filter((p: any) => isFinite(p.close) && p.time > 0)
+        .sort((a: any, b: any) => a.time - b.time);
+
+    if (rawSeries.length === 0) return null;
+
+    const lastRawClose = rawSeries[rawSeries.length - 1].close;
+    const needsScaling = absolutePrice && absolutePrice > 5 && (Math.abs(lastRawClose - absolutePrice) > absolutePrice * 0.5);
+    const scaleFactor = needsScaling ? (absolutePrice / lastRawClose) : 1.0;
+
+    const series = rawSeries.map((p: any) => ({
+        ...p,
+        close: p.close * scaleFactor,
+        open: p.open * scaleFactor,
+        high: p.high * scaleFactor,
+        low: p.low * scaleFactor,
+        price: p.close * scaleFactor, // Compatibility alias
+        value: p.changePct
+    }));
+
+    const startVal = series[0].value;
+    series.forEach((p: any) => { p.value -= startVal; });
 
     return {
         symbol: cleanSymbol(symbolInfo[0]),
@@ -1200,7 +1224,7 @@ export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M'
         if (prices.length < 5) return;
 
         const currentPrice = prices[prices.length - 1];
-        const dayIndices: Record<string, number> = { '1D': 1, '5D': 5, '1M': 20, '6M': 125, '1Y': 250, YTD: 250 };
+        const dayIndices: Record<string, number> = { '1D': 1, '5D': 5, '1M': 20, '3M': 60, '6M': 125, '1Y': 250, YTD: 250 };
         const lookback = dayIndices[interval] || 20;
         const startIndex = Math.max(0, prices.length - 1 - lookback);
         const startPrice = prices[startIndex];
@@ -1227,6 +1251,7 @@ export async function fetchUnifiedTrackerData(symbols: string[], interval = '1M'
                 ema150,
                 ema200,
             },
+            hasBreadth: true,
         };
 
         const row = buildCacheRow(data, null, 300_000);

@@ -19,6 +19,7 @@ export const Navbar = ({ view, navigate }: NavbarProps) => {
         { label: 'Domain Vector', view: 'DOMAIN', matches: ['DOMAIN', 'SECTOR', 'INDUSTRY'] },
         { label: 'Tracker', view: 'TRACKER' },
         { label: 'Comparison', view: 'COMPARE' },
+        { label: 'Mapper', view: 'MAPPER' },
     ];
 
     const isActive = (item: any) => {

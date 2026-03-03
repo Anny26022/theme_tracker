@@ -14,7 +14,8 @@ import { Image } from 'expo-image';
 import { Search, X, Layers } from 'lucide-react-native';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
-import { THEMATIC_MAP, BlockDefinition, ThemeDefinition } from '@core/market/thematicMap';
+import { useThematicData } from '../hooks/useThematicData';
+import { THEMATIC_MAP, MACRO_PILLARS, BlockDefinition, ThemeDefinition } from '@core/market/thematicMap';
 import { useTheme } from '../contexts/ThemeContext';
 import { cleanSymbol } from '../services/priceService';
 
@@ -22,7 +23,9 @@ const COLUMNS = [
     { label: '1D', key: '1D' },
     { label: '1W', key: '5D' },
     { label: '1M', key: '1M' },
+    { label: '3M', key: '3M' },
     { label: '6M', key: '6M' },
+    { label: '12M', key: '1Y' },
     { label: 'YTD', key: 'YTD' }
 ];
 
@@ -129,7 +132,7 @@ const CompositionCard = memo(({ theme, companies, stockPerfMap, stockPerfVersion
 });
 CompositionCard.displayName = 'CompositionCard';
 
-const ThemeRow = memo(({ theme, companies, themePerf, stockPerfMap, stockPerfVersion, colors, isHighlighted }: any) => {
+const ThemeRow = memo(({ theme, companies, themePerf, stockPerfMap, stockPerfVersion, colors, isHighlighted, onSelect }: any) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const scaleAnim = useRef(new Animated.Value(1)).current;
 
@@ -157,7 +160,9 @@ const ThemeRow = memo(({ theme, companies, themePerf, stockPerfMap, stockPerfVer
                 onPress={openPopover}
             >
                 <Animated.View style={[viewStyles.themeNameContainer, { transform: [{ scale: scaleAnim }] }]}>
-                    <Text style={[viewStyles.themeNameText, { color: colors.textMain }, isHighlighted && { color: colors.accentPrimary }]}>{theme.name}</Text>
+                    <Pressable onPress={() => onSelect(theme.name, companies)}>
+                        <Text style={[viewStyles.themeNameText, { color: colors.textMain }, isHighlighted && { color: colors.accentPrimary }]}>{theme.name}</Text>
+                    </Pressable>
                     <Text style={[viewStyles.themeCountText, { color: colors.textMuted }]}>({companies.length})</Text>
                 </Animated.View>
                 <View style={viewStyles.themePerfGrid}>
@@ -203,10 +208,17 @@ const ThemeRow = memo(({ theme, companies, themePerf, stockPerfMap, stockPerfVer
 });
 ThemeRow.displayName = 'ThemeRow';
 
-export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
+import { UniverseLoader } from '../components/UniverseLoader';
+import { ThematicGridChartView } from './ThematicGridChartView';
+import { BarChart3, LayoutPanelLeft } from 'lucide-react-native';
+
+export const MarketMapView = ({ hierarchy, onOpenInsights, onSelect }: any) => {
     const { colors } = useTheme();
     const [hideBSE, setHideBSE] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [viewMode, setViewMode] = useState<'THEMATIC' | 'MACRO'>('THEMATIC');
+    const [displayMode, setDisplayMode] = useState<'HEATMAP' | 'CHARTS'>('HEATMAP');
+    const [activeTheme, setActiveTheme] = useState<{ name: string, companies: any[] } | null>(null);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [highlightedTheme, setHighlightedTheme] = useState<string | null>(null);
     const listRef = useRef<FlatList>(null);
@@ -230,66 +242,9 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
         return newHierarchy;
     }, [hierarchy, hideBSE, isBSESymbol]);
 
-    const industryMap = useMemo(() => {
-        const map: any = {};
-        if (!filteredHierarchy) return map;
-        Object.keys(filteredHierarchy).forEach(sector => {
-            const industries = filteredHierarchy[sector];
-            if (industries) {
-                Object.keys(industries).forEach(ind => {
-                    map[ind] = industries[ind];
-                });
-            }
-        });
-        return map;
-    }, [filteredHierarchy]);
+    const { themeCompaniesMap } = useThematicData();
 
-    const symbolNameMap = useMemo(() => {
-        const map = new Map<string, string>();
-        Object.keys(industryMap).forEach((industry) => {
-            const companies = industryMap[industry];
-            if (!Array.isArray(companies)) return;
-            companies.forEach((company) => {
-                if (company?.symbol && !map.has(company.symbol)) {
-                    map.set(company.symbol, company.name || company.symbol);
-                }
-            });
-        });
-        return map;
-    }, [industryMap]);
-
-    const themeCompaniesMap = useMemo(() => {
-        const next: any = {};
-        THEMATIC_MAP.forEach((block) => {
-            block.themes.forEach((theme) => {
-                const symbolToName = new Map<string, string>();
-                if (theme.industries) {
-                    theme.industries.forEach((industry) => {
-                        const companies = industryMap[industry];
-                        if (!Array.isArray(companies)) return;
-                        companies.forEach((company: any) => {
-                            if (company?.symbol && !symbolToName.has(company.symbol)) {
-                                symbolToName.set(company.symbol, company.name || company.symbol);
-                            }
-                        });
-                    });
-                }
-                if (theme.symbols) {
-                    theme.symbols.forEach((symbol) => {
-                        if (!symbolToName.has(symbol)) {
-                            symbolToName.set(symbol, symbolNameMap.get(symbol) || symbol);
-                        }
-                    });
-                }
-                next[theme.name] = Array.from(symbolToName.entries())
-                    .map(([symbol, name]) => ({ symbol, name }))
-                    .sort((a, b) => a.name.localeCompare(b.name));
-            });
-        });
-        return next;
-    }, [industryMap, symbolNameMap]);
-
-    const { heatmapData, stockPerfMap, stockPerfVersion } = useThematicHeatmap(filteredHierarchy);
+    const { heatmapData, stockPerfMap, stockPerfVersion, loading } = useThematicHeatmap(filteredHierarchy);
 
     const searchIndex = useMemo(() => {
         const index: any[] = [];
@@ -357,10 +312,51 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
                     stockPerfVersion={stockPerfVersion}
                     colors={colors}
                     isHighlighted={highlightedTheme === theme.name}
+                    onSelect={(name: string, companies: any[]) => {
+                        setActiveTheme({ name, companies });
+                        setDisplayMode('CHARTS');
+                    }}
                 />
             ))}
         </View>
     ), [themeCompaniesMap, heatmapData, stockPerfMap, stockPerfVersion, colors, highlightedTheme]);
+
+    const renderPillar = useCallback(({ item: pillar }: { item: any }) => (
+        <View style={viewStyles.blockContainer}>
+            <View style={[viewStyles.pillarHeader, { backgroundColor: colors.accentPrimary + '15', borderLeftColor: colors.accentPrimary }]}>
+                <Layers size={14} color={colors.accentPrimary} />
+                <Text style={[viewStyles.pillarTitle, { color: colors.accentPrimary }]}>{pillar.title}</Text>
+            </View>
+            {pillar.blocks.map((blockTitle: string) => {
+                const block = THEMATIC_MAP.find(b => b.title === blockTitle);
+                if (!block) return null;
+                return (
+                    <View key={block.title} style={{ marginBottom: 16 }}>
+                        <View style={viewStyles.blockHeader}>
+                            <Text style={[viewStyles.blockTitle, { color: colors.textMain }]}>{block.title}</Text>
+                        </View>
+                        {block.themes.map((theme: ThemeDefinition) => (
+                            <ThemeRow
+                                key={theme.name}
+                                theme={theme}
+                                companies={themeCompaniesMap[theme.name] || []}
+                                themePerf={heatmapData[theme.name] || {}}
+                                stockPerfMap={stockPerfMap}
+                                stockPerfVersion={stockPerfVersion}
+                                colors={colors}
+                                isHighlighted={highlightedTheme === theme.name}
+                                onSelect={(name: string, companies: any[]) => {
+                                    setActiveTheme({ name, companies });
+                                    setDisplayMode('CHARTS');
+                                }}
+                            />
+                        ))}
+                    </View>
+                );
+            })}
+        </View>
+    ), [themeCompaniesMap, heatmapData, stockPerfMap, stockPerfVersion, colors, highlightedTheme]);
+
 
     return (
         <ViewWrapper style={viewStyles.container}>
@@ -372,6 +368,20 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
                     </Text>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                    <Pressable
+                        onPress={() => setDisplayMode(prev => prev === 'HEATMAP' ? 'CHARTS' : 'HEATMAP')}
+                        style={[viewStyles.toggleBtn, { borderColor: colors.uiDivider }, displayMode === 'CHARTS' && { backgroundColor: colors.accentPrimary + '20', borderColor: colors.accentPrimary + '40' }]}
+                    >
+                        {displayMode === 'HEATMAP' ? <BarChart3 size={16} color={colors.accentPrimary} /> : <LayoutPanelLeft size={16} color={colors.accentPrimary} />}
+                    </Pressable>
+                    <Pressable
+                        onPress={() => setViewMode(prev => prev === 'THEMATIC' ? 'MACRO' : 'THEMATIC')}
+                        style={[viewStyles.toggleBtn, { borderColor: colors.uiDivider }]}
+                    >
+                        <Text style={[viewStyles.toggleBtnText, { color: colors.accentPrimary, fontWeight: '900' }]}>
+                            {viewMode}
+                        </Text>
+                    </Pressable>
                     <Pressable onPress={() => setIsSearchOpen(true)} style={viewStyles.searchIconBtn}>
                         <Search size={18} color={colors.textMuted} />
                     </Pressable>
@@ -380,7 +390,7 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
                         style={[viewStyles.toggleBtn, { borderColor: colors.uiDivider }, hideBSE && { backgroundColor: colors.accentPrimary + '20', borderColor: colors.accentPrimary + '40' }]}
                     >
                         <Text style={[viewStyles.toggleBtnText, { color: colors.textMuted }, hideBSE && { color: colors.accentPrimary }]}>
-                            {hideBSE ? 'NSE ONLY' : 'ALL'}
+                            {hideBSE ? 'NSE' : 'ALL'}
                         </Text>
                     </Pressable>
                 </View>
@@ -388,21 +398,32 @@ export const MarketMapView = ({ hierarchy, onOpenInsights }: any) => {
 
             <Legend colors={colors} />
 
-            <FlatList
-                ref={listRef}
-                data={THEMATIC_MAP}
-                renderItem={renderBlock}
-                keyExtractor={keyExtractor}
-                contentContainerStyle={viewStyles.listContent}
-                showsVerticalScrollIndicator={false}
-                initialNumToRender={5}
-                windowSize={5}
-                maxToRenderPerBatch={5}
-                removeClippedSubviews={true}
-                onScrollToIndexFailed={(info) => {
-                    listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true });
-                }}
-            />
+            {loading && <UniverseLoader />}
+
+            {displayMode === 'CHARTS' ? (
+                <ThematicGridChartView
+                    themeName={activeTheme?.name || 'GLOBAL CORE'}
+                    companies={activeTheme?.companies || Object.values(themeCompaniesMap).flat()}
+                    onBack={() => setDisplayMode('HEATMAP')}
+                    onOpenInsights={onOpenInsights}
+                    onSelectTheme={(name: string) => setActiveTheme({ name, companies: themeCompaniesMap[name] || [] })}
+                    viewMode={viewMode}
+                    onViewModeChange={setViewMode}
+                />
+            ) : (
+                <FlatList
+                    ref={listRef}
+                    data={(viewMode === 'THEMATIC' ? THEMATIC_MAP : MACRO_PILLARS) as any[]}
+                    renderItem={(viewMode === 'THEMATIC' ? renderBlock : renderPillar) as any}
+                    keyExtractor={(item) => item.title}
+                    contentContainerStyle={viewStyles.listContent}
+                    showsVerticalScrollIndicator={false}
+                    initialNumToRender={5}
+                    windowSize={5}
+                    maxToRenderPerBatch={5}
+                    removeClippedSubviews={true}
+                />
+            )}
 
             <Modal visible={isSearchOpen} transparent={true} animationType="fade" onRequestClose={() => setIsSearchOpen(false)}>
                 <View style={viewStyles.searchOverlay}>
@@ -483,10 +504,30 @@ const viewStyles = StyleSheet.create({
     legendItem: { alignItems: 'center', gap: 2 },
     legendColor: { width: 20, height: 3, borderRadius: 2 },
     legendText: { fontSize: 6, fontWeight: 'bold', letterSpacing: 1 },
+    blockTitle: {
+        fontSize: 12,
+        fontWeight: 'bold',
+        letterSpacing: 2,
+    },
+    pillarHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderLeftWidth: 4,
+        marginBottom: 20,
+        borderRadius: 4,
+    },
+    pillarTitle: {
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 2,
+        textTransform: 'uppercase',
+    },
     listContent: { padding: 16, paddingBottom: 100 },
     blockContainer: { marginBottom: 32 },
     blockHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, marginBottom: 12 },
-    blockTitle: { fontSize: 11, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' },
     tableHeader: { flexDirection: 'row', paddingHorizontal: 4, marginBottom: 8, opacity: 0.4 },
     headerLabel: { fontSize: 7, fontWeight: 'bold', letterSpacing: 1, textTransform: 'uppercase' },
     headerLabelCenter: { flex: 1, fontSize: 7, fontWeight: 'bold', letterSpacing: 1, textTransform: 'uppercase', textAlign: 'center' },

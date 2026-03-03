@@ -120,6 +120,14 @@ const ThematicGridChartView = ({
     const chartVersion = useChartVersion();
     const [proViewSymbol, setProViewSymbol] = useState(null);
     const [proViewTimeframe, setProViewTimeframe] = useState('1D');
+    const [isMobileMode, setIsMobileMode] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const handleResize = () => setIsMobileMode(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     const globalCompanyList = useMemo(() => {
         const list = [];
@@ -306,28 +314,50 @@ const ThematicGridChartView = ({
 
             {/* Virtualized Chart Grid */}
             {companySeries.length > 0 ? (
-                <VirtuosoGrid
-                    useWindowScroll
-                    data={companySeries}
-                    components={ChartGridComponents}
-                    computeItemKey={(_, item) => item.company.symbol}
-                    increaseViewportBy={{ top: 200, bottom: 400 }}
-                    itemContent={(idx, item) => (
-                        item.series.length > 0 ? (
-                            <FinvizChartCard
-                                company={item.company}
-                                series={item.series}
-                                height={280}
-                                onExpand={(data) => {
-                                    setProViewSymbol(item.company);
-                                    setProViewTimeframe(data.timeframe);
-                                }}
-                            />
-                        ) : (
-                            <ChartSkeleton company={item.company} height={280} />
-                        )
-                    )}
-                />
+                isMobileMode ? (
+                    <div className="flex overflow-x-auto gap-4 pb-6 snap-x snap-mandatory no-scrollbar scroll-smooth">
+                        {companySeries.map((item) => (
+                            <div key={item.company.symbol} className="min-w-[85vw] md:min-w-[400px] snap-center shrink-0 transition-transform duration-500 hover:scale-[1.02]">
+                                {item.series.length > 0 ? (
+                                    <FinvizChartCard
+                                        company={item.company}
+                                        series={item.series}
+                                        height={320}
+                                        onExpand={(data) => {
+                                            setProViewSymbol(item.company);
+                                            setProViewTimeframe(data.timeframe);
+                                        }}
+                                    />
+                                ) : (
+                                    <ChartSkeleton company={item.company} height={320} />
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <VirtuosoGrid
+                        useWindowScroll
+                        data={companySeries}
+                        components={ChartGridComponents}
+                        computeItemKey={(_, item) => item.company.symbol}
+                        increaseViewportBy={{ top: 200, bottom: 400 }}
+                        itemContent={(idx, item) => (
+                            item.series.length > 0 ? (
+                                <FinvizChartCard
+                                    company={item.company}
+                                    series={item.series}
+                                    height={280}
+                                    onExpand={(data) => {
+                                        setProViewSymbol(item.company);
+                                        setProViewTimeframe(data.timeframe);
+                                    }}
+                                />
+                            ) : (
+                                <ChartSkeleton company={item.company} height={280} />
+                            )
+                        )}
+                    />
+                )
             ) : null}
 
             {companies.length === 0 && (

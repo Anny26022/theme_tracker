@@ -1008,11 +1008,11 @@ export const MarketMapView = ({ hierarchy }) => {
                                             onClick={() => {
                                                 if (displayMode === 'CHARTS') {
                                                     setSelectedThemeName(result.themeName);
+                                                    setSearchQuery('');
+                                                    setIsSearchFocused(false);
                                                 } else {
-                                                    onEnterCharts(result.themeName);
+                                                    scrollToBlock(result.blockId, result.themeName);
                                                 }
-                                                setSearchQuery('');
-                                                setIsSearchFocused(false);
                                             }}
                                             className="w-full flex items-center justify-between py-1.5 px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
                                         >
@@ -1096,6 +1096,7 @@ export const MarketMapView = ({ hierarchy }) => {
                     <ThematicGridChartView
                         themeName={selectedThemeName}
                         companies={themeCompaniesMap[selectedThemeName] || []}
+                        allThemeCompanies={themeCompaniesMap}
                         onBack={onExitCharts}
                         onSelectTheme={setSelectedThemeName}
                         viewMode={viewMode}

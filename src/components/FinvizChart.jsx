@@ -1,6 +1,8 @@
 import React, { useMemo, useRef, useCallback, useState, useEffect } from 'react';
-import { cleanSymbol } from '../services/priceService';
-import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
+import { useMarketDataRegistry, useChartVersion } from '../context/MarketDataContext';
+import { useLivePrice } from '../context/PriceContext';
+import { ZoomIn, ZoomOut, Maximize2, ExternalLink } from 'lucide-react';
 
 /**
  * AUTHENTIC Finviz Replica Component.
@@ -18,11 +20,21 @@ const buildSmaSeries = (values, period) => {
     return result;
 };
 
-let _zc = null;
-const getZC = () => _zc || (_zc = JSON.parse(localStorage.getItem('tt_chart_zoom') || '{}'));
-const saveZC = (s, d) => { getZC()[s] = d; localStorage.setItem('tt_chart_zoom', JSON.stringify(_zc)); };
+let _cs = null;
+const cs = () => _cs || (_cs = JSON.parse(localStorage.getItem('tt_cs_v4') || '{}'));
+const setCs = (s, t, d) => { (cs()[s] ||= {})[t] = d; localStorage.setItem('tt_cs_v4', JSON.stringify(_cs)); };
 
-const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, height = 300 }) {
+const FinvizChart = React.memo(function FinvizChart({
+    symbol,
+    name,
+    series,
+    height = null,
+    onExpand,
+    forcedTimeframe = null,
+    initialTimeframe = '1D',
+    isProMode = false,
+    allCompanies = []
+}) {
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
     const totalPointsRef = useRef(9999);
@@ -34,17 +46,55 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     const tooltipCloseRef = useRef(null);
     const tooltipHighRef = useRef(null);
     const tooltipLowRef = useRef(null);
-    const [zoomDays, _setZoomDays] = useState(() => getZC()[cleaned] || 190);
-    const [panOffset, setPanOffset] = useState(0);
-    const [vScale, setVScale] = useState(1.0);
-    const [timeframe, setTimeframe] = useState('1D'); // '1D', '1W', '1M', '1Y'
-    const dragRef = useRef({ isDragging: false, isYDragging: false, startX: 0, startY: 0, startPan: 0, startVScale: 1.0 });
+    const [internalTimeframe, setInternalTimeframe] = useState(initialTimeframe);
+    const timeframe = forcedTimeframe || internalTimeframe;
+    const setTimeframe = setInternalTimeframe;
 
-    const setZoomDays = useCallback(v => _setZoomDays(prev => {
-        const next = typeof v === 'function' ? v(prev) : v;
-        saveZC(cleaned, next);
-        return next;
-    }), [cleaned]);
+    const init = cs()[cleaned]?.[timeframe] || {};
+    const [zoomDays, setZoomDays] = useState(init.z ?? 168);
+    const [panOffset, setPanOffset] = useState(init.p ?? 0);
+    const [priceOffset, setPriceOffset] = useState(init.y ?? 0);
+    const [vScale, setVScale] = useState(init.v ?? 1.0);
+    const dragRef = useRef({ isDragging: false, isYDragging: false, isFreeDragging: false, startX: 0, startY: 0, startPan: 0, startVPan: 0, startVScale: 1.0 });
+
+    useEffect(() => setCs(cleaned, timeframe, { z: zoomDays, p: panOffset, y: priceOffset, v: vScale }),
+        [cleaned, timeframe, zoomDays, panOffset, priceOffset, vScale]);
+
+    const { subscribeChartSymbols } = useMarketDataRegistry();
+    const chartVersion = useChartVersion();
+
+    const apiInterval = useMemo(() => {
+        if (timeframe === '1D') return '1Y';
+        return 'MAX';
+    }, [timeframe]);
+
+    useEffect(() => {
+        if (!symbol || isProMode) return; // ProMode handles its own fetching
+        return subscribeChartSymbols(apiInterval, [symbol]);
+    }, [symbol, apiInterval, isProMode, subscribeChartSymbols]);
+
+    const activeSeries = useMemo(() => {
+        if (!symbol) return series || [];
+        const cached = getCachedComparisonSeries(cleaned, apiInterval, { silent: true });
+        return (cached && cached.length > 0) ? cached : (series || []);
+    }, [cleaned, apiInterval, chartVersion, series]);
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const obs = new ResizeObserver((entries) => {
+            if (entries[0]) {
+                const { width, height } = entries[0].contentRect;
+                if (width > 0 && height > 0) {
+                    setDimensions({ width, height });
+                }
+            }
+        });
+        obs.observe(containerRef.current);
+        return () => obs.disconnect();
+    }, []);
+
+    const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
+
     const rafRef = useRef(null);
 
     const handleWheel = useCallback((e) => {
@@ -68,10 +118,10 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             const rect = node.getBoundingClientRect();
             const isRight = (clientX - rect.left) > (rect.width - 50);
 
-            if (isRight) {
+            if (isRight || e.shiftKey) {
                 dragRef.current = { ...dragRef.current, isYDragging: true, startY: clientY, startVScale: vScale };
             } else {
-                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startPan: panOffset };
+                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startY: clientY, startPan: panOffset, startVPan: priceOffset };
             }
         };
 
@@ -86,14 +136,16 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
                 setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
             } else {
                 const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDays);
+                const dyPrice = (clientY - dragRef.current.startY); // Pixels transferred to price logic via getY later
                 setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
+                setPriceOffset(dragRef.current.startVPan + dyPrice);
             }
         };
 
         const onEnd = () => { dragRef.current.isDragging = false; dragRef.current.isYDragging = false; };
         const onDblClick = (e) => {
-            const rect = node.getBoundingClientRect();
-            if ((e.clientX - rect.left) > (rect.width - 50)) setVScale(1.0);
+            setVScale(1.0);
+            setPriceOffset(0);
         };
 
         node.addEventListener('wheel', handleWheel, { passive: false });
@@ -115,13 +167,13 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             window.removeEventListener('touchmove', onMove);
             window.removeEventListener('touchend', onEnd);
         };
-    }, [handleWheel, panOffset, zoomDays, vScale]);
+    }, [handleWheel, panOffset, priceOffset, zoomDays, vScale]);
 
     const baseData = useMemo(() => {
-        if (!series || series.length === 0) return null;
+        if (!activeSeries || activeSeries.length === 0) return null;
 
         // 1. Process points
-        let ordered = [...series].sort((a, b) => a.time - b.time);
+        let ordered = [...activeSeries].sort((a, b) => a.time - b.time);
 
         if (timeframe !== '1D') {
             const b = new Map();
@@ -173,16 +225,23 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             sma200Arr,
             totalPoints: allPoints.length
         };
-    }, [series, timeframe]);
+    }, [activeSeries, timeframe]);
 
-    // Reset view and Auto-Zoom on timeframe change
+    // Sync view state cleanly on timeframe/symbol change
     useEffect(() => {
-        setPanOffset(0);
-        if (timeframe === '1W') setZoomDays(100); // 100 weeks ~ 2years
-        else if (timeframe === '1M') setZoomDays(60); // 60 months ~ 5years
-        else if (timeframe === '1Y') setZoomDays(20);
-        else setZoomDays(190); // Default daily
-    }, [timeframe]);
+        const s = cs()[cleaned]?.[timeframe] || {};
+        setZoomDays(s.z ?? { '1W': 100, '1M': 60, '1Y': 20 }[timeframe] ?? 168);
+        setPanOffset(s.p ?? 0);
+        setPriceOffset(s.y ?? 0);
+        setVScale(s.v ?? 1.0);
+    }, [timeframe, cleaned]);
+
+    // Dimensions & Padding
+    const paddingX = 40, paddingLeft = 40, paddingTop = 50, paddingBottom = 45;
+    const W = dimensions.width, H = dimensions.height;
+    const chartW = W - paddingX - paddingLeft;
+    const chartH = H - paddingTop - paddingBottom;
+    const volH = Math.min(60, chartH * 0.15);
 
     const data = useMemo(() => {
         if (!baseData) return null;
@@ -213,31 +272,42 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
             if (p.low < minP) minP = p.low;
             if (p.high > maxP) maxP = p.high;
             if (p.volume > maxV) maxV = p.volume;
-            if (sma50[i] && sma50[i] < minP) minP = sma50[i];
-            if (sma50[i] && sma50[i] > maxP) maxP = sma50[i];
+            // Only include SMAs if they are valid numbers and not zero/outliers
+            if (sma50[i] > 0 && isFinite(sma50[i])) {
+                if (sma50[i] < minP) minP = sma50[i];
+                if (sma50[i] > maxP) maxP = sma50[i];
+            }
+            if (sma200[i] > 0 && isFinite(sma200[i])) {
+                if (sma200[i] < minP) minP = sma200[i];
+                if (sma200[i] > maxP) maxP = sma200[i];
+            }
         });
 
-        // Apply Vertical Scaling
+        // Ensure we have a valid range
+        if (minP === Infinity || maxP === -Infinity) {
+            minP = 0; maxP = 100;
+        }
+
+        // Apply Vertical Scaling and Panning
         const mid = (maxP + minP) / 2;
         const range = (maxP - minP) / vScale;
-        const padding = range * 0.1;
-        minP = mid - range / 2 - padding;
-        maxP = mid + range / 2 + padding;
+        const padding = range * 0.15;
+
+        // Final coordinate window (including user's manual vertical pan)
+        const pricePerPixel = range / chartH;
+        const pOffset = priceOffset * pricePerPixel;
+
+        minP = mid - range / 2 - padding + pOffset;
+        maxP = mid + range / 2 + padding + pOffset;
 
         return {
-            points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP,
+            points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP || 0.01,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays, panOffset, vScale]);
+    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
-
-    const paddingX = 40, paddingLeft = 35, paddingTop = 35, paddingBottom = 25;
-    const W = 600, H = height;
-    const chartW = W - paddingX - paddingLeft;
-    const chartH = H - paddingTop - paddingBottom;
-    const volH = chartH * 0.2;
 
     const getX = useCallback((idx) => data ? paddingLeft + (idx / (data.points.length - 1 || 1)) * chartW : paddingLeft, [data, chartW]);
     const getY = useCallback((p) => data ? paddingTop + (chartH - ((p - data.minP) / (data.pRange || 1)) * chartH) : paddingTop, [data, chartH]);
@@ -321,161 +391,194 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
         if (tooltipRef.current) tooltipRef.current.style.opacity = '0';
     }, []);
 
-    if (!data || points.length < 2) return <div className="bg-[#0b0e14] animate-pulse rounded-md" style={{ height }} />;
+    const candleGraphics = useMemo(() => {
+        if (!data || points.length < 2) return null;
+        const volUp = [], volDown = [];
+        const wickUp = [], wickDown = [];
+        const bodyUpFill = [], bodyUpStroke = [], bodyDown = [];
+        const hw = candleWidth / 2;
 
-    const last = points[points.length - 1];
-    const prevC = points[points.length - 2]?.close || points[0].close;
-    const change = last.close - prevC;
-    const changePct = (change / (prevC || 1)) * 100;
+        points.forEach((p, i) => {
+            const x = getX(i);
+            const prevClose = i > 0 ? points[i - 1].close : p.close;
+            const isUp = p.close >= prevClose;
+            const isHollow = p.close >= p.open;
 
+            // Volume
+            if (maxV > 0 && p.volume > 0) {
+                const vh = (p.volume / maxV) * volH;
+                const vy = H - paddingBottom - vh;
+                (isUp ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
+            }
 
+            // Wicks
+            const highY = getY(p.high), lowY = getY(p.low);
+            (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
+
+            // Bodies
+            const openY = getY(p.open), closeY = getY(p.close);
+            const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
+            const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
+            if (isUp && isHollow) bodyUpStroke.push(bodyD);
+            else if (isUp) bodyUpFill.push(bodyD);
+            else bodyDown.push(bodyD);
+        });
+
+        return (
+            <>
+                {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.3" />}
+                {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.3" />}
+                {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
+                {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
+                {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
+                {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="1" />}
+                {bodyDown.length > 0 && <path d={bodyDown.join('')} fill={colorDown} />}
+            </>
+        );
+    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown]);
+
+    const liveData = useLivePrice(cleaned);
+
+    // Calculate performance explicitly based on timeframe
+    const absolutePoints = baseData?.allPoints || points;
+    const last = absolutePoints[absolutePoints.length - 1] || { close: 0 };
+    const prevC = absolutePoints[absolutePoints.length - 2]?.close || absolutePoints[0]?.close || 0;
+
+    // Default manual calculation from chart 
+    let change = last.close - prevC;
+    let changePct = prevC ? (change / prevC) * 100 : 0;
+
+    // Override absolutely everywhere with synchronized live market data for Daily performance (to fix cache races)
+    if (timeframe === '1D' && liveData.changePct !== null) {
+        change = liveData.change ?? 0;
+        changePct = liveData.changePct;
+    }
 
     return (
         <>
-            {/* Timeframe Toggles - Ultra Mini */}
-            <div className="flex flex-row justify-end gap-0.5 mb-1 px-1">
-                {['1D', '1W', '1M', '1Y'].map(tf => (
-                    <button
-                        key={tf}
-                        onClick={(e) => { e.stopPropagation(); setTimeframe(tf); }}
-                        className={`px-1 py-0 rounded-[2px] text-[7px] font-black tracking-tighter border transition-all ${timeframe === tf ? 'bg-[var(--accent-primary)] text-black border-[var(--accent-primary)]' : 'bg-[#1a1c22]/50 border-white/5 text-white/20 hover:text-white hover:border-white/10'}`}
-                    >
-                        {tf}
-                    </button>
-                ))}
-            </div>
-
-            <div ref={containerRef} className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden" style={{ height }}>
-                {/* Legend */}
-                <div className="absolute top-1.5 left-3 right-2 flex justify-between items-start pointer-events-none z-10">
-                    <div className="flex flex-col">
-                        <div className="flex items-baseline gap-1.5">
-                            <span className="text-[16px] font-black tracking-tight text-white uppercase">
-                                {/^\d+$/.test(cleaned) ? (name || symbol) : cleaned}
-                            </span>
-                        </div>
-                        <div className="flex flex-col text-[9px] font-black leading-tight -mt-0.5">
-                            <span style={{ color: colorSma50 }}>SMA 50</span>
-                            <span style={{ color: colorSma200 }}>SMA 200</span>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col items-end leading-none">
-                        <span className="text-gray-800 text-[8px] font-black tracking-widest opacity-30">© FINVIZ.COM</span>
-                        <span className="text-[12px] font-black italic mt-1" style={{ color: change >= 0 ? colorUp : colorDown }}>
-                            {change >= 0 ? '+' : ''}{change.toFixed(2)} ({Math.abs(changePct).toFixed(2)}%)
-                        </span>
-                    </div>
-                </div>
-
-                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
-                    <button onClick={() => setZoomDays(prev => Math.max(20, Math.round(prev * 0.7)))} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
-                    <button onClick={() => setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4)))} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
-                    <button onClick={() => { setZoomDays(190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
-                </div>
-
-                <div
-                    ref={chartAreaRef}
-                    className="flex-1 relative cursor-crosshair mt-2"
-                    onMouseMove={handleMouseMove}
-                    onMouseLeave={handleMouseLeave}
-                >
-                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
-
-                        {/* Volume Labels (Left Axis) */}
-                        {maxV > 0 && (
-                            <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
-                                <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
-                                <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
-                            </g>
-                        )}
-
-                        {smaLines}
-
-                        {/* Batched volume + candles via path strings for perf (~6 DOM nodes instead of ~570) */}
-                        {useMemo(() => {
-                            const volUp = [], volDown = [];
-                            const wickUp = [], wickDown = [];
-                            const bodyUpFill = [], bodyUpStroke = [], bodyDown = [];
-                            const hw = candleWidth / 2;
-
-                            points.forEach((p, i) => {
-                                const x = getX(i);
-                                const prevClose = i > 0 ? points[i - 1].close : p.close;
-                                const isUp = p.close >= prevClose;
-                                const isHollow = p.close >= p.open;
-
-                                // Volume
-                                if (maxV > 0 && p.volume > 0) {
-                                    const vh = (p.volume / maxV) * volH;
-                                    const vy = H - paddingBottom - vh;
-                                    (isUp ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
-                                }
-
-                                // Wicks
-                                const highY = getY(p.high), lowY = getY(p.low);
-                                (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
-
-                                // Bodies
-                                const openY = getY(p.open), closeY = getY(p.close);
-                                const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
-                                const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
-                                if (isUp && isHollow) bodyUpStroke.push(bodyD);
-                                else if (isUp) bodyUpFill.push(bodyD);
-                                else bodyDown.push(bodyD);
-                            });
-
-                            return (
-                                <>
-                                    {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.3" />}
-                                    {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.3" />}
-                                    {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
-                                    {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
-                                    {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
-                                    {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="1" />}
-                                    {bodyDown.length > 0 && <path d={bodyDown.join('')} fill={colorDown} />}
-                                </>
-                            );
-                        }, [points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown])}
-
-                        <g transform={`translate(${W - paddingX + 5}, 0)`}>
-                            {[0, 0.25, 0.5, 0.75, 1].map(v => (
-                                <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
-                                    {(maxP - (maxP - minP) * v).toFixed(1)}
-                                </text>
+            {(!data || points.length < 2) ? (
+                <div className="bg-[#0b0e14] animate-pulse rounded-md" style={{ height: height || '100%' }} />
+            ) : (
+                <>
+                    {/* Timeframe Toggles - Ultra Mini */}
+                    {!isProMode && (
+                        <div className="flex flex-row justify-end gap-0.5 mb-1 px-1">
+                            {['1D', '1W', '1M', '1Y'].map(tf => (
+                                <button
+                                    key={tf}
+                                    onClick={(e) => { e.stopPropagation(); setTimeframe(tf); }}
+                                    className={`px-1 py-0 rounded-[2px] text-[7px] font-black tracking-tighter border transition-all ${timeframe === tf ? 'bg-[var(--accent-primary)] text-black border-[var(--accent-primary)]' : 'bg-[#1a1c22]/50 border-white/5 text-white/20 hover:text-white hover:border-white/10'}`}
+                                >
+                                    {tf}
+                                </button>
                             ))}
-                        </g>
-                        {monthLabels.map((m, i) => (
-                            <text
-                                key={i}
-                                x={m.x}
-                                y={H - 8}
-                                fill={m.isYear ? "#888" : "#444"}
-                                fontSize={m.isYear ? "11" : "10"}
-                                fontWeight={m.isYear ? "900" : "800"}
-                                fontFamily="monospace"
-                                textAnchor="middle"
-                            >
-                                {m.text}
-                            </text>
-                        ))}
-                    </svg>
+                        </div>
+                    )}
 
                     <div
-                        ref={tooltipRef}
-                        className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
-                        style={{ opacity: 0 }}
+                        ref={containerRef}
+                        className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden w-full"
+                        style={{ height: height ? `${height}px` : '100%' }}
                     >
-                        <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
-                        <div className="grid grid-cols-2 gap-x-2">
-                            <span ref={tooltipOpenRef}>O: —</span>
-                            <span ref={tooltipCloseRef}>C: —</span>
-                            <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
-                            <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
+                        {/* Legend */}
+                        <div className="absolute top-1.5 left-3 right-2 flex justify-between items-start pointer-events-none z-10">
+                            <div className="flex flex-col">
+                                {!isProMode && (
+                                    <div className="flex items-baseline gap-1.5 flex-wrap">
+                                        <span className="text-[16px] font-black tracking-tight text-white uppercase">
+                                            {/^\d+$/.test(cleaned) ? (name || symbol) : cleaned}
+                                        </span>
+                                    </div>
+                                )}
+                                <div className="flex flex-col text-[9px] font-black leading-tight mt-1">
+                                    <span style={{ color: colorSma50 }}>SMA 50</span>
+                                    <span style={{ color: colorSma200 }}>SMA 200</span>
+                                </div>
+                            </div>
+
+                            {!isProMode && (
+                                <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center justify-center pointer-events-none mt-0.5">
+                                    <span className="text-[12px] font-black italic" style={{ color: change >= 0 ? colorUp : colorDown }}>
+                                        {change >= 0 ? '+' : ''}{change.toFixed(2)} ({Math.abs(changePct).toFixed(2)}%)
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
+                            <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.max(20, Math.round(prev * 0.7))); }} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4))); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setZoomDays(190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
+                            {!isProMode && onExpand && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onExpand({ symbol, name, series, timeframe }); }}
+                                    className="p-0.5 hover:bg-[var(--accent-primary)] hover:text-black rounded ml-1 transition-colors"
+                                >
+                                    <ExternalLink size={10} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div
+                            ref={chartAreaRef}
+                            className="flex-1 relative cursor-crosshair"
+                            onMouseMove={handleMouseMove}
+                            onMouseLeave={handleMouseLeave}
+                        >
+                            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
+
+                                {/* Volume Labels (Left Axis) */}
+                                {maxV > 0 && (
+                                    <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
+                                        <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
+                                        <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
+                                    </g>
+                                )}
+
+                                {smaLines}
+
+                                {candleGraphics}
+
+                                <g transform={`translate(${W - paddingX + 5}, 0)`}>
+                                    {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                                        <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                                            {(maxP - (maxP - minP) * v).toFixed(1)}
+                                        </text>
+                                    ))}
+                                </g>
+                                {monthLabels.map((m, i) => (
+                                    <text
+                                        key={i}
+                                        x={m.x}
+                                        y={H - 8}
+                                        fill={m.isYear ? "#888" : "#444"}
+                                        fontSize={m.isYear ? "11" : "10"}
+                                        fontWeight={m.isYear ? "900" : "800"}
+                                        fontFamily="monospace"
+                                        textAnchor="middle"
+                                    >
+                                        {m.text}
+                                    </text>
+                                ))}
+                            </svg>
+
+                            <div
+                                ref={tooltipRef}
+                                className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
+                                style={{ opacity: 0 }}
+                            >
+                                <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
+                                <div className="grid grid-cols-2 gap-x-2">
+                                    <span ref={tooltipOpenRef}>O: —</span>
+                                    <span ref={tooltipCloseRef}>C: —</span>
+                                    <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
+                                    <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </div>
+                </>
+            )}
         </>
     );
 }, (prevProps, nextProps) => {
@@ -483,6 +586,7 @@ const FinvizChart = React.memo(function FinvizChart({ symbol, name, series, heig
     if (prevProps.symbol !== nextProps.symbol) return false;
     if (prevProps.name !== nextProps.name) return false;
     if (prevProps.series !== nextProps.series) return false;
+    if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
     return true;
 });
 

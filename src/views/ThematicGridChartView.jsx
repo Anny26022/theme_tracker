@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import FinvizChart from '../components/FinvizChart';
 import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
-import { ChevronLeft, ChevronDown, Layers } from 'lucide-react';
+import { ChevronLeft, ChevronDown, Layers, ExternalLink } from 'lucide-react';
+import ProChartModal from '../components/ProChartModal';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 import { VirtuosoGrid } from 'react-virtuoso';
@@ -18,12 +19,14 @@ const ChartSkeleton = ({ company, height }) => (
     </div>
 );
 
-const FinvizChartCard = React.memo(({ company, series, height }) => (
+const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe }) => (
     <FinvizChart
         symbol={company.symbol}
         name={company.name}
         series={series}
         height={height}
+        onExpand={onExpand}
+        initialTimeframe={initialTimeframe}
     />
 ), (prevProps, nextProps) => {
     if (prevProps.series !== nextProps.series) return false;
@@ -33,7 +36,7 @@ const FinvizChartCard = React.memo(({ company, series, height }) => (
     return true;
 });
 
-const DeferredFinvizChart = React.memo(({ company, series, height }) => {
+const DeferredFinvizChart = React.memo(({ company, series, height, onExpand }) => {
     const [isVisible, setIsVisible] = useState(false);
     const containerRef = useRef(null);
 
@@ -65,6 +68,7 @@ const DeferredFinvizChart = React.memo(({ company, series, height }) => {
                         company={company}
                         series={series}
                         height={height}
+                        onExpand={onExpand}
                     />
                 ) : (
                     <ChartSkeleton company={company} height={height} />
@@ -102,11 +106,34 @@ const ChartGridComponents = {
 
 ChartGridComponents.List.displayName = 'ChartGridList';
 
-const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectTheme, viewMode = 'THEMATIC' }) => {
+const ThematicGridChartView = ({
+    themeName,
+    companies = [],
+    allThemeCompanies = {},
+    onBack,
+    onSelectTheme,
+    viewMode = 'THEMATIC'
+}) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef(null);
     const { subscribeChartSymbols } = useMarketDataRegistry();
     const chartVersion = useChartVersion();
+    const [proViewSymbol, setProViewSymbol] = useState(null);
+    const [proViewTimeframe, setProViewTimeframe] = useState('1D');
+
+    const globalCompanyList = useMemo(() => {
+        const list = [];
+        const seen = new Set();
+        Object.entries(allThemeCompanies).forEach(([tName, tCompanies]) => {
+            tCompanies.forEach(c => {
+                if (!seen.has(c.symbol)) {
+                    list.push({ ...c, theme: tName });
+                    seen.add(c.symbol);
+                }
+            });
+        });
+        return list;
+    }, [allThemeCompanies]);
 
     // Reset when theme changes
     useEffect(() => {
@@ -162,6 +189,17 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
         });
         return map;
     }, [normalizedSymbols, chartVersion]);
+
+    // Handle Pro View Symbol Subscription
+    useEffect(() => {
+        if (!proViewSymbol) return;
+        return subscribeChartSymbols('MAX', [cleanSymbol(proViewSymbol.symbol)]);
+    }, [proViewSymbol, subscribeChartSymbols]);
+
+    const proViewSeries = useMemo(() => {
+        if (!proViewSymbol) return [];
+        return getCachedComparisonSeries(cleanSymbol(proViewSymbol.symbol), 'MAX', { silent: true }) || [];
+    }, [proViewSymbol, chartVersion]);
 
     const companySeries = useMemo(() => {
         return companies.map((company) => ({
@@ -280,6 +318,10 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
                                 company={item.company}
                                 series={item.series}
                                 height={280}
+                                onExpand={(data) => {
+                                    setProViewSymbol(item.company);
+                                    setProViewTimeframe(data.timeframe);
+                                }}
                             />
                         ) : (
                             <ChartSkeleton company={item.company} height={280} />
@@ -292,6 +334,24 @@ const ThematicGridChartView = ({ themeName, companies = [], onBack, onSelectThem
                 <div className="flex flex-col items-center justify-center py-20 opacity-20">
                     <span className="text-[10px] font-black uppercase tracking-[0.5em]">No Stocks in Cluster</span>
                 </div>
+            )}
+            {proViewSymbol && (
+                <ProChartModal
+                    isOpen={!!proViewSymbol}
+                    symbol={proViewSymbol.symbol}
+                    name={proViewSymbol.name}
+                    series={proViewSeries}
+                    allCompanies={globalCompanyList}
+                    navigationCompanies={companies}
+                    initialTimeframe={proViewTimeframe}
+                    onClose={() => setProViewSymbol(null)}
+                    onSymbolChange={(s) => {
+                        setProViewSymbol(s);
+                        if (s.theme && s.theme !== themeName) {
+                            onSelectTheme(s.theme);
+                        }
+                    }}
+                />
             )}
         </div>
     );

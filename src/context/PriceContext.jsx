@@ -30,7 +30,11 @@ export function useLivePrice(symbol) {
         if (live) return live;
         // Fallback: reuse interval cache (close + changePct from Tracker/Theme)
         const interval = getCachedInterval(symbol, '1D', { silent: true });
-        if (interval?.close) return { price: interval.close, change: null, changePct: interval.changePct, prevClose: null, source: 'interval' };
+        if (interval?.close && interval.changePct !== undefined) {
+            const prev = interval.close / (1 + (interval.changePct / 100));
+            const chg = interval.close - prev;
+            return { price: interval.close, change: chg, changePct: interval.changePct, prevClose: prev, source: 'interval' };
+        }
         return null;
     }, [symbol, liveVersion]);
 

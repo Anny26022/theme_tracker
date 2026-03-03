@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, memo } from '
 import { Plus, Trash2, ChevronDown, MoreHorizontal, LayoutPanelLeft, Flag, Check } from 'lucide-react';
 import { cleanSymbol, getCachedInterval, getCachedPrice } from '../services/priceService';
 import { useLiveVersion } from '../context/MarketDataContext';
+import { Virtuoso } from 'react-virtuoso';
 
 const FLAG_COLORS = [
     { id: 'red', hex: '#ff5252' },
@@ -13,13 +14,23 @@ const FLAG_COLORS = [
     { id: 'pink', hex: '#e91e63' },
     { id: 'none', hex: 'transparent' }
 ];
+const FALLBACK_LIST = { id: 'default', name: 'WATCHLIST', symbols: [] };
+const MISSING_SYMBOL_LOGOS = new Set();
+const WatchlistScroller = React.forwardRef(({ className = '', ...props }, ref) => (
+    <div
+        ref={ref}
+        {...props}
+        className={`h-full overflow-y-auto no-scrollbar ${className}`.trim()}
+    />
+));
+WatchlistScroller.displayName = 'WatchlistScroller';
 
-const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
-    const [watchlists, setWatchlists] = useState(() => {
+const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
+    const [watchlists, _setWatchlists] = useState(() => {
         const saved = localStorage.getItem('tt_pro_watchlists');
         return saved ? JSON.parse(saved) : [{ id: 'default', name: 'WATCHLIST', symbols: [] }];
     });
-    const [activeListId, setActiveListId] = useState(() => {
+    const [activeListId, _setActiveListId] = useState(() => {
         return localStorage.getItem('tt_pro_active_watchlist') || 'default';
     });
     const [isListSelectorOpen, setIsListSelectorOpen] = useState(false);
@@ -27,7 +38,7 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [width, setWidth] = useState(() => parseInt(localStorage.getItem('tt_pro_wl_width')) || 300);
-    const [config, setConfig] = useState(() => {
+    const [config, _setConfig] = useState(() => {
         const saved = localStorage.getItem('tt_pro_wl_config');
         return saved ? JSON.parse(saved) : { showLast: true, showChange: true, compact: false };
     });
@@ -35,15 +46,25 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
     const addInputRef = useRef(null);
     const isResizing = useRef(false);
     const containerRef = useRef(null);
+    const onSymbolSelectRef = useRef(onSymbolSelect);
+    onSymbolSelectRef.current = onSymbolSelect;
 
-    // Sync filter state during render - cleaner alternative to useEffect
-    if (filterColor !== 'all' && !activeList.symbols.some(s => s.color === filterColor)) {
-        setFilterColor('all');
-    }
-
-    useEffect(() => {
-        localStorage.setItem('tt_pro_wl_config', JSON.stringify(config));
-    }, [config]);
+    const setWatchlists = useCallback((updater) => _setWatchlists((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_watchlists', JSON.stringify(next));
+        return next;
+    }), []);
+    const setActiveListId = useCallback((updater) => _setActiveListId((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        if (next) localStorage.setItem('tt_pro_active_watchlist', next);
+        else localStorage.removeItem('tt_pro_active_watchlist');
+        return next;
+    }), []);
+    const setConfig = useCallback((updater) => _setConfig((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_wl_config', JSON.stringify(next));
+        return next;
+    }), []);
 
     useEffect(() => {
         const onMove = (e) => {
@@ -81,17 +102,13 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
         document.body.style.userSelect = 'none';
     };
 
-    useEffect(() => {
-        localStorage.setItem('tt_pro_watchlists', JSON.stringify(watchlists));
-    }, [watchlists]);
-
-    useEffect(() => {
-        localStorage.setItem('tt_pro_active_watchlist', activeListId);
-    }, [activeListId]);
-
     const activeList = useMemo(() =>
-        watchlists.find(l => l.id === activeListId) || watchlists[0],
+        watchlists.find(l => l.id === activeListId) || watchlists[0] || FALLBACK_LIST,
         [watchlists, activeListId]);
+    const effectiveFilterColor = useMemo(() => {
+        if (filterColor === 'all') return 'all';
+        return activeList.symbols.some((s) => s.color === filterColor) ? filterColor : 'all';
+    }, [activeList, filterColor]);
 
     const handleCreateList = () => {
         const name = prompt('Enter Watchlist Name:');
@@ -120,6 +137,7 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
             }
             return l;
         }));
+        if (effectiveFilterColor !== 'all') setFilterColor('all');
         setIsAdding(false);
         setSearchQuery('');
     };
@@ -154,6 +172,7 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
                 }
                 return l;
             }));
+            if (effectiveFilterColor !== 'all') setFilterColor('all');
             setIsAdding(false);
             setSearchQuery('');
         }
@@ -176,6 +195,9 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
             return l;
         }));
     }, [activeListId]);
+    const handleSymbolSelect = useCallback((symbolData) => {
+        onSymbolSelectRef.current?.(symbolData);
+    }, []);
 
     const filteredSearch = useMemo(() => {
         if (!searchQuery) return [];
@@ -195,6 +217,50 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
             return aSym.localeCompare(bSym);
         }).slice(0, 8);
     }, [searchQuery, allCompanies]);
+
+    const visibleEntries = useMemo(() => {
+        return activeList.symbols.reduce((acc, symbolEntry, originalIndex) => {
+            if (effectiveFilterColor !== 'all') {
+                if (symbolEntry.isHeader) return acc;
+                if (symbolEntry.color !== effectiveFilterColor) return acc;
+            }
+            acc.push({ symbolEntry, originalIndex });
+            return acc;
+        }, []);
+    }, [activeList.symbols, effectiveFilterColor]);
+
+    const handleRemoveAtIndex = useCallback((targetIndex) => {
+        setWatchlists(prev => prev.map(l => {
+            if (l.id !== activeListId) return l;
+            return { ...l, symbols: l.symbols.filter((_, i) => i !== targetIndex) };
+        }));
+    }, [activeListId, setWatchlists]);
+
+    const renderVisibleEntry = useCallback((_, { symbolEntry, originalIndex }) => {
+        if (symbolEntry.isHeader) {
+            return (
+                <div className="group relative px-3 py-1.5 flex items-center justify-between border-b border-white/5 bg-[#0b0e14] mt-2 first:mt-0">
+                    <span className="text-[9px] font-black text-white/40 tracking-[0.2em] uppercase">{symbolEntry.header}</span>
+                    <button
+                        onClick={() => handleRemoveAtIndex(originalIndex)}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-all"
+                    >
+                        <Trash2 size={10} />
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <WatchlistItem
+                s={symbolEntry}
+                config={config}
+                onSymbolSelect={handleSymbolSelect}
+                onRemoveSymbol={handleRemoveSymbol}
+                onSetSymbolColor={handleSetColor}
+            />
+        );
+    }, [config, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect]);
 
     return (
         <div
@@ -300,8 +366,8 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
                     {FLAG_COLORS.filter(f => f.id !== 'none' && activeList.symbols.some(s => s.color === f.id)).map(f => (
                         <button
                             key={f.id}
-                            onClick={() => setFilterColor(filterColor === f.id ? 'all' : f.id)}
-                            className={`w-7 h-7 rounded-full border flex items-center justify-center transition-all ${filterColor === f.id ? 'border-white/40 bg-white/10 ring-1 ring-white/20' : 'border-white/5 hover:border-white/20 hover:bg-white/5'}`}
+                            onClick={() => setFilterColor(effectiveFilterColor === f.id ? 'all' : f.id)}
+                            className={`w-7 h-7 rounded-full border flex items-center justify-center transition-all ${effectiveFilterColor === f.id ? 'border-white/40 bg-white/10 ring-1 ring-white/20' : 'border-white/5 hover:border-white/20 hover:bg-white/5'}`}
                         >
                             <div
                                 className="w-[10px] h-[14px]"
@@ -316,7 +382,7 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
             )}
 
             {/* Symbols Area */}
-            <div className="flex-1 overflow-y-auto no-scrollbar py-1">
+            <div className="flex-1 min-h-0 flex flex-col py-1">
                 {isAdding && (
                     <div className="px-2 mb-2">
                         <div className="relative">
@@ -348,8 +414,17 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
                                             className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-3 border-b border-white/[0.02] last:border-0"
                                         >
                                             <div className="w-5 h-5 rounded bg-white/5 flex items-center justify-center border border-white/5 overflow-hidden shrink-0">
-                                                <img src={`https://images.dhan.co/symbol/${s.symbol}.png`} alt="" className="w-full h-full object-contain brightness-110"
-                                                    onError={(e) => { e.target.style.display = 'none'; }} />
+                                                {!MISSING_SYMBOL_LOGOS.has(s.symbol) && (
+                                                    <img
+                                                        src={`https://images.dhan.co/symbol/${s.symbol}.png`}
+                                                        alt=""
+                                                        className="w-full h-full object-contain brightness-110"
+                                                        onError={(e) => {
+                                                            MISSING_SYMBOL_LOGOS.add(s.symbol);
+                                                            e.currentTarget.style.display = 'none';
+                                                        }}
+                                                    />
+                                                )}
                                             </div>
                                             <div className="flex flex-col leading-tight min-w-0">
                                                 <span className="text-[10px] font-black text-white">{s.symbol}</span>
@@ -365,68 +440,48 @@ const ProWatchlist = ({ allCompanies, onSymbolSelect }) => {
                     </div>
                 )}
 
-                <div className="flex flex-col">
+                <div className="flex flex-col flex-1 min-h-0">
                     <div className="px-3 flex items-center text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">
                         <span className="flex-1">Symbol</span>
                         {config.showLast && <span className="w-16 text-right">Last</span>}
                         {config.showChange && <span className="w-16 text-right">Chg%</span>}
                     </div>
-
-                    {activeList.symbols.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-20 opacity-20 select-none">
-                            <Plus size={24} className="mb-2" />
-                            <span className="text-[9px] font-black tracking-[0.2em]">EMPTY LIST</span>
-                        </div>
-                    ) : (
-                        activeList.symbols
-                            .filter(s => {
-                                if (filterColor === 'all') return true;
-                                if (s.isHeader) return false; // Hide headers when color filtering (TV style)
-                                return s.color === filterColor;
-                            })
-                            .map((s, idx) => {
-                                if (s.isHeader) {
-                                    return (
-                                        <div key={s.id || idx} className="sticky top-0 z-[5] group relative px-3 py-1.5 flex items-center justify-between border-b border-white/5 bg-[#0b0e14] mt-2 first:mt-0">
-                                            <span className="text-[9px] font-black text-white/40 tracking-[0.2em] uppercase">{s.header}</span>
-                                            <button
-                                                onClick={() => {
-                                                    setWatchlists(prev => prev.map(l => {
-                                                        if (l.id === activeListId) {
-                                                            return { ...l, symbols: l.symbols.filter((_, i) => i !== activeList.symbols.indexOf(s)) };
-                                                        }
-                                                        return l;
-                                                    }));
-                                                }}
-                                                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-all"
-                                            >
-                                                <Trash2 size={10} />
-                                            </button>
-                                        </div>
-                                    );
-                                }
-                                return (
-                                    <WatchlistItem
-                                        key={s.symbol}
-                                        s={s}
-                                        config={config}
-                                        onSymbolSelect={onSymbolSelect}
-                                        onRemoveSymbol={handleRemoveSymbol}
-                                        onSetSymbolColor={handleSetColor}
-                                    />
-                                );
-                            })
-                    )}
+                    <div className="flex-1 min-h-0">
+                        {activeList.symbols.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-20 opacity-20 select-none">
+                                <Plus size={24} className="mb-2" />
+                                <span className="text-[9px] font-black tracking-[0.2em]">EMPTY LIST</span>
+                            </div>
+                        ) : visibleEntries.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-20 opacity-20 select-none">
+                                <Flag size={20} className="mb-2" />
+                                <span className="text-[9px] font-black tracking-[0.2em]">NO MATCHING FLAGS</span>
+                            </div>
+                        ) : (
+                            <Virtuoso
+                                data={visibleEntries}
+                                overscan={320}
+                                style={{ height: '100%' }}
+                                components={{ Scroller: WatchlistScroller }}
+                                computeItemKey={(index, { symbolEntry }) => (
+                                    symbolEntry.isHeader
+                                        ? symbolEntry.id || `header-${index}`
+                                        : symbolEntry.symbol
+                                )}
+                                itemContent={renderVisibleEntry}
+                            />
+                        )}
+                    </div>
                 </div>
             </div>
         </div>
     );
-};
+});
 
 const WatchlistItem = memo(({ s, config, onSymbolSelect, onRemoveSymbol, onSetSymbolColor }) => {
     const cleaned = cleanSymbol(s.symbol);
     useLiveVersion(); // subscribe to global tick for price refresh
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [hasLogo, setHasLogo] = useState(() => !MISSING_SYMBOL_LOGOS.has(s.symbol));
 
     // Read directly from cache — no per-item subscription overhead
     const live = getCachedPrice(cleaned);
@@ -436,7 +491,12 @@ const WatchlistItem = memo(({ s, config, onSymbolSelect, onRemoveSymbol, onSetSy
 
     const handleSelect = useCallback(() => onSymbolSelect(s), [s, onSymbolSelect]);
     const handleRemove = useCallback((e) => { e.stopPropagation(); onRemoveSymbol(s.symbol); }, [s.symbol, onRemoveSymbol]);
-    const handleColor = useCallback((colorId, e) => { e.stopPropagation(); onSetSymbolColor(s.symbol, colorId); setIsMenuOpen(false); }, [s.symbol, onSetSymbolColor]);
+    const handleColor = useCallback((colorId, e) => { e.stopPropagation(); onSetSymbolColor(s.symbol, colorId); }, [s.symbol, onSetSymbolColor]);
+    const handleLogoError = useCallback((e) => {
+        MISSING_SYMBOL_LOGOS.add(s.symbol);
+        e.currentTarget.style.display = 'none';
+        setHasLogo(false);
+    }, [s.symbol]);
 
     return (
         <div className={`group relative flex items-center pl-6 pr-3 hover:bg-white/[0.03] transition-colors cursor-pointer border-l-2 border-transparent hover:border-white/10 ${config.compact ? 'h-8' : 'h-10'}`}
@@ -454,8 +514,14 @@ const WatchlistItem = memo(({ s, config, onSymbolSelect, onRemoveSymbol, onSetSy
 
             <div className="flex items-center gap-2.5 flex-1 min-w-0">
                 <div className={`${config.compact ? 'w-4 h-4' : 'w-5 h-5'} rounded bg-white/5 flex items-center justify-center border border-white/5 overflow-hidden shrink-0`}>
-                    <img src={`https://images.dhan.co/symbol/${s.symbol}.png`} alt="" className="w-full h-full object-contain brightness-110"
-                        onError={(e) => { e.target.style.display = 'none'; }} />
+                    {hasLogo && (
+                        <img
+                            src={`https://images.dhan.co/symbol/${s.symbol}.png`}
+                            alt=""
+                            className="w-full h-full object-contain brightness-110"
+                            onError={handleLogoError}
+                        />
+                    )}
                 </div>
 
                 <div className="flex flex-col min-w-0 pr-2">

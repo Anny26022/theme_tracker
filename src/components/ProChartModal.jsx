@@ -1,15 +1,35 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, ChevronLeft, ChevronRight, Hash, LayoutGrid, Link2, Clock, Crosshair, ChevronDown, Layers, TrendingUp, Activity } from 'lucide-react';
+import { X, Search, ChevronLeft, ChevronRight, Hash, LayoutGrid, Link2, Clock, Crosshair, ChevronDown, Layers, TrendingUp, Activity, Save, FolderOpen, Star, Trash2, Edit3, Copy, Plus, Check, BookOpen } from 'lucide-react';
 const MA_PERIODS = [5, 10, 21, 50, 100, 200];
 const MA_COLORS = { 5: '#ff6b6b', 10: '#ffa94d', 21: '#ffd43b', 50: '#51cf66', 100: '#22b8cf', 200: '#9d27b0' };
 import FinvizChart from './FinvizChart';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cleanSymbol, getCachedComparisonSeries, getCachedInterval } from '../services/priceService';
-import { useMarketDataRegistry, useChartVersion } from '../context/MarketDataContext';
 import { useLivePrice } from '../context/PriceContext';
 import ProWatchlist from './ProWatchlist';
 import { ListIcon } from 'lucide-react';
+
+/* ─── Template Helpers ─── */
+const TT_TEMPLATES_KEY = 'tt_pro_templates';
+const TT_ACTIVE_TPL_KEY = 'tt_pro_active_template';
+const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+const loadTemplates = () => {
+    try { const v = localStorage.getItem(TT_TEMPLATES_KEY); return v ? JSON.parse(v) : []; } catch { return []; }
+};
+const saveTemplates = (list) => { localStorage.setItem(TT_TEMPLATES_KEY, JSON.stringify(list)); };
+const loadActiveId = () => localStorage.getItem(TT_ACTIVE_TPL_KEY) || null;
+const saveActiveId = (id) => { if (id) localStorage.setItem(TT_ACTIVE_TPL_KEY, id); else localStorage.removeItem(TT_ACTIVE_TPL_KEY); };
+const DEFAULT_TEMPLATE_ID = '__tt_default_template__';
+const DEFAULT_SYNC_OPTIONS = { symbol: false, interval: true, crosshair: false, cluster: true, slotNav: true, pageNav: true };
+const DEFAULT_MA_CONFIG = [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }];
+const makeDefaultChartStates = (symbol, name, timeframe) =>
+    Array.from({ length: 16 }, (_, i) => (
+        i === 0
+            ? { symbol, name, timeframe }
+            : { symbol: '', name: 'Empty', timeframe }
+    ));
 
 const CHART_LAYOUTS = {
     '1': { r: 1, c: 1 },
@@ -40,6 +60,7 @@ const CHART_LAYOUTS = {
     '14g': { r: 2, c: 7 },
     '16g': { r: 4, c: 4 },
 };
+const EMPTY_SERIES = Object.freeze([]);
 
 const ProChartModal = ({
     isOpen,
@@ -62,6 +83,7 @@ const ProChartModal = ({
     const [isClusterOpen, setIsClusterOpen] = useState(false);
     const [isStyleOpen, setIsStyleOpen] = useState(false);
     const [isMaOpen, setIsMaOpen] = useState(false);
+    const [isTemplateSelectOpen, setIsTemplateSelectOpen] = useState(false);
     const [isWatchlistOpen, setIsWatchlistOpen] = useState(() => localStorage.getItem('tt_pro_watchlist_open') !== 'false');
 
     const toggleWatchlist = () => {
@@ -90,7 +112,11 @@ const ProChartModal = ({
     }, [viewMode]);
     const load = (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
     const [layoutId, _setLayoutId] = useState(() => localStorage.getItem('tt_pro_layout') || '1');
-    const setLayoutId = (v) => { _setLayoutId(v); localStorage.setItem('tt_pro_layout', v); };
+    const setLayoutId = useCallback((updater) => _setLayoutId((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_layout', next);
+        return next;
+    }), []);
 
     const [clusterOffset, setClusterOffset] = useState(0);
     const chartsCount = useMemo(() => {
@@ -108,22 +134,173 @@ const ProChartModal = ({
         setClusterOffset(idx !== -1 ? Math.floor(idx / chartsCount) * chartsCount : 0);
     }, [themeName, navigationCompanies.length]);
 
-    const [syncOptions, _setSyncOptions] = useState(() => load('tt_pro_sync', { symbol: false, interval: true, crosshair: false, cluster: true, slotNav: true, pageNav: true }));
-    const setSyncOptions = (v) => _setSyncOptions(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_pro_sync', JSON.stringify(next)); return next; });
-    const [chartStates, _setChartStates] = useState(() => load('tt_pro_charts', Array.from({ length: 16 }, () => ({ symbol, name, timeframe: initialTimeframe }))));
-    const setChartStates = (v) => _setChartStates(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_pro_charts', JSON.stringify(next)); return next; });
+    const [syncOptions, _setSyncOptions] = useState(() => load('tt_pro_sync', DEFAULT_SYNC_OPTIONS));
+    const setSyncOptions = useCallback((updater) => _setSyncOptions((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_sync', JSON.stringify(next));
+        return next;
+    }), []);
+    const [chartStates, _setChartStates] = useState(() => load('tt_pro_charts', makeDefaultChartStates(symbol, name, initialTimeframe)));
+    const setChartStates = useCallback((updater) => _setChartStates((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_charts', JSON.stringify(next));
+        return next;
+    }), []);
     const [chartStyle, _setChartStyle] = useState(() => localStorage.getItem('tt_pro_style') || 'candles');
-    const setChartStyle = (v) => { _setChartStyle(v); localStorage.setItem('tt_pro_style', v); window.dispatchEvent(new Event('tt_chart_settings')); };
-    const [maConfig, _setMaConfig] = useState(() => load('tt_pro_ma', [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }]));
-    const setMaConfig = (v) => { const next = typeof v === 'function' ? v(maConfig) : v; _setMaConfig(next); localStorage.setItem('tt_pro_ma', JSON.stringify(next)); window.dispatchEvent(new Event('tt_chart_settings')); };
+    const setChartStyle = useCallback((updater) => _setChartStyle((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_style', next);
+        window.dispatchEvent(new Event('tt_chart_settings'));
+        return next;
+    }), []);
+    const [maConfig, _setMaConfig] = useState(() => load('tt_pro_ma', DEFAULT_MA_CONFIG));
+    const setMaConfig = useCallback((updater) => _setMaConfig((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem('tt_pro_ma', JSON.stringify(next));
+        window.dispatchEvent(new Event('tt_chart_settings'));
+        return next;
+    }), []);
     const toggleMa = (type, period) => setMaConfig(prev => prev.find(m => m.type === type && m.period === period) ? prev.filter(m => !(m.type === type && m.period === period)) : [...prev, { type, period }].sort((a, b) => a.period - b.period));
     const hasMa = (type, period) => maConfig.some(m => m.type === type && m.period === period);
     const [activeChartIndex, setActiveChartIndex] = useState(0);
     const currentChart = chartStates[activeChartIndex] || chartStates[0];
-    const searchInputRef = useRef(null);
+    const activeChartIndexRef = useRef(activeChartIndex);
+    const syncSymbolRef = useRef(syncOptions.symbol);
+    const onSymbolChangeRef = useRef(onSymbolChange);
+    activeChartIndexRef.current = activeChartIndex;
+    syncSymbolRef.current = syncOptions.symbol;
+    onSymbolChangeRef.current = onSymbolChange;
 
-    const { subscribeChartSymbols } = useMarketDataRegistry();
-    const chartVersion = useChartVersion();
+    /* ─── Template System State ─── */
+    const [templates, _setTemplates] = useState(() => loadTemplates());
+    const setTemplates = useCallback((updater) => _setTemplates((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        saveTemplates(next);
+        return next;
+    }), []);
+    const [activeTemplateId, _setActiveTemplateId] = useState(() => loadActiveId());
+    const setActiveTemplateId = useCallback((updater) => _setActiveTemplateId((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        saveActiveId(next);
+        return next;
+    }), []);
+    const [renamingId, setRenamingId] = useState(null);
+    const [renameValue, setRenameValue] = useState('');
+    const renameInputRef = useRef(null);
+    const [saveFlash, setSaveFlash] = useState(null); // template id that was just saved
+
+    const currentSnapshot = useCallback(() => ({
+        layoutId,
+        chartStyle,
+        maConfig: [...maConfig],
+        syncOptions: { ...syncOptions },
+        chartStates: chartStates.map(c => ({ ...c })),
+    }), [layoutId, chartStyle, maConfig, syncOptions, chartStates]);
+
+    const applyTemplate = useCallback((tpl) => {
+        if (tpl.data.layoutId) setLayoutId(tpl.data.layoutId);
+        if (tpl.data.chartStyle) { _setChartStyle(tpl.data.chartStyle); localStorage.setItem('tt_pro_style', tpl.data.chartStyle); }
+        if (tpl.data.maConfig) { _setMaConfig(tpl.data.maConfig); localStorage.setItem('tt_pro_ma', JSON.stringify(tpl.data.maConfig)); }
+        if (tpl.data.syncOptions) { _setSyncOptions(tpl.data.syncOptions); localStorage.setItem('tt_pro_sync', JSON.stringify(tpl.data.syncOptions)); }
+        if (tpl.data.chartStates) { _setChartStates(tpl.data.chartStates); localStorage.setItem('tt_pro_charts', JSON.stringify(tpl.data.chartStates)); }
+        setActiveTemplateId(tpl.id);
+        window.dispatchEvent(new Event('tt_chart_settings'));
+    }, []);
+
+    const handleSaveTemplate = useCallback((nameOverride) => {
+        const snap = currentSnapshot();
+        const primarySymbol = chartStates[0]?.symbol || symbol;
+        const primaryTf = chartStates[0]?.timeframe || initialTimeframe;
+        const newTpl = {
+            id: genId(),
+            name: nameOverride || 'Unnamed',
+            starred: false,
+            createdAt: Date.now(),
+            lastUsed: Date.now(),
+            meta: { symbol: primarySymbol, timeframe: primaryTf, layoutId, chartCount: chartsCount },
+            data: snap,
+        };
+        setTemplates(prev => [newTpl, ...prev]);
+        setActiveTemplateId(newTpl.id);
+        setSaveFlash(newTpl.id);
+        setTimeout(() => setSaveFlash(null), 1500);
+    }, [currentSnapshot, chartStates, symbol, initialTimeframe, layoutId, chartsCount]);
+
+    const handleUpdateTemplate = useCallback((id) => {
+        const snap = currentSnapshot();
+        const primarySymbol = chartStates[0]?.symbol || symbol;
+        const primaryTf = chartStates[0]?.timeframe || initialTimeframe;
+        setTemplates(prev => prev.map(t => t.id === id ? {
+            ...t,
+            lastUsed: Date.now(),
+            meta: { symbol: primarySymbol, timeframe: primaryTf, layoutId, chartCount: chartsCount },
+            data: snap,
+        } : t));
+        setSaveFlash(id);
+        setTimeout(() => setSaveFlash(null), 1500);
+    }, [currentSnapshot, chartStates, symbol, initialTimeframe, layoutId, chartsCount]);
+
+    const handleDuplicateTemplate = useCallback((tpl) => {
+        const dup = { ...tpl, id: genId(), name: tpl.name + ' Copy', starred: false, createdAt: Date.now(), lastUsed: Date.now(), data: { ...tpl.data } };
+        setTemplates(prev => [dup, ...prev]);
+    }, []);
+
+    const handleDeleteTemplate = useCallback((id) => {
+        if (id === DEFAULT_TEMPLATE_ID) return;
+        setTemplates(prev => prev.filter(t => t.id !== id));
+        if (activeTemplateId === id) setActiveTemplateId(null);
+    }, [activeTemplateId]);
+
+    const handleToggleStar = useCallback((id) => {
+        setTemplates(prev => prev.map(t => t.id === id ? { ...t, starred: !t.starred } : t));
+    }, []);
+
+    const handleRenameTemplate = useCallback((id, newName) => {
+        if (id === DEFAULT_TEMPLATE_ID) return;
+        setTemplates(prev => prev.map(t => t.id === id ? { ...t, name: newName || t.name } : t));
+        setRenamingId(null);
+    }, []);
+
+    const sortedTemplates = useMemo(() => {
+        const starred = templates.filter(t => t.starred).sort((a, b) => b.lastUsed - a.lastUsed);
+        const rest = templates.filter(t => !t.starred).sort((a, b) => b.lastUsed - a.lastUsed);
+        return [...starred, ...rest];
+    }, [templates]);
+    const defaultTemplate = useMemo(() => ({
+        id: DEFAULT_TEMPLATE_ID,
+        name: 'Default',
+        system: true,
+        starred: true,
+        createdAt: 0,
+        lastUsed: Date.now(),
+        meta: {
+            symbol: symbol || chartStates[0]?.symbol || '—',
+            timeframe: initialTimeframe || chartStates[0]?.timeframe || '1D',
+            layoutId: '1',
+            chartCount: 1
+        },
+        data: {
+            layoutId: '1',
+            chartStyle: 'candles',
+            maConfig: DEFAULT_MA_CONFIG,
+            syncOptions: DEFAULT_SYNC_OPTIONS,
+            chartStates: makeDefaultChartStates(symbol, name, initialTimeframe),
+        },
+    }), [symbol, name, initialTimeframe, chartStates]);
+    const templatesWithDefault = useMemo(() => {
+        const userTemplates = sortedTemplates.filter((tpl) => tpl.id !== DEFAULT_TEMPLATE_ID);
+        return [defaultTemplate, ...userTemplates];
+    }, [sortedTemplates, defaultTemplate]);
+    const activeTemplate = useMemo(
+        () => templatesWithDefault.find((tpl) => tpl.id === activeTemplateId) || defaultTemplate,
+        [templatesWithDefault, activeTemplateId, defaultTemplate]
+    );
+    useEffect(() => {
+        if (!activeTemplateId || !templatesWithDefault.some((tpl) => tpl.id === activeTemplateId)) {
+            setActiveTemplateId(DEFAULT_TEMPLATE_ID);
+        }
+    }, [activeTemplateId, templatesWithDefault, setActiveTemplateId]);
+    const searchInputRef = useRef(null);
 
     const activeSymbol = useMemo(() => cleanSymbol(currentChart.symbol), [currentChart.symbol]);
     const liveData = useLivePrice(activeSymbol);
@@ -224,13 +401,13 @@ const ProChartModal = ({
         handleChartChange(activeChartIndex, navList[nextIdx]);
     };
 
-    const handleChartChange = (index, newData) => {
+    const handleChartChange = useCallback((index, newData) => {
         setChartStates(prev => {
             const next = [...prev];
             const updatedSymbol = typeof newData === 'string' ? newData : newData.symbol;
             const updatedName = typeof newData === 'string' ? prev[index].name : newData.name;
 
-            if (syncOptions.symbol) {
+            if (syncSymbolRef.current) {
                 // Update all charts
                 return next.map(c => ({ ...c, symbol: updatedSymbol, name: updatedName }));
             } else {
@@ -238,12 +415,12 @@ const ProChartModal = ({
                 return next;
             }
         });
-        if (activeChartIndex === index) {
-            onSymbolChange(newData);
+        if (activeChartIndexRef.current === index) {
+            onSymbolChangeRef.current?.(newData);
         }
-    };
+    }, [setChartStates]);
 
-    const handleTimeframeChange = (index, tf) => {
+    const handleTimeframeChange = useCallback((index, tf) => {
         setChartStates(prev => {
             const next = [...prev];
             if (syncOptions.interval) {
@@ -253,7 +430,19 @@ const ProChartModal = ({
                 return next;
             }
         });
-    };
+    }, [setChartStates, syncOptions.interval]);
+
+    const handleWatchlistSymbolSelect = useCallback((selected) => {
+        handleChartChange(activeChartIndex, selected);
+    }, [handleChartChange, activeChartIndex]);
+
+    const companyNameBySymbol = useMemo(() => {
+        const map = new Map();
+        allCompanies.forEach((company) => {
+            map.set(company.symbol, company.name);
+        });
+        return map;
+    }, [allCompanies]);
 
     const filteredSymbols = useMemo(() => {
         if (!searchTerm) return [];
@@ -544,6 +733,113 @@ const ProChartModal = ({
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {/* Template Switcher Dropdown */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setIsTemplateSelectOpen(!isTemplateSelectOpen)}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded transition-all border ${isTemplateSelectOpen ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]' : 'bg-white/5 border-white/5 text-white/40 hover:text-white hover:bg-white/10'}`}
+                        >
+                            <BookOpen size={12} className={activeTemplateId ? 'text-[var(--accent-primary)]' : ''} />
+                            <span className="text-[10px] font-black uppercase tracking-widest max-w-[100px] truncate">
+                                {activeTemplate?.name || 'Templates'}
+                            </span>
+                            <ChevronDown size={9} className={`transition-transform duration-300 opacity-30 ${isTemplateSelectOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isTemplateSelectOpen && (
+                            <>
+                                <div className="fixed inset-0 z-[100]" onClick={() => setIsTemplateSelectOpen(false)} />
+                                <div className="absolute top-full right-0 mt-2 z-[101] w-[260px] bg-[#0b0e14]/98 backdrop-blur-xl border border-white/10 rounded-xl shadow-[0_24px_64px_rgba(0,0,0,1)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="px-3 py-2 border-b border-white/[0.05] flex items-center justify-between bg-white/[0.02]">
+                                        <span className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">Templates</span>
+                                        <button
+                                            onClick={() => {
+                                                const name = `Layout ${templates.length + 1}`;
+                                                handleSaveTemplate(name);
+                                            }}
+                                            className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20 transition-all group"
+                                        >
+                                            <Plus size={10} className="group-hover:rotate-90 transition-transform duration-300" />
+                                            <span className="text-[8px] font-black uppercase tracking-widest">Add New</span>
+                                        </button>
+                                    </div>
+                                    <div className="max-h-[360px] overflow-y-auto no-scrollbar py-1">
+                                        {templatesWithDefault.map(tpl => {
+                                            const isActive = tpl.id === activeTemplateId;
+                                            const isRenaming = renamingId === tpl.id;
+                                            const isSystem = !!tpl.system;
+
+                                            return (
+                                                <div key={tpl.id} className="relative group/tpl px-1">
+                                                    <div className={`w-full text-left px-2 py-2 rounded-lg transition-all flex items-center justify-between group-hover/tpl:bg-white/[0.03] ${isActive ? 'bg-[var(--accent-primary)]/[0.03]' : ''}`}>
+                                                        <div
+                                                            className="flex-1 min-w-0 cursor-pointer"
+                                                            onClick={() => { if (!isRenaming) { applyTemplate(tpl); setIsTemplateSelectOpen(false); } }}
+                                                        >
+                                                            {isRenaming ? (
+                                                                <input
+                                                                    ref={renameInputRef}
+                                                                    autoFocus
+                                                                    value={renameValue}
+                                                                    onChange={(e) => setRenameValue(e.target.value)}
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === 'Enter') handleRenameTemplate(tpl.id, renameValue);
+                                                                        if (e.key === 'Escape') setRenamingId(null);
+                                                                    }}
+                                                                    onBlur={() => handleRenameTemplate(tpl.id, renameValue)}
+                                                                    className="w-full bg-white/[0.05] border-b border-[var(--accent-primary)]/50 outline-none text-[11px] font-black text-white px-1 pb-0.5 rounded-sm"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                />
+                                                            ) : (
+                                                                <div className="flex flex-col gap-0.5">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`text-[11px] font-black truncate ${isActive ? 'text-[var(--accent-primary)]' : 'text-white/70'}`}>{tpl.name}</span>
+                                                                        {isSystem && <span className="text-[7px] font-black uppercase tracking-[0.14em] text-white/35">built-in</span>}
+                                                                        {isActive && <div className="w-1 h-1 rounded-full bg-[var(--accent-primary)] shadow-[0_0_8px_var(--accent-primary)]" />}
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1.5 opacity-30 text-[8px] font-bold uppercase tracking-tighter">
+                                                                        <span>{tpl.meta?.symbol || '—'}</span>
+                                                                        <span>·</span>
+                                                                        <span>{tpl.meta?.timeframe || '—'}</span>
+                                                                        <span>·</span>
+                                                                        <span>{tpl.data?.layoutId || '1'} Slots</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Mini Actions */}
+                                                        {!isRenaming && !isSystem && (
+                                                            <div className="flex items-center gap-0.5 opacity-0 group-hover/tpl:opacity-100 transition-opacity">
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setRenamingId(tpl.id); setRenameValue(tpl.name); setTimeout(() => renameInputRef.current?.focus(), 50); }}
+                                                                    className="p-1 px-1.5 rounded hover:bg-white/10 text-white/20 hover:text-white/60 transition-colors"
+                                                                >
+                                                                    <Edit3 size={10} />
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); handleDeleteTemplate(tpl.id); }}
+                                                                    className="p-1 px-1.5 rounded hover:bg-red-500/10 text-white/20 hover:text-red-400 transition-colors"
+                                                                >
+                                                                    <Trash2 size={10} />
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="px-3 py-2 border-t border-white/[0.05] bg-white/[0.01]">
+                                        <p className="text-[7.5px] font-black text-white/15 uppercase tracking-[0.1em] text-center">
+                                            {templates.length > 0 ? 'Templates save all isolated views & sync settings' : 'Default template is built-in. Save to create custom templates.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+
                     {/* Layout Picker Button */}
                     <div className="relative">
                         <button
@@ -651,13 +947,16 @@ const ProChartModal = ({
                         )}
                     </div>
 
-                    <button
-                        onClick={toggleWatchlist}
-                        className={`w-8 h-8 flex items-center justify-center rounded-full transition-all ${isWatchlistOpen ? 'text-[var(--accent-primary)] bg-[var(--accent-primary)]/10' : 'text-white/30 hover:text-white hover:bg-white/10'}`}
-                        title="Toggle Watchlist"
-                    >
-                        <ListIcon size={16} />
-                    </button>
+                    {/* Sidebar Toggles */}
+                    <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded-full border border-white/5 mx-1">
+                        <button
+                            onClick={toggleWatchlist}
+                            className={`w-7 h-7 flex items-center justify-center rounded-full transition-all ${isWatchlistOpen ? 'text-black bg-[var(--accent-primary)]' : 'text-white/30 hover:text-white hover:bg-white/5'}`}
+                            title="Watchlist Sidebar"
+                        >
+                            <ListIcon size={14} />
+                        </button>
+                    </div>
 
                     <button
                         onClick={onClose}
@@ -706,10 +1005,10 @@ const ProChartModal = ({
                                                 {isActive && <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />}
                                             </div>
                                             <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest truncate max-w-[100px]">
-                                                {(chart.name && chart.name !== 'Empty')
-                                                    ? chart.name
-                                                    : allCompanies.find(c => c.symbol === chart.symbol)?.name || ''
-                                                }
+                                                    {(chart.name && chart.name !== 'Empty')
+                                                        ? chart.name
+                                                        : companyNameBySymbol.get(chart.symbol) || ''
+                                                    }
                                             </span>
                                             <div className="ml-auto flex gap-1.5">
                                                 {['1D', '1W', '1M', '1Y'].map(tf => (
@@ -725,7 +1024,7 @@ const ProChartModal = ({
                                         <FinvizChart
                                             symbol={chart.symbol}
                                             name={chart.name}
-                                            series={[]}
+                                            series={EMPTY_SERIES}
                                             forcedTimeframe={chart.timeframe}
                                             isProMode={true}
                                             chartStyle={chartStyle}
@@ -738,12 +1037,12 @@ const ProChartModal = ({
                     </div>
                 </div >
 
-                {/* Watchlist Sidebar */}
+                {/* Sidebar Views */}
                 {
                     isWatchlistOpen && (
                         <ProWatchlist
                             allCompanies={allCompanies}
-                            onSymbolSelect={(s) => handleChartChange(activeChartIndex, s)}
+                            onSymbolSelect={handleWatchlistSymbolSelect}
                         />
                     )
                 }
@@ -770,4 +1069,4 @@ const ProChartModal = ({
     );
 };
 
-export default ProChartModal;
+export default memo(ProChartModal);

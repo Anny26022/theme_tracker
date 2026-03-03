@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import FinvizChart from '../components/FinvizChart';
 import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
 import { ChevronLeft, ChevronDown, Layers, ExternalLink, LayoutGrid, StretchHorizontal } from 'lucide-react';
@@ -243,6 +243,17 @@ const ThematicGridChartView = ({
         }));
     }, [companies, seriesBySymbol]);
 
+    const handleCloseProView = useCallback(() => {
+        setProViewSymbol(null);
+    }, []);
+
+    const handleProSymbolChange = useCallback((nextSymbol) => {
+        setProViewSymbol(nextSymbol);
+        if (nextSymbol?.theme && nextSymbol.theme !== themeName && nextSymbol.theme !== 'Current Cluster') {
+            onSelectTheme(nextSymbol.theme);
+        }
+    }, [themeName, onSelectTheme]);
+
     return (
         <div className="flex flex-col gap-6">
             {/* Header Controls */}
@@ -427,13 +438,8 @@ const ThematicGridChartView = ({
                     onSelectTheme={onSelectTheme}
                     onViewModeChange={onViewModeChange}
                     viewMode={viewMode}
-                    onClose={() => setProViewSymbol(null)}
-                    onSymbolChange={(s) => {
-                        setProViewSymbol(s);
-                        if (s.theme && s.theme !== themeName && s.theme !== 'Current Cluster') {
-                            onSelectTheme(s.theme);
-                        }
-                    }}
+                    onClose={handleCloseProView}
+                    onSymbolChange={handleProSymbolChange}
                 />
             )}
         </div>

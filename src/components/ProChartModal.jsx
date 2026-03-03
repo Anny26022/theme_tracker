@@ -66,7 +66,17 @@ const ProChartModal = ({
     const load = (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
     const [layoutId, _setLayoutId] = useState(() => localStorage.getItem('tt_pro_layout') || '1');
     const setLayoutId = (v) => { _setLayoutId(v); localStorage.setItem('tt_pro_layout', v); };
-    const [syncOptions, _setSyncOptions] = useState(() => load('tt_pro_sync', { symbol: false, interval: true, crosshair: false, cluster: true }));
+
+    const [clusterOffset, setClusterOffset] = useState(0);
+    const chartsCount = CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols;
+
+    // Initialize offset only when theme changes
+    useEffect(() => {
+        const idx = navigationCompanies.findIndex(c => c.symbol === symbol);
+        setClusterOffset(idx !== -1 ? Math.floor(idx / chartsCount) * chartsCount : 0);
+    }, [themeName, navigationCompanies.length]);
+
+    const [syncOptions, _setSyncOptions] = useState(() => load('tt_pro_sync', { symbol: false, interval: true, crosshair: false, cluster: true, slotNav: true, pageNav: true }));
     const setSyncOptions = (v) => _setSyncOptions(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_pro_sync', JSON.stringify(next)); return next; });
     const [chartStates, _setChartStates] = useState(() => load('tt_pro_charts', Array.from({ length: 16 }, () => ({ symbol, name, timeframe: initialTimeframe }))));
     const setChartStates = (v) => _setChartStates(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_pro_charts', JSON.stringify(next)); return next; });
@@ -79,7 +89,6 @@ const ProChartModal = ({
     const { subscribeChartSymbols } = useMarketDataRegistry();
     const chartVersion = useChartVersion();
 
-    // Only sync parent symbol into slot 0 when the modal FIRST opens
     const prevOpenRef = useRef(false);
     useEffect(() => {
         if (isOpen && !prevOpenRef.current && symbol) {
@@ -94,25 +103,14 @@ const ProChartModal = ({
     }, [isOpen, symbol, name]);
 
 
-    // Sync cluster across frames when theme/navigationCompanies changes
-    // This allows seeing multiple stocks from the same cluster when in multi-layout mode
+    // Bulk Sync Cluster: Only when theme or page manually changes
     useEffect(() => {
-        if (!isOpen || layoutId === '1' || !navigationCompanies.length || !syncOptions.cluster) return;
-
-        setChartStates(prev => {
-            const next = [...prev];
-            const currentSyms = new Set(next.map(c => c.symbol));
-
-            // Populate frames with stocks from navigation list if they are empty 
-            // or if we just switched clusters
-            navigationCompanies.slice(0, 16).forEach((comp, i) => {
-                if (next[i]) {
-                    next[i] = { ...next[i], symbol: comp.symbol, name: comp.name };
-                }
-            });
-            return next;
-        });
-    }, [navigationCompanies, layoutId, isOpen]);
+        if (!isOpen || layoutId === '1' || !syncOptions.cluster || !navigationCompanies.length) return;
+        setChartStates(prev => prev.map((s, i) => {
+            const stock = navigationCompanies[clusterOffset + i];
+            return stock ? { ...s, symbol: stock.symbol, name: stock.name } : { ...s, symbol: '', name: 'Empty' };
+        }));
+    }, [themeName, clusterOffset, layoutId, isOpen, syncOptions.cluster]);
 
 
     // Keyboard Hotkeys
@@ -154,16 +152,30 @@ const ProChartModal = ({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isOpen, isSearchOpen, allCompanies, symbol, onClose]);
 
-    // Updated Navigation logic for Active Chart
     const navigateSymbol = (dir) => {
         const navList = navigationCompanies.length > 0 ? navigationCompanies : allCompanies;
         if (!navList.length) return;
-        const currentIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(currentChart.symbol));
-        if (currentIdx === -1) {
-            handleChartChange(activeChartIndex, navList[dir > 0 ? 0 : navList.length - 1]);
+
+        // Page Nav: shift the whole batch by one page
+        if (syncOptions.pageNav && layoutId !== '1') {
+            setClusterOffset(prev => {
+                const next = prev + dir * chartsCount;
+                return next >= 0 && next < navigationCompanies.length ? next : prev;
+            });
             return;
         }
-        const nextIdx = (currentIdx + dir + navList.length) % navList.length;
+
+        // Slot Nav: only change the active slot's symbol
+        if (syncOptions.slotNav) {
+            const curIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(chartStates[activeChartIndex].symbol));
+            const nextIdx = curIdx === -1 ? (dir > 0 ? 0 : navList.length - 1) : (curIdx + dir + navList.length) % navList.length;
+            handleChartChange(activeChartIndex, navList[nextIdx]);
+            return;
+        }
+
+        // Default: change currentChart symbol
+        const curIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(currentChart.symbol));
+        const nextIdx = curIdx === -1 ? (dir > 0 ? 0 : navList.length - 1) : (curIdx + dir + navList.length) % navList.length;
         handleChartChange(activeChartIndex, navList[nextIdx]);
     };
 
@@ -408,6 +420,14 @@ const ProChartModal = ({
 
                     <div className="h-4 w-[1px] bg-white/5 mx-2" />
 
+                    {/* Simplified Batch Controls */}
+                    {layoutId !== '1' && syncOptions.cluster && (
+                        <div className="flex bg-white/5 p-0.5 rounded border border-white/5 mr-2">
+                            <button onClick={() => setClusterOffset(o => Math.max(0, o - (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols)))} className="p-1 opacity-40 hover:opacity-100"><ChevronLeft size={14} /></button>
+                            <button onClick={() => setClusterOffset(o => o + (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols) < navigationCompanies.length ? o + (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols) : o)} className="p-1 opacity-40 hover:opacity-100"><ChevronRight size={14} /></button>
+                        </div>
+                    )}
+
                     {/* Style Switcher Dropdown */}
                     <div className="relative">
                         <button
@@ -509,6 +529,26 @@ const ProChartModal = ({
                                                 </div>
                                             </button>
                                         ))}
+                                        <div className="h-[1px] bg-white/5 my-1" />
+                                        <p className="text-[9px] text-white/20 uppercase tracking-widest px-1 pb-1">Arrow Key Behaviour</p>
+                                        {[
+                                            { key: 'slotNav', label: 'Slot Navigation', desc: 'Arrows change active slot only' },
+                                            { key: 'pageNav', label: 'Page Navigation', desc: 'Arrows flip entire batch page' },
+                                        ].map(opt => (
+                                            <button
+                                                key={opt.key}
+                                                onClick={() => setSyncOptions(prev => ({ ...prev, slotNav: opt.key === 'slotNav' ? !prev.slotNav : prev.slotNav, pageNav: opt.key === 'pageNav' ? !prev.pageNav : prev.pageNav }))}
+                                                className={`w-full flex items-center justify-between p-2 rounded transition-all ${syncOptions[opt.key] ? 'bg-white/5 text-[var(--accent-primary)]' : 'text-white/30 hover:text-white'}`}
+                                            >
+                                                <div className="flex flex-col items-start gap-0">
+                                                    <span className="text-[10px] font-black uppercase tracking-widest">{opt.label}</span>
+                                                    <span className="text-[10px] opacity-60">{opt.desc}</span>
+                                                </div>
+                                                <div className={`w-6 h-3 rounded-full relative transition-all ${syncOptions[opt.key] ? 'bg-[var(--accent-primary)]' : 'bg-white/10'}`}>
+                                                    <div className={`absolute top-0.5 w-2 h-2 rounded-full bg-black transition-all ${syncOptions[opt.key] ? 'right-0.5' : 'left-0.5'}`} />
+                                                </div>
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
                             </>
@@ -537,8 +577,9 @@ const ProChartModal = ({
                                     layoutId === '3sb' ? { gridTemplateAreas: '"a b" "c c"' } : {})
                     }}
                 >
-                    {Array.from({ length: 16 }).slice(0, (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols)).map((_, idx) => {
+                    {Array.from({ length: 16 }).slice(0, chartsCount).map((_, idx) => {
                         const chart = chartStates[idx] || chartStates[0];
+                        if (layoutId !== '1' && syncOptions.cluster && !chart?.symbol) return null;
                         const isActive = activeChartIndex === idx;
                         const isMulti = layoutId !== '1';
 
@@ -546,7 +587,7 @@ const ProChartModal = ({
                             <div
                                 key={idx}
                                 onClick={() => setActiveChartIndex(idx)}
-                                className={`relative bg-black/20 rounded-lg overflow-hidden border transition-all duration-500 flex flex-col ${isActive ? 'border-white/15 shadow-2xl scale-[0.995]' : 'border-white/[0.04] hover:border-white/10'}`}
+                                className={`relative bg-black/20 rounded-lg overflow-hidden border transition-all duration-300 flex flex-col ${isActive ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/20 shadow-[0_0_30px_rgba(0,133,255,0.15)] z-10' : 'border-white/[0.04] hover:border-white/10'}`}
                                 style={{
                                     ...(layoutId === '3sl' ? { gridArea: idx === 0 ? 'a' : idx === 1 ? 'b' : 'c' } :
                                         layoutId === '3sr' ? { gridArea: idx === 1 ? 'b' : idx === 0 ? 'a' : 'c' } :
@@ -560,7 +601,10 @@ const ProChartModal = ({
                                             <img src={`https://images.dhan.co/symbol/${chart.symbol}.png`} alt="" className="w-full h-full object-contain brightness-110"
                                                 onError={(e) => { e.target.style.display = 'none'; }} />
                                         </div>
-                                        <span className="text-[13px] font-black text-[var(--accent-primary)] uppercase tracking-tight">{chart.symbol}</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[13px] font-black text-[var(--accent-primary)] uppercase tracking-tight">{chart.symbol}</span>
+                                            {isActive && <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />}
+                                        </div>
                                         <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest truncate max-w-[100px]">{chart.name}</span>
                                         <div className="ml-auto flex gap-1.5">
                                             {['1D', '1W', '1M', '1Y'].map(tf => (

@@ -1869,8 +1869,30 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
             }
         });
 
+        // 1D holiday fallback: chart RPC returns empty on non-trading days,
+        // but live price RPC always has changePct (day change from prev close)
+        if (interval === '1D') {
+            const missing = allUncached.filter(sym => {
+                const c = intervalCache.get(`${sym}:${window}`);
+                return !c?.data;
+            });
+            if (missing.length > 0) {
+                try {
+                    const livePrices = await fetchLivePrices(missing, { skipStrike: true });
+                    livePrices.forEach((priceData, sym) => {
+                        if (typeof priceData.changePct === 'number') {
+                            const cacheKey = `${sym}:${window}`;
+                            const data = { changePct: priceData.changePct, close: priceData.price };
+                            const row = buildCacheRow(data, null, ttl);
+                            if (row) intervalCache.set(cacheKey, row);
+                        }
+                    });
+                } catch { /* best-effort */ }
+            }
+        }
+
         scheduleIntervalSave();
-        currentPending.clear(); // Clear pending map for this timeframe
+        currentPending.clear();
         resolveBatch();
     }, INTERVAL_CONSOLIDATION_WINDOW_MS)); // small window to aggregate same-tick calls
 

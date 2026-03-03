@@ -82,8 +82,8 @@ export const AnimatedPrice = ({ value, decimals = 2, prefix = '₹', className =
         <span
             ref={displayRef}
             className={`tabular-nums transition-colors duration-500 ${flash === 'up' ? 'text-emerald-400' :
-                    flash === 'down' ? 'text-rose-400' :
-                        ''
+                flash === 'down' ? 'text-rose-400' :
+                    ''
                 } ${className}`}
         >
             {value !== null && value !== undefined

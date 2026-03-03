@@ -109,73 +109,6 @@ const FinvizChart = React.memo(function FinvizChart({
         });
     }, [setZoomDays]);
 
-    // When rendered inside a mobile gallery or pure display mode, disable interaction hooks 
-    // to allow native browser swiping (overflow-x-auto) to work properly.
-    useEffect(() => {
-        if (disabled) return undefined;
-        const node = chartAreaRef.current;
-        if (!node) return undefined;
-
-        const onStart = (e) => {
-            const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
-            const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
-            const rect = node.getBoundingClientRect();
-            const isRight = (clientX - rect.left) > (rect.width - 50);
-
-            if (isRight || e.shiftKey) {
-                dragRef.current = { ...dragRef.current, isYDragging: true, startY: clientY, startVScale: vScale };
-            } else {
-                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startY: clientY, startPan: panOffset, startVPan: priceOffset };
-            }
-        };
-
-        const onMove = (e) => {
-            if (!dragRef.current.isYDragging && !dragRef.current.isDragging) return;
-            const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
-            const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
-
-            // Only prevent default if we are actively dragging/panning to avoid blocking vertical page scroll
-            if ((dragRef.current.isDragging || dragRef.current.isYDragging) && e.cancelable) {
-                e.preventDefault();
-            }
-
-            if (dragRef.current.isYDragging) {
-                const dy = dragRef.current.startY - clientY;
-                setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
-            } else {
-                const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDays);
-                const dyPrice = (clientY - dragRef.current.startY); // Pixels transferred to price logic via getY later
-                setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
-                setPriceOffset(dragRef.current.startVPan + dyPrice);
-            }
-        };
-
-        const onEnd = () => { dragRef.current.isDragging = false; dragRef.current.isYDragging = false; };
-        const onDblClick = (e) => {
-            setVScale(1.0);
-            setPriceOffset(0);
-        };
-
-        node.addEventListener('wheel', handleWheel, { passive: false });
-        node.addEventListener('mousedown', onStart);
-        node.addEventListener('dblclick', onDblClick);
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onEnd);
-        node.addEventListener('touchstart', onStart, { passive: true });
-        window.addEventListener('touchmove', onMove, { passive: false });
-        window.addEventListener('touchend', onEnd);
-
-        return () => {
-            node.removeEventListener('wheel', handleWheel);
-            node.removeEventListener('mousedown', onStart);
-            node.removeEventListener('dblclick', onDblClick);
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onEnd);
-            node.removeEventListener('touchstart', onStart);
-            window.removeEventListener('touchmove', onMove);
-            window.removeEventListener('touchend', onEnd);
-        };
-    }, [handleWheel, panOffset, priceOffset, zoomDays, vScale]);
 
     const baseData = useMemo(() => {
         if (!activeSeries || activeSeries.length === 0) return null;
@@ -455,6 +388,74 @@ const FinvizChart = React.memo(function FinvizChart({
     // Default manual calculation from chart 
     let change = last.close - prevC;
     let changePct = prevC ? (change / prevC) * 100 : 0;
+
+    // When rendered inside a mobile gallery or pure display mode, disable interaction hooks 
+    // to allow native browser swiping (overflow-x-auto) to work properly.
+    useEffect(() => {
+        if (disabled) return undefined;
+        const node = chartAreaRef.current;
+        if (!node) return undefined;
+
+        const onStart = (e) => {
+            const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
+            const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
+            const rect = node.getBoundingClientRect();
+            const isRight = (clientX - rect.left) > (rect.width - 50);
+
+            if (isRight || e.shiftKey) {
+                dragRef.current = { ...dragRef.current, isYDragging: true, startY: clientY, startVScale: vScale };
+            } else {
+                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startY: clientY, startPan: panOffset, startVPan: priceOffset };
+            }
+        };
+
+        const onMove = (e) => {
+            if (!dragRef.current.isYDragging && !dragRef.current.isDragging) return;
+            const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
+            const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
+
+            // Only prevent default if we are actively dragging/panning to avoid blocking vertical page scroll
+            if ((dragRef.current.isDragging || dragRef.current.isYDragging) && e.cancelable) {
+                e.preventDefault();
+            }
+
+            if (dragRef.current.isYDragging) {
+                const dy = dragRef.current.startY - clientY;
+                setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
+            } else {
+                const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDays);
+                const dyPrice = (clientY - dragRef.current.startY); // Pixels transferred to price logic via getY later
+                setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
+                setPriceOffset(dragRef.current.startVPan + dyPrice);
+            }
+        };
+
+        const onEnd = () => { dragRef.current.isDragging = false; dragRef.current.isYDragging = false; };
+        const onDblClick = (e) => {
+            setVScale(1.0);
+            setPriceOffset(0);
+        };
+
+        node.addEventListener('wheel', handleWheel, { passive: false });
+        node.addEventListener('mousedown', onStart);
+        node.addEventListener('dblclick', onDblClick);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onEnd);
+        node.addEventListener('touchstart', onStart, { passive: true });
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd);
+
+        return () => {
+            node.removeEventListener('wheel', handleWheel);
+            node.removeEventListener('mousedown', onStart);
+            node.removeEventListener('dblclick', onDblClick);
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onEnd);
+            node.removeEventListener('touchstart', onStart);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onEnd);
+        };
+    }, [handleWheel, panOffset, priceOffset, zoomDays, vScale, disabled, !!data]);
 
     // Override absolutely everywhere with synchronized live market data for Daily performance (to fix cache races)
     if (timeframe === '1D' && liveData.changePct !== null) {

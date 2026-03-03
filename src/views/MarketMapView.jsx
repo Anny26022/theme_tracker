@@ -791,11 +791,11 @@ export const MarketMapView = ({ hierarchy }) => {
             const rect = searchRef.current.getBoundingClientRect();
             setDropdownPos({
                 top: rect.bottom + window.scrollY + 6,
-                right: window.innerWidth - rect.right,
-                width: isMobile ? Math.max(window.innerWidth - (window.innerWidth - rect.right) - 16, 280) : rect.width
+                left: rect.left,
+                width: rect.width
             });
         }
-    }, [isSearchFocused, searchQuery, isMobile]);
+    }, [isSearchFocused, searchQuery]);
 
     const nseHierarchy = useMemo(() => {
         if (!hierarchy) return null;
@@ -1015,12 +1015,12 @@ export const MarketMapView = ({ hierarchy }) => {
                     {/* Search Bar */}
                     <div ref={searchRef} className="relative flex-1 md:flex-none md:w-56 z-[100]">
                         <div className={cn(
-                            "flex items-center gap-2.5 px-3.5 py-1.5 glass-card border-[var(--ui-divider)]/30 bg-[var(--bg-main)]/20 rounded-full transition-all duration-300",
-                            isSearchFocused && "border-[var(--accent-primary)]/40 bg-[var(--bg-main)]/40 shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.05)]"
+                            "flex items-center gap-2.5 px-3.5 py-1.5 glass-card border-[var(--ui-divider)]/30 bg-[#16191f]/80 rounded-full transition-all duration-300",
+                            isSearchFocused && "border-[var(--accent-primary)]/40 ring-1 ring-[var(--accent-primary)]/20 shadow-[0_0_20px_rgba(0,133,255,0.1)]"
                         )}>
                             <Search className={cn(
                                 "w-3 h-3 transition-colors",
-                                isSearchFocused ? "text-[var(--accent-primary)]" : "text-[var(--text-muted)]/40"
+                                isSearchFocused ? "text-[var(--accent-primary)]" : "text-white/20"
                             )} />
                             <input
                                 type="text"
@@ -1028,22 +1028,28 @@ export const MarketMapView = ({ hierarchy }) => {
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 onFocus={() => setIsSearchFocused(true)}
                                 placeholder="FIND STOCKS..."
-                                className="bg-transparent border-none outline-none text-[12px] md:text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-30 w-full"
+                                className="bg-transparent border-none outline-none text-[12px] md:text-[9px] font-bold uppercase tracking-[0.15em] text-white placeholder:text-white/20 w-full"
                             />
                         </div>
 
                         {isSearchFocused && searchResults.length > 0 && createPortal(
                             <div
-                                style={{
+                                style={isMobile ? {
+                                    position: 'fixed',
+                                    top: dropdownPos.top,
+                                    left: dropdownPos.left,
+                                    width: '180px',
+                                    zIndex: 10000
+                                } : {
                                     position: 'absolute',
                                     top: dropdownPos.top,
-                                    right: dropdownPos.right,
-                                    width: dropdownPos.width,
+                                    left: dropdownPos.left,
+                                    width: Math.max(dropdownPos.width, 240),
                                     zIndex: 10000
                                 }}
-                                className="glass-card !bg-[var(--bg-main)] !opacity-100 border border-[var(--ui-divider)]/40 shadow-[0_20px_40px_rgba(0,0,0,0.4)] rounded-xl overflow-hidden max-h-[320px] overflow-y-auto no-scrollbar"
+                                className="glass-card !bg-[#0b0e14]/95 backdrop-blur-md border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.6)] rounded-lg overflow-hidden max-h-[280px] overflow-y-auto no-scrollbar"
                             >
-                                <div className="p-1 space-y-0.5">
+                                <div className="p-0.5 space-y-0">
                                     {searchResults.map((result, idx) => (
                                         <button
                                             key={`${result.symbol}-${idx}`}
@@ -1056,18 +1062,18 @@ export const MarketMapView = ({ hierarchy }) => {
                                                     scrollToBlock(result.blockId, result.themeName);
                                                 }
                                             }}
-                                            className="w-full flex items-center justify-between py-2.5 md:py-1.5 px-3 md:px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
+                                            className="w-full flex flex-col items-start py-1.5 px-2 hover:bg-white/5 transition-colors border-b border-white/[0.03] last:border-0"
                                         >
-                                            <div className="flex flex-col items-start min-w-0 flex-1">
-                                                <span className="text-[11px] md:text-[10px] font-bold uppercase tracking-tight text-[var(--text-main)]/90 truncate w-full text-left">
-                                                    {result.name}
+                                            <div className="flex items-center justify-between w-full gap-1 mb-0.5">
+                                                <span className="text-[9px] font-black uppercase text-white/90 truncate flex-1 text-left">
+                                                    {result.symbol}
                                                 </span>
-                                                <span className="text-[9px] md:text-[8px] font-medium text-[var(--text-muted)] opacity-30 uppercase truncate w-full text-left">
-                                                    {result.symbol} • {result.themeName}
+                                                <span className="text-[7px] font-black text-[var(--accent-primary)]/80 uppercase tracking-tighter shrink-0">
+                                                    {result.groupTitle.split(' ')[0]}
                                                 </span>
                                             </div>
-                                            <span className="text-[9px] md:text-[8px] font-black text-[var(--accent-primary)]/60 uppercase tracking-tighter bg-[var(--accent-primary)]/5 px-2 py-1 rounded-sm flex-shrink-0 ml-3">
-                                                {result.groupTitle.split(' ')[0]}
+                                            <span className="text-[7px] font-bold text-white/30 uppercase truncate w-full text-left">
+                                                {result.name}
                                             </span>
                                         </button>
                                     ))}

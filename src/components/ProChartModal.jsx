@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, ChevronLeft, ChevronRight, Hash, LayoutGrid, Link2, Clock, Crosshair, ChevronDown, Layers } from 'lucide-react';
+import { X, Search, ChevronLeft, ChevronRight, Hash, LayoutGrid, Link2, Clock, Crosshair, ChevronDown, Layers, TrendingUp } from 'lucide-react';
 import FinvizChart from './FinvizChart';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
@@ -42,6 +42,7 @@ const ProChartModal = ({
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [isLayoutOpen, setIsLayoutOpen] = useState(false);
     const [isClusterOpen, setIsClusterOpen] = useState(false);
+    const [isStyleOpen, setIsStyleOpen] = useState(false);
 
     const switcherData = useMemo(() => {
         if (viewMode === 'THEMATIC') {
@@ -69,6 +70,8 @@ const ProChartModal = ({
     const setSyncOptions = (v) => _setSyncOptions(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_pro_sync', JSON.stringify(next)); return next; });
     const [chartStates, _setChartStates] = useState(() => load('tt_pro_charts', Array.from({ length: 16 }, () => ({ symbol, name, timeframe: initialTimeframe }))));
     const setChartStates = (v) => _setChartStates(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_pro_charts', JSON.stringify(next)); return next; });
+    const [chartStyle, _setChartStyle] = useState(() => localStorage.getItem('tt_pro_style') || 'candles');
+    const setChartStyle = (v) => { _setChartStyle(v); localStorage.setItem('tt_pro_style', v); };
     const [activeChartIndex, setActiveChartIndex] = useState(0);
     const currentChart = chartStates[activeChartIndex] || chartStates[0];
     const searchInputRef = useRef(null);
@@ -402,6 +405,51 @@ const ProChartModal = ({
                             </>
                         )}
                     </div>
+
+                    <div className="h-4 w-[1px] bg-white/5 mx-2" />
+
+                    {/* Style Switcher Dropdown */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setIsStyleOpen(!isStyleOpen)}
+                            className={`flex items-center gap-2 px-2.5 py-1 rounded transition-all border ${isStyleOpen ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]' : 'bg-white/5 border-white/5 text-white/30 hover:text-white hover:bg-white/10'}`}
+                        >
+                            <TrendingUp size={11} className={isStyleOpen ? 'text-[var(--accent-primary)]' : 'text-white/30'} />
+                            <span className="text-[9px] font-black uppercase tracking-widest min-w-[50px] text-left">
+                                {chartStyle === 'candles' ? 'Candles' :
+                                    chartStyle === 'hollow' ? 'Hollow' :
+                                        chartStyle === 'heikin' ? 'Heikin' :
+                                            chartStyle === 'white' ? 'Classic' :
+                                                chartStyle === 'bars' ? 'Bars' :
+                                                    chartStyle === 'line' ? 'Line' : 'Area'}
+                            </span>
+                            <ChevronDown size={9} className={`transition-transform duration-300 opacity-30 ${isStyleOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isStyleOpen && (
+                            <>
+                                <div className="fixed inset-0 z-[100]" onClick={() => setIsStyleOpen(false)} />
+                                <div className="absolute top-full left-0 mt-1 w-[160px] bg-[#080a0f]/98 backdrop-blur-xl border border-white/8 rounded-lg shadow-[0_16px_48px_rgba(0,0,0,0.9)] p-1 z-[101] animate-in fade-in slide-in-from-top-2 duration-200">
+                                    {[
+                                        { id: 'candles', label: 'CANDLES' },
+                                        { id: 'hollow', label: 'HOLLOW' },
+                                        { id: 'heikin', label: 'HEIKIN ASHI' },
+                                        { id: 'white', label: 'CLASSIC B/W' },
+                                        { id: 'bars', label: 'BARS' },
+                                        { id: 'line', label: 'LINE' },
+                                        { id: 'area', label: 'AREA' }
+                                    ].map(s => (
+                                        <button key={s.id} onClick={() => { setChartStyle(s.id); setIsStyleOpen(false); }}
+                                            className={`w-full px-3 py-1.5 flex items-center justify-between rounded-[4px] transition-all text-[9px] font-black tracking-tight ${chartStyle === s.id ? 'bg-[var(--accent-primary)] text-black' : 'text-white/40 hover:bg-white/5 hover:text-white'}`}
+                                        >
+                                            {s.label}
+                                            {chartStyle === s.id && <div className="w-1 h-1 rounded-full bg-black/40" />}
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -531,6 +579,7 @@ const ProChartModal = ({
                                         series={[]}
                                         forcedTimeframe={chart.timeframe}
                                         isProMode={true}
+                                        chartStyle={chartStyle}
                                     />
                                 </div>
                             </div>

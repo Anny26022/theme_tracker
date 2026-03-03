@@ -34,7 +34,8 @@ const FinvizChart = React.memo(function FinvizChart({
     initialTimeframe = '1D',
     isProMode = false,
     allCompanies = [],
-    disabled = false
+    disabled = false,
+    chartStyle = 'candles'
 }) {
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
@@ -209,9 +210,28 @@ const FinvizChart = React.memo(function FinvizChart({
         const endIdx = Math.max(sliceCount, baseData.allPoints.length - panOffset);
         const startIdx = Math.max(0, endIdx - sliceCount);
 
-        const points = baseData.allPoints.slice(startIdx, endIdx).map(p => ({ ...p }));
+        let points = baseData.allPoints.slice(startIdx, endIdx).map(p => ({ ...p }));
         const sma50 = baseData.sma50Arr.slice(startIdx, endIdx);
         const sma200 = baseData.sma200Arr.slice(startIdx, endIdx);
+
+        // Heikin Ashi Transformation
+        if (chartStyle === 'heikin') {
+            const haPoints = [];
+            points.forEach((p, i) => {
+                const close = (p.open + p.high + p.low + p.close) / 4;
+                let open;
+                if (i === 0) {
+                    open = (p.open + p.close) / 2;
+                } else {
+                    const prev = haPoints[i - 1];
+                    open = (prev.open + prev.close) / 2;
+                }
+                const high = Math.max(p.high, open, close);
+                const low = Math.min(p.low, open, close);
+                haPoints.push({ ...p, open, high, low, close });
+            });
+            points = haPoints;
+        }
 
         // 4. Subtle Synthesis (Only if data is totally flat)
         points.forEach((p, i) => {
@@ -262,7 +282,7 @@ const FinvizChart = React.memo(function FinvizChart({
             points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP || 0.01,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH]);
+    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH, chartStyle]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -276,11 +296,19 @@ const FinvizChart = React.memo(function FinvizChart({
     const maxV = data?.maxV ?? 0;
     const minP = data?.minP ?? 0;
     const maxP = data?.maxP ?? 0;
-    const colorUp = '#00c805';
-    const colorDown = '#ff2e2e';
-    const colorSma50 = '#f8d347';
-    const colorSma200 = '#9d27b0';
     const candleWidth = Math.max(1.8, (chartW / (points.length || 1)) * 0.82);
+
+    const chartColors = useMemo(() => {
+        if (chartStyle === 'white') return { up: '#ffffff', down: '#ffffff', sma50: '#f8d347', sma200: '#9d27b0' };
+        if (chartStyle === 'area') return { up: '#3b82f6', down: '#ef4444', sma50: '#f8d347', sma200: '#9d27b0' };
+        return { up: '#00c805', down: '#ff2e2e', sma50: '#f8d347', sma200: '#9d27b0' };
+    }, [chartStyle]);
+
+    const colorUp = chartColors.up;
+    const colorDown = chartColors.down;
+    const colorSma50 = chartColors.sma50;
+    const colorSma200 = chartColors.sma200;
+
     const smaLines = useMemo(() => {
         const build = (arr, color) => {
             const pts = arr.map((val, i) => val ? `${i === 0 || !arr[i - 1] ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(val).toFixed(1)}` : '').filter(Boolean);
@@ -351,49 +379,97 @@ const FinvizChart = React.memo(function FinvizChart({
 
     const candleGraphics = useMemo(() => {
         if (!data || points.length < 2) return null;
+
+        if (chartStyle === 'line' || chartStyle === 'area') {
+            const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(p.close).toFixed(1)}`).join(' ');
+
+            if (chartStyle === 'area') {
+                const areaPath = `${linePath} L${getX(points.length - 1).toFixed(1)},${(H - paddingBottom).toFixed(1)} L${getX(0).toFixed(1)},${(H - paddingBottom).toFixed(1)} Z`;
+                return (
+                    <>
+                        <defs>
+                            <linearGradient id={`areaGradient-${cleaned}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={colorUp} stopOpacity="0.3" />
+                                <stop offset="100%" stopColor={colorUp} stopOpacity="0" />
+                            </linearGradient>
+                        </defs>
+                        <path d={areaPath} fill={`url(#areaGradient-${cleaned})`} style={{ shapeRendering: 'auto' }} />
+                        <path d={linePath} fill="none" stroke={colorUp} strokeWidth="1.5" opacity="0.9" style={{ shapeRendering: 'auto' }} />
+                    </>
+                );
+            }
+
+            return (
+                <path d={linePath} fill="none" stroke={colorUp} strokeWidth="1.5" opacity="0.9" style={{ shapeRendering: 'auto' }} />
+            );
+        }
+
         const volUp = [], volDown = [];
         const wickUp = [], wickDown = [];
-        const bodyUpFill = [], bodyUpStroke = [], bodyDown = [];
+        const bodyUpFill = [], bodyUpStroke = [], bodyDownStroke = [], bodyDownFill = [];
+        const barUp = [], barDown = [];
         const hw = candleWidth / 2;
 
         points.forEach((p, i) => {
             const x = getX(i);
-            const prevClose = i > 0 ? points[i - 1].close : p.close;
-            const isUp = p.close >= prevClose;
-            const isHollow = p.close >= p.open;
+            const isUp = p.close >= p.open;
+            const isGrowth = i > 0 ? p.close >= points[i - 1].close : true;
 
-            // Volume
+            // Volume (respect growth color, not just intra-period)
             if (maxV > 0 && p.volume > 0) {
                 const vh = (p.volume / maxV) * volH;
                 const vy = H - paddingBottom - vh;
-                (isUp ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
+                (isGrowth ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
             }
 
-            // Wicks
-            const highY = getY(p.high), lowY = getY(p.low);
-            (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
+            if (chartStyle === 'bars') {
+                const highY = getY(p.high), lowY = getY(p.low), openY = getY(p.open), closeY = getY(p.close);
+                const path = `M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)} M${(x - hw).toFixed(1)},${openY.toFixed(1)}H${x.toFixed(1)} M${x.toFixed(1)},${closeY.toFixed(1)}H${(x + hw).toFixed(1)}`;
+                if (isUp) barUp.push(path);
+                else barDown.push(path);
+            } else {
+                // Wicks
+                const highY = getY(p.high), lowY = getY(p.low);
+                (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
 
-            // Bodies
-            const openY = getY(p.open), closeY = getY(p.close);
-            const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
-            const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
-            if (isUp && isHollow) bodyUpStroke.push(bodyD);
-            else if (isUp) bodyUpFill.push(bodyD);
-            else bodyDown.push(bodyD);
+                // Bodies
+                const openY = getY(p.open), closeY = getY(p.close);
+                const top = Math.min(openY, closeY), bodyH = Math.max(1, Math.abs(openY - closeY));
+                const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
+
+                if (chartStyle === 'hollow' || chartStyle === 'white') {
+                    if (isUp) bodyUpStroke.push(bodyD);
+                    else bodyDownFill.push(bodyD);
+                } else {
+                    if (isUp) bodyUpFill.push(bodyD);
+                    else bodyDownFill.push(bodyD);
+                }
+            }
         });
 
         return (
             <>
-                {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.3" />}
-                {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.3" />}
-                {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
-                {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
-                {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
-                {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="1" />}
-                {bodyDown.length > 0 && <path d={bodyDown.join('')} fill={colorDown} />}
+                {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.15" />}
+                {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.15" />}
+
+                {chartStyle === 'bars' ? (
+                    <>
+                        {barUp.length > 0 && <path d={barUp.join('')} fill="none" stroke={colorUp} strokeWidth="1.2" />}
+                        {barDown.length > 0 && <path d={barDown.join('')} fill="none" stroke={colorDown} strokeWidth="1.2" />}
+                    </>
+                ) : (
+                    <>
+                        {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
+                        {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
+                        {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
+                        {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="0.8" />}
+                        {bodyDownFill.length > 0 && <path d={bodyDownFill.join('')} fill={colorDown} />}
+                        {bodyDownStroke.length > 0 && <path d={bodyDownStroke.join('')} fill="#0b0e14" stroke={colorDown} strokeWidth="0.8" />}
+                    </>
+                )}
             </>
         );
-    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown]);
+    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned]);
 
     const liveData = useLivePrice(cleaned);
 
@@ -626,6 +702,7 @@ const FinvizChart = React.memo(function FinvizChart({
         if (prevProps.name !== nextProps.name) return false;
         if (prevProps.series !== nextProps.series) return false;
         if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
+        if (prevProps.chartStyle !== nextProps.chartStyle) return false;
         return true;
     });
 

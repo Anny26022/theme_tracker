@@ -90,22 +90,6 @@ const ProChartModal = ({
         prevOpenRef.current = isOpen;
     }, [isOpen, symbol, name]);
 
-    // Subscribe to the correct resolution data stream for ALL charts in layout
-    useEffect(() => {
-        if (!isOpen) return;
-        const uniqueChartConfigs = Array.from(new Set(
-            chartStates.slice(0, 16)
-                .filter(c => c && c.symbol && c.symbol.trim() !== "")
-                .map(c => `${c.symbol}|${c.timeframe === '1D' ? '1Y' : 'MAX'}`)
-        ));
-
-        const subscribers = uniqueChartConfigs.map(config => {
-            const [sym, apiTf] = config.split('|');
-            return subscribeChartSymbols(apiTf, [sym]);
-        });
-
-        return () => subscribers.forEach(unsub => unsub?.());
-    }, [isOpen, chartStates, subscribeChartSymbols]);
 
     // Sync cluster across frames when theme/navigationCompanies changes
     // This allows seeing multiple stocks from the same cluster when in multi-layout mode

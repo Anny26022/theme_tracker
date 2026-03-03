@@ -70,14 +70,31 @@ const FinvizChart = React.memo(function FinvizChart({
     }, [timeframe]);
 
     useEffect(() => {
-        if (!symbol || isProMode) return; // ProMode handles its own fetching
-        return subscribeChartSymbols(apiInterval, [symbol]);
-    }, [symbol, apiInterval, isProMode, subscribeChartSymbols]);
+        if (!symbol) return;
+        // Fetch the appropriate high-res window + MAX for deep history/SMA
+        const unsubs = [subscribeChartSymbols(apiInterval, [symbol])];
+        if (apiInterval === '1Y') {
+            unsubs.push(subscribeChartSymbols('MAX', [symbol]));
+        }
+        return () => unsubs.forEach(u => u?.());
+    }, [symbol, apiInterval, subscribeChartSymbols]);
 
     const activeSeries = useMemo(() => {
         if (!symbol) return series || [];
-        const cached = getCachedComparisonSeries(cleaned, apiInterval, { silent: true });
-        return (cached && cached.length > 0) ? cached : (series || []);
+        const cachedTarget = getCachedComparisonSeries(cleaned, apiInterval, { silent: true });
+        const cachedMax = (apiInterval === '1Y') ? getCachedComparisonSeries(cleaned, 'MAX', { silent: true }) : null;
+
+        // REOLUTION STITCHER: If we want 1D (daily), merge 1Y daily data onto MAX weekly history
+        if (apiInterval === '1Y' && Array.isArray(cachedTarget) && cachedTarget.length > 0) {
+            if (Array.isArray(cachedMax) && cachedMax.length > 0) {
+                const firstDaily = cachedTarget[0].time;
+                const historical = cachedMax.filter(p => p.time < firstDaily);
+                return [...historical, ...cachedTarget];
+            }
+            return cachedTarget;
+        }
+
+        return (cachedTarget && cachedTarget.length > 0) ? cachedTarget : (series || []);
     }, [cleaned, apiInterval, chartVersion, series]);
 
     useEffect(() => {

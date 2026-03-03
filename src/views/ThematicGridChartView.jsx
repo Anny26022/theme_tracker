@@ -1,25 +1,43 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import FinvizChart from '../components/FinvizChart';
 import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
-import { ChevronLeft, ChevronDown, Layers, ExternalLink } from 'lucide-react';
+import { ChevronLeft, ChevronDown, Layers, ExternalLink, LayoutGrid, StretchHorizontal } from 'lucide-react';
 import ProChartModal from '../components/ProChartModal';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 import { VirtuosoGrid } from 'react-virtuoso';
 
 const ChartSkeleton = ({ company, height }) => (
-    <div
-        className="w-full bg-[#0b0e14] border border-[#23272d] rounded-md animate-pulse flex items-center justify-center"
-        style={{ height }}
-    >
-        <div className="flex flex-col items-center gap-2 opacity-20">
-            <span className="text-[10px] font-black uppercase tracking-widest">{company.name}</span>
-            <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-tighter">{company.symbol}</span>
+    <div className="flex flex-col w-full h-full">
+        {/* Timeframe Toggle Placeholders to match FinvizChart */}
+        <div className="flex flex-row justify-end gap-0.5 mb-1 px-1">
+            {[
+                { label: 'TD', value: '1D' },
+                { label: 'TW', value: '1W' },
+                { label: 'TM', value: '1M' },
+                { label: 'TY', value: '1Y' }
+            ].map(tf => (
+                <div
+                    key={tf.value}
+                    className="px-1 py-0 rounded-[2px] text-[7px] font-black tracking-tighter border bg-[#1a1c22]/50 border-white/5 text-white/5 h-[14px] flex items-center"
+                >
+                    {tf.label}
+                </div>
+            ))}
+        </div>
+        <div
+            className="w-full bg-[#0b0e14] border border-[#23272d] rounded-md animate-pulse flex items-center justify-center overflow-hidden"
+            style={{ height: `${height}px` }}
+        >
+            <div className="flex flex-col items-center gap-2 opacity-20">
+                <span className="text-[12px] font-black uppercase tracking-widest">{company.name}</span>
+                <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-tighter">{company.symbol}</span>
+            </div>
         </div>
     </div>
 );
 
-const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe }) => (
+const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe, disabled }) => (
     <FinvizChart
         symbol={company.symbol}
         name={company.name}
@@ -27,6 +45,7 @@ const FinvizChartCard = React.memo(({ company, series, height, onExpand, initial
         height={height}
         onExpand={onExpand}
         initialTimeframe={initialTimeframe}
+        disabled={disabled}
     />
 ), (prevProps, nextProps) => {
     if (prevProps.series !== nextProps.series) return false;
@@ -36,7 +55,7 @@ const FinvizChartCard = React.memo(({ company, series, height, onExpand, initial
     return true;
 });
 
-const DeferredFinvizChart = React.memo(({ company, series, height, onExpand }) => {
+const DeferredFinvizChart = React.memo(({ company, series, height, onExpand, disabled }) => {
     const [isVisible, setIsVisible] = useState(false);
     const containerRef = useRef(null);
 
@@ -69,6 +88,7 @@ const DeferredFinvizChart = React.memo(({ company, series, height, onExpand }) =
                         series={series}
                         height={height}
                         onExpand={onExpand}
+                        disabled={disabled}
                     />
                 ) : (
                     <ChartSkeleton company={company} height={height} />
@@ -92,7 +112,7 @@ const ChartGridComponents = {
             ref={ref}
             {...props}
             style={style}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-12"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 pb-12"
         >
             {children}
         </div>
@@ -121,6 +141,7 @@ const ThematicGridChartView = ({
     const [proViewSymbol, setProViewSymbol] = useState(null);
     const [proViewTimeframe, setProViewTimeframe] = useState('1D');
     const [isMobileMode, setIsMobileMode] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+    const [mobileLayout, setMobileLayout] = useState('VERTICAL'); // VERTICAL or HORIZONTAL
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -310,19 +331,40 @@ const ThematicGridChartView = ({
                         </div>
                     )}
                 </div>
+
+                {/* Layout Toggle - Right Side */}
+                <div className="flex items-center gap-2">
+                    {isMobileMode && (
+                        <div className="flex bg-[#1a1c22]/50 p-0.5 rounded border border-white/5 shadow-2xl">
+                            <button
+                                onClick={() => setMobileLayout('VERTICAL')}
+                                className={`p-1 rounded transition-all ${mobileLayout === 'VERTICAL' ? 'bg-[var(--accent-primary)] text-black' : 'text-white/20 hover:text-white/60'}`}
+                            >
+                                <LayoutGrid size={14} />
+                            </button>
+                            <button
+                                onClick={() => setMobileLayout('HORIZONTAL')}
+                                className={`p-1 rounded transition-all ${mobileLayout === 'HORIZONTAL' ? 'bg-[var(--accent-primary)] text-black' : 'text-white/20 hover:text-white/60'}`}
+                            >
+                                <StretchHorizontal size={14} />
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Virtualized Chart Grid */}
             {companySeries.length > 0 ? (
-                isMobileMode ? (
-                    <div className="flex overflow-x-auto gap-4 pb-6 snap-x snap-mandatory no-scrollbar scroll-smooth">
+                isMobileMode && mobileLayout === 'HORIZONTAL' ? (
+                    <div className="flex overflow-x-auto gap-4 pb-6 snap-x snap-mandatory no-scrollbar scroll-smooth touch-pan-x cursor-grab active:cursor-grabbing">
                         {companySeries.map((item) => (
-                            <div key={item.company.symbol} className="min-w-[85vw] md:min-w-[400px] snap-center shrink-0 transition-transform duration-500 hover:scale-[1.02]">
+                            <div key={item.company.symbol} className="min-w-[85vw] snap-center shrink-0 transition-transform duration-500 hover:scale-[1.01]">
                                 {item.series.length > 0 ? (
                                     <FinvizChartCard
                                         company={item.company}
                                         series={item.series}
                                         height={320}
+                                        disabled={true}
                                         onExpand={(data) => {
                                             setProViewSymbol(item.company);
                                             setProViewTimeframe(data.timeframe);
@@ -346,14 +388,14 @@ const ThematicGridChartView = ({
                                 <FinvizChartCard
                                     company={item.company}
                                     series={item.series}
-                                    height={280}
+                                    height={isMobileMode ? 320 : 280}
                                     onExpand={(data) => {
                                         setProViewSymbol(item.company);
                                         setProViewTimeframe(data.timeframe);
                                     }}
                                 />
                             ) : (
-                                <ChartSkeleton company={item.company} height={280} />
+                                <ChartSkeleton company={item.company} height={isMobileMode ? 320 : 280} />
                             )
                         )}
                     />

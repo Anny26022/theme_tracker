@@ -63,11 +63,29 @@ const tryFetchChunkedSnapshot = async () => {
 
     await runWithConcurrency(chunks, MAX_CHUNK_CONCURRENCY, async (chunkKey) => {
         const encodedKey = encodeURIComponent(chunkKey);
-        const res = await fetch(`/api/nse/chunks/${encodedKey}?v=${encodeURIComponent(versionKey)}`, {
-            cache: 'force-cache',
-        });
-        if (!res.ok) throw new Error(`Snapshot chunk failed: ${chunkKey}`);
-        const chunk = await res.json();
+        let res;
+        try {
+            res = await fetch(`/api/nse/chunks/${encodedKey}?v=${encodeURIComponent(versionKey)}`, {
+                cache: 'force-cache',
+            });
+        } catch (err) {
+            console.error(`[MarketData] Network error fetching chunk ${chunkKey}:`, err);
+            throw err;
+        }
+
+        if (!res.ok) {
+            console.error(`[MarketData] Chunk ${chunkKey} failed HTTP status: ${res.status}`);
+            throw new Error(`Snapshot chunk failed: ${chunkKey}`);
+        }
+
+        let chunk;
+        try {
+            chunk = await res.json();
+        } catch (err) {
+            console.error(`[MarketData] Chunk ${chunkKey} failed to parse JSON. Possible invalid response from server:`, err);
+            throw err;
+        }
+
         mergeChunkIntoMap(symbolMap, chunk);
     });
 
@@ -81,9 +99,13 @@ const fetchFunc = async () => {
     globalFetchPromise = (async () => {
         try {
             const chunked = await tryFetchChunkedSnapshot();
-            if (Array.isArray(chunked) && chunked.length > 0) return chunked;
-        } catch {
-            // Fallback to bundled data.json
+            if (Array.isArray(chunked) && chunked.length > 0) {
+                console.log(`[MarketData] Successfully loaded ${chunked.length} symbols from NSE chunks.`);
+                return chunked;
+            }
+            console.warn("[MarketData] NSE chunks were empty or invalid. Falling back to data.json.");
+        } catch (error) {
+            console.error("[MarketData] Failed to load NSE chunked snapshots. Falling back to bundled data.json. Reason:", error);
         }
 
         return fetchDataJson();

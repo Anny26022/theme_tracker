@@ -33,7 +33,8 @@ const FinvizChart = React.memo(function FinvizChart({
     forcedTimeframe = null,
     initialTimeframe = '1D',
     isProMode = false,
-    allCompanies = []
+    allCompanies = [],
+    disabled = false
 }) {
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
@@ -111,7 +112,7 @@ const FinvizChart = React.memo(function FinvizChart({
     // When rendered inside a mobile gallery or pure display mode, disable interaction hooks 
     // to allow native browser swiping (overflow-x-auto) to work properly.
     useEffect(() => {
-        if (!isProMode && typeof window !== 'undefined' && window.innerWidth < 768) return; // Disable ONLY on mobile mini-charts
+        if (disabled) return undefined;
         const node = chartAreaRef.current;
         if (!node) return undefined;
 
@@ -132,7 +133,11 @@ const FinvizChart = React.memo(function FinvizChart({
             if (!dragRef.current.isYDragging && !dragRef.current.isDragging) return;
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
             const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
-            if (e.cancelable) e.preventDefault();
+
+            // Only prevent default if we are actively dragging/panning to avoid blocking vertical page scroll
+            if ((dragRef.current.isDragging || dragRef.current.isYDragging) && e.cancelable) {
+                e.preventDefault();
+            }
 
             if (dragRef.current.isYDragging) {
                 const dy = dragRef.current.startY - clientY;
@@ -458,139 +463,152 @@ const FinvizChart = React.memo(function FinvizChart({
     }
 
     return (
-        <>
+        <div className="flex flex-col w-full h-full">
+            {/* Timeframe Toggles - Always visible to prevent layout shift */}
+            {!isProMode && (
+                <div className="flex flex-row justify-end gap-0.5 mb-1 px-1">
+                    {[
+                        { label: 'TD', value: '1D' },
+                        { label: 'TW', value: '1W' },
+                        { label: 'TM', value: '1M' },
+                        { label: 'TY', value: '1Y' }
+                    ].map(tf => (
+                        <button
+                            key={tf.value}
+                            onClick={(e) => { e.stopPropagation(); setTimeframe(tf.value); }}
+                            disabled={!data || points.length < 2}
+                            className={`px-1 py-0 rounded-[2px] text-[7px] font-black tracking-tighter border transition-all ${timeframe === tf.value ? 'bg-[var(--accent-primary)] text-black border-[var(--accent-primary)]' : 'bg-[#1a1c22]/50 border-white/5 text-white/20 hover:text-white hover:border-white/10'}`}
+                        >
+                            {tf.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {(!data || points.length < 2) ? (
-                <div className="bg-[#0b0e14] animate-pulse rounded-md" style={{ height: height || '100%' }} />
+                <div
+                    className="bg-[#0b0e14] animate-pulse rounded-md border border-[#23272d] flex items-center justify-center overflow-hidden"
+                    style={{ height: height ? `${height}px` : '100%' }}
+                >
+                    <div className="flex flex-col items-center gap-2 opacity-20">
+                        <span className="text-[12px] font-black uppercase tracking-widest">{name || symbol}</span>
+                        <span className="text-[8px] font-bold text-[var(--accent-primary)] uppercase tracking-tighter">{symbol}</span>
+                    </div>
+                </div>
             ) : (
-                <>
-                    {/* Timeframe Toggles - Ultra Mini */}
-                    {!isProMode && (
-                        <div className="flex flex-row justify-end gap-0.5 mb-1 px-1">
-                            {['1D', '1W', '1M', '1Y'].map(tf => (
-                                <button
-                                    key={tf}
-                                    onClick={(e) => { e.stopPropagation(); setTimeframe(tf); }}
-                                    className={`px-1 py-0 rounded-[2px] text-[7px] font-black tracking-tighter border transition-all ${timeframe === tf ? 'bg-[var(--accent-primary)] text-black border-[var(--accent-primary)]' : 'bg-[#1a1c22]/50 border-white/5 text-white/20 hover:text-white hover:border-white/10'}`}
-                                >
-                                    {tf}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-
-                    <div
-                        ref={containerRef}
-                        className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden w-full"
-                        style={{ height: height ? `${height}px` : '100%' }}
-                    >
-                        {/* Legend */}
-                        <div className="absolute top-1.5 left-3 right-2 flex justify-between items-start pointer-events-none z-10">
-                            <div className="flex flex-col">
-                                {!isProMode && (
-                                    <div className="flex items-baseline gap-1.5 flex-wrap">
-                                        <span className="text-[16px] font-black tracking-tight text-white uppercase">
-                                            {/^\d+$/.test(cleaned) ? (name || symbol) : cleaned}
-                                        </span>
-                                    </div>
-                                )}
-                                <div className="flex flex-col text-[9px] font-black leading-tight mt-1">
-                                    <span style={{ color: colorSma50 }}>SMA 50</span>
-                                    <span style={{ color: colorSma200 }}>SMA 200</span>
-                                </div>
-                            </div>
-
+                <div
+                    ref={containerRef}
+                    className="bg-[#0b0e14] text-white border border-[#23272d] rounded-md flex flex-col font-sans relative select-none hover:border-[#444] shadow-lg group overflow-hidden w-full"
+                    style={{ height: height ? `${height}px` : '100%' }}
+                >
+                    {/* Legend */}
+                    <div className="absolute top-1.5 left-3 right-2 flex justify-between items-start pointer-events-none z-10">
+                        <div className="flex flex-col">
                             {!isProMode && (
-                                <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center justify-center pointer-events-none mt-0.5">
-                                    <span className="text-[12px] font-black italic" style={{ color: change >= 0 ? colorUp : colorDown }}>
-                                        {change >= 0 ? '+' : ''}{change.toFixed(2)} ({Math.abs(changePct).toFixed(2)}%)
+                                <div className="flex items-baseline gap-1.5 flex-wrap">
+                                    <span className="text-[16px] font-black tracking-tight text-white uppercase">
+                                        {/^\d+$/.test(cleaned) ? (name || symbol) : cleaned}
                                     </span>
                                 </div>
                             )}
+                            <div className="flex flex-col text-[9px] font-black leading-tight mt-1">
+                                <span style={{ color: colorSma50 }}>SMA 50</span>
+                                <span style={{ color: colorSma200 }}>SMA 200</span>
+                            </div>
                         </div>
 
-                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
-                            <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.max(20, Math.round(prev * 0.7))); }} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
-                            <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4))); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
-                            <button onClick={(e) => { e.stopPropagation(); setZoomDays(190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
-                            {!isProMode && onExpand && (
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); onExpand({ symbol, name, series, timeframe }); }}
-                                    className="p-0.5 hover:bg-[var(--accent-primary)] hover:text-black rounded ml-1 transition-colors"
-                                >
-                                    <ExternalLink size={10} />
-                                </button>
-                            )}
-                        </div>
+                        {!isProMode && (
+                            <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center justify-center pointer-events-none mt-0.5">
+                                <span className="text-[12px] font-black italic" style={{ color: change >= 0 ? colorUp : colorDown }}>
+                                    {change >= 0 ? '+' : ''}{change.toFixed(2)} ({Math.abs(changePct).toFixed(2)}%)
+                                </span>
+                            </div>
+                        )}
+                    </div>
 
-                        <div
-                            ref={chartAreaRef}
-                            className="flex-1 relative cursor-crosshair"
-                            onMouseMove={handleMouseMove}
-                            onMouseLeave={handleMouseLeave}
-                        >
-                            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
+                        <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.max(20, Math.round(prev * 0.7))); }} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4))); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); setZoomDays(190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
+                        {!isProMode && onExpand && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onExpand({ symbol, name, series, timeframe }); }}
+                                className="p-0.5 hover:bg-[var(--accent-primary)] hover:text-black rounded ml-1 transition-colors"
+                            >
+                                <ExternalLink size={10} />
+                            </button>
+                        )}
+                    </div>
 
-                                {/* Volume Labels (Left Axis) */}
-                                {maxV > 0 && (
-                                    <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
-                                        <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
-                                        <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
-                                    </g>
-                                )}
+                    <div
+                        ref={chartAreaRef}
+                        className={`flex-1 relative cursor-crosshair ${disabled ? 'touch-auto' : 'touch-pan-y'}`}
+                        onMouseMove={handleMouseMove}
+                        onMouseLeave={handleMouseLeave}
+                    >
+                        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
 
-                                {smaLines}
-
-                                {candleGraphics}
-
-                                <g transform={`translate(${W - paddingX + 5}, 0)`}>
-                                    {[0, 0.25, 0.5, 0.75, 1].map(v => (
-                                        <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
-                                            {(maxP - (maxP - minP) * v).toFixed(1)}
-                                        </text>
-                                    ))}
+                            {/* Volume Labels (Left Axis) */}
+                            {maxV > 0 && (
+                                <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
+                                    <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
+                                    <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
                                 </g>
-                                {monthLabels.map((m, i) => (
-                                    <text
-                                        key={i}
-                                        x={m.x}
-                                        y={H - 8}
-                                        fill={m.isYear ? "#888" : "#444"}
-                                        fontSize={m.isYear ? "11" : "10"}
-                                        fontWeight={m.isYear ? "900" : "800"}
-                                        fontFamily="monospace"
-                                        textAnchor="middle"
-                                    >
-                                        {m.text}
+                            )}
+
+                            {smaLines}
+
+                            {candleGraphics}
+
+                            <g transform={`translate(${W - paddingX + 5}, 0)`}>
+                                {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                                    <text key={v} y={paddingTop + chartH * v + 3} fill="#555" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                                        {(maxP - (maxP - minP) * v).toFixed(1)}
                                     </text>
                                 ))}
-                            </svg>
+                            </g>
+                            {monthLabels.map((m, i) => (
+                                <text
+                                    key={i}
+                                    x={m.x}
+                                    y={H - 8}
+                                    fill={m.isYear ? "#888" : "#444"}
+                                    fontSize={m.isYear ? "11" : "10"}
+                                    fontWeight={m.isYear ? "900" : "800"}
+                                    fontFamily="monospace"
+                                    textAnchor="middle"
+                                >
+                                    {m.text}
+                                </text>
+                            ))}
+                        </svg>
 
-                            <div
-                                ref={tooltipRef}
-                                className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
-                                style={{ opacity: 0 }}
-                            >
-                                <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
-                                <div className="grid grid-cols-2 gap-x-2">
-                                    <span ref={tooltipOpenRef}>O: —</span>
-                                    <span ref={tooltipCloseRef}>C: —</span>
-                                    <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
-                                    <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
-                                </div>
+                        <div
+                            ref={tooltipRef}
+                            className="absolute top-10 left-12 bg-black/95 border border-[#333] p-1.5 rounded text-white text-[9px] font-mono z-50 pointer-events-none"
+                            style={{ opacity: 0 }}
+                        >
+                            <span ref={tooltipDateRef} className="font-black border-b border-gray-700 block mb-1">—</span>
+                            <div className="grid grid-cols-2 gap-x-2">
+                                <span ref={tooltipOpenRef}>O: —</span>
+                                <span ref={tooltipCloseRef}>C: —</span>
+                                <span ref={tooltipHighRef} className="text-[#00c3a5]">H: —</span>
+                                <span ref={tooltipLowRef} className="text-[#ff4d52]">L: —</span>
                             </div>
                         </div>
                     </div>
-                </>
+                </div>
             )}
-        </>
+        </div>
     );
-}, (prevProps, nextProps) => {
-    if (prevProps.height !== nextProps.height) return false;
-    if (prevProps.symbol !== nextProps.symbol) return false;
-    if (prevProps.name !== nextProps.name) return false;
-    if (prevProps.series !== nextProps.series) return false;
-    if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
-    return true;
-});
+},
+    (prevProps, nextProps) => {
+        if (prevProps.height !== nextProps.height) return false;
+        if (prevProps.symbol !== nextProps.symbol) return false;
+        if (prevProps.name !== nextProps.name) return false;
+        if (prevProps.series !== nextProps.series) return false;
+        if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
+        return true;
+    });
 
 export default FinvizChart;

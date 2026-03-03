@@ -1,24 +1,31 @@
-import React, { useMemo, useRef, useCallback, useState, useEffect } from 'react';
-import { cleanSymbol, getCachedComparisonSeries } from '../services/priceService';
+import React, { useMemo, useRef, useCallback, useState, useEffect, useSyncExternalStore } from 'react';
+import { cleanSymbol, getCachedComparisonSeries, getCachedInterval } from '../services/priceService';
 import { useMarketDataRegistry, useChartVersion } from '../context/MarketDataContext';
 import { useLivePrice } from '../context/PriceContext';
 import { ZoomIn, ZoomOut, Maximize2, ExternalLink } from 'lucide-react';
 
-/**
- * AUTHENTIC Finviz Replica Component.
- * Fixed: "Normal" candle proportions and consistent SMA logic.
- */
 const buildSmaSeries = (values, period) => {
     if (!values?.length) return [];
-    const result = new Array(values.length).fill(null);
-    let sum = 0;
-    for (let i = 0; i < values.length; i++) {
-        sum += values[i];
-        if (i >= period) sum -= values[i - period];
-        if (i >= period - 1) result[i] = sum / period;
-    }
-    return result;
+    const r = new Array(values.length).fill(null); let s = 0;
+    for (let i = 0; i < values.length; i++) { s += values[i]; if (i >= period) s -= values[i - period]; if (i >= period - 1) r[i] = s / period; }
+    return r;
 };
+const buildEmaSeries = (values, period) => {
+    if (!values?.length) return [];
+    const r = new Array(values.length).fill(null), k = 2 / (period + 1); let ema = null;
+    for (let i = 0; i < values.length; i++) {
+        if (ema === null) { if (i >= period - 1) { let s = 0; for (let j = i - period + 1; j <= i; j++) s += values[j]; ema = s / period; r[i] = ema; } }
+        else { ema = values[i] * k + ema * (1 - k); r[i] = ema; }
+    }
+    return r;
+};
+const MA_COLORS = { 5: '#ff6b6b', 10: '#ffa94d', 21: '#ffd43b', 50: '#51cf66', 100: '#22b8cf', 200: '#9d27b0' };
+const _defaultMa = [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }];
+let _maSnap = { raw: null, val: _defaultMa };
+let _styleSnap = { raw: null, val: 'candles' };
+const getMAConfig = () => { const r = localStorage.getItem('tt_pro_ma'); if (r === _maSnap.raw) return _maSnap.val; try { _maSnap = { raw: r, val: r ? JSON.parse(r) : _defaultMa }; } catch { _maSnap = { raw: r, val: _defaultMa }; } return _maSnap.val; };
+const getStyle = () => { const r = localStorage.getItem('tt_pro_style'); if (r === _styleSnap.raw) return _styleSnap.val; _styleSnap = { raw: r, val: r || 'candles' }; return _styleSnap.val; };
+const subChartSettings = (cb) => { window.addEventListener('tt_chart_settings', cb); return () => window.removeEventListener('tt_chart_settings', cb); };
 
 let _cs = null;
 const cs = () => _cs || (_cs = JSON.parse(localStorage.getItem('tt_cs_v4') || '{}'));
@@ -35,8 +42,13 @@ const FinvizChart = React.memo(function FinvizChart({
     isProMode = false,
     allCompanies = [],
     disabled = false,
-    chartStyle = 'candles'
+    chartStyle: chartStyleProp = null,
+    maConfig: maConfigProp = null
 }) {
+    const lsStyle = useSyncExternalStore(subChartSettings, getStyle);
+    const lsMa = useSyncExternalStore(subChartSettings, getMAConfig);
+    const chartStyle = chartStyleProp ?? lsStyle;
+    const maConfig = maConfigProp ?? lsMa;
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
     const totalPointsRef = useRef(9999);
@@ -98,21 +110,19 @@ const FinvizChart = React.memo(function FinvizChart({
         return (cachedTarget && cachedTarget.length > 0) ? cachedTarget : (series || []);
     }, [cleaned, apiInterval, chartVersion, series]);
 
+    const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
+    const measuredRef = useRef(false);
     useEffect(() => {
         if (!containerRef.current) return;
         const obs = new ResizeObserver((entries) => {
             if (entries[0]) {
                 const { width, height } = entries[0].contentRect;
-                if (width > 0 && height > 0) {
-                    setDimensions({ width, height });
-                }
+                if (width > 0 && height > 0) { measuredRef.current = true; setDimensions({ width, height }); }
             }
         });
         obs.observe(containerRef.current);
         return () => obs.disconnect();
     }, []);
-
-    const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
 
     const rafRef = useRef(null);
 
@@ -172,19 +182,11 @@ const FinvizChart = React.memo(function FinvizChart({
             .filter(p => !isNaN(p.time) && p.time > 0 && isFinite(p.close) && p.close > 0);
 
         if (allPoints.length < 2) return null;
-
-        // 3. Full-History SMA (Crucial for correctness)
         const allCloses = allPoints.map(p => p.close);
-        const sma50Arr = buildSmaSeries(allCloses, 50);
-        const sma200Arr = buildSmaSeries(allCloses, 200);
-
-        return {
-            allPoints,
-            sma50Arr,
-            sma200Arr,
-            totalPoints: allPoints.length
-        };
-    }, [activeSeries, timeframe]);
+        const maSeriesMap = {};
+        (maConfig).forEach(m => { maSeriesMap[`${m.type}_${m.period}`] = (m.type === 'EMA' ? buildEmaSeries : buildSmaSeries)(allCloses, m.period); });
+        return { allPoints, maSeriesMap, totalPoints: allPoints.length };
+    }, [activeSeries, timeframe, maConfig]);
 
     // Sync view state cleanly on timeframe/symbol change
     useEffect(() => {
@@ -211,10 +213,8 @@ const FinvizChart = React.memo(function FinvizChart({
         const startIdx = Math.max(0, endIdx - sliceCount);
 
         let points = baseData.allPoints.slice(startIdx, endIdx).map(p => ({ ...p }));
-        const sma50 = baseData.sma50Arr.slice(startIdx, endIdx);
-        const sma200 = baseData.sma200Arr.slice(startIdx, endIdx);
+        const slicedMaMap = Object.fromEntries(Object.entries(baseData.maSeriesMap).map(([k, a]) => [k, a.slice(startIdx, endIdx)]));
 
-        // Heikin Ashi Transformation
         if (chartStyle === 'heikin') {
             const haPoints = [];
             points.forEach((p, i) => {
@@ -247,18 +247,8 @@ const FinvizChart = React.memo(function FinvizChart({
         // 5. Price Scale
         let minP = Infinity, maxP = -Infinity, maxV = 0;
         points.forEach((p, i) => {
-            if (p.low < minP) minP = p.low;
-            if (p.high > maxP) maxP = p.high;
-            if (p.volume > maxV) maxV = p.volume;
-            // Only include SMAs if they are valid numbers and not zero/outliers
-            if (sma50[i] > 0 && isFinite(sma50[i])) {
-                if (sma50[i] < minP) minP = sma50[i];
-                if (sma50[i] > maxP) maxP = sma50[i];
-            }
-            if (sma200[i] > 0 && isFinite(sma200[i])) {
-                if (sma200[i] < minP) minP = sma200[i];
-                if (sma200[i] > maxP) maxP = sma200[i];
-            }
+            minP = Math.min(minP, p.low); maxP = Math.max(maxP, p.high); maxV = Math.max(maxV, p.volume);
+            Object.values(slicedMaMap).forEach(a => { const v = a[i]; if (v > 0 && isFinite(v)) { minP = Math.min(minP, v); maxP = Math.max(maxP, v); } });
         });
 
         // Ensure we have a valid range
@@ -279,10 +269,10 @@ const FinvizChart = React.memo(function FinvizChart({
         maxP = mid + range / 2 + padding + pOffset;
 
         return {
-            points, sma50, sma200, minP, maxP, maxV, pRange: maxP - minP || 0.01,
+            points, maMap: slicedMaMap, minP, maxP, maxV, pRange: maxP - minP || 0.01,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH, chartStyle]);
+    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH, chartStyle, maConfig]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -291,31 +281,24 @@ const FinvizChart = React.memo(function FinvizChart({
     const getY = useCallback((p) => data ? paddingTop + (chartH - ((p - data.minP) / (data.pRange || 1)) * chartH) : paddingTop, [data, chartH]);
 
     const points = data?.points ?? [];
-    const sma50 = data?.sma50 ?? [];
-    const sma200 = data?.sma200 ?? [];
+    const maMap = data?.maMap ?? {};
     const maxV = data?.maxV ?? 0;
     const minP = data?.minP ?? 0;
     const maxP = data?.maxP ?? 0;
     const candleWidth = Math.max(1.8, (chartW / (points.length || 1)) * 0.82);
 
     const chartColors = useMemo(() => {
-        if (chartStyle === 'white') return { up: '#ffffff', down: '#ffffff', sma50: '#f8d347', sma200: '#9d27b0' };
-        if (chartStyle === 'area') return { up: '#3b82f6', down: '#ef4444', sma50: '#f8d347', sma200: '#9d27b0' };
-        return { up: '#00c805', down: '#ff2e2e', sma50: '#f8d347', sma200: '#9d27b0' };
+        if (chartStyle === 'white') return { up: '#ffffff', down: '#ffffff' };
+        if (chartStyle === 'area') return { up: '#3b82f6', down: '#ef4444' };
+        return { up: '#00c805', down: '#ff2e2e' };
     }, [chartStyle]);
+    const { up: colorUp, down: colorDown } = chartColors;
 
-    const colorUp = chartColors.up;
-    const colorDown = chartColors.down;
-    const colorSma50 = chartColors.sma50;
-    const colorSma200 = chartColors.sma200;
-
-    const smaLines = useMemo(() => {
-        const build = (arr, color) => {
-            const pts = arr.map((val, i) => val ? `${i === 0 || !arr[i - 1] ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(val).toFixed(1)}` : '').filter(Boolean);
-            return pts.length > 1 ? <path d={pts.join(' ')} fill="none" stroke={color} strokeWidth="1" opacity="0.8" style={{ shapeRendering: 'auto' }} /> : null;
-        };
-        return <>{build(sma200, colorSma200)}{build(sma50, colorSma50)}</>;
-    }, [sma50, sma200, getX, getY]);
+    const maLines = useMemo(() => <>{Object.entries(maMap).map(([key, arr]) => {
+        const c = MA_COLORS[parseInt(key.split('_')[1])] || '#888';
+        const d = arr.map((v, i) => v ? `${i === 0 || !arr[i - 1] ? 'M' : 'L'}${getX(i).toFixed(1)},${getY(v).toFixed(1)}` : '').filter(Boolean).join(' ');
+        return d.length > 3 ? <path key={key} d={d} fill="none" stroke={c} strokeWidth="1" opacity="0.8" style={{ shapeRendering: 'auto' }} /> : null;
+    })}</>, [maMap, getX, getY]);
 
     const monthLabels = useMemo(() => {
         const labels = [];
@@ -473,16 +456,15 @@ const FinvizChart = React.memo(function FinvizChart({
 
     const liveData = useLivePrice(cleaned);
 
-    // Calculate performance explicitly based on timeframe
-    const absolutePoints = baseData?.allPoints || points;
-    const last = absolutePoints[absolutePoints.length - 1] || { close: 0 };
-    const prevC = absolutePoints[absolutePoints.length - 2]?.close || absolutePoints[0]?.close || 0;
+    // Map chart timeframe → interval key for actual period performance
+    const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
+    const intervalKey = TIMEFRAME_TO_INTERVAL[timeframe] || '1D';
+    const cachedPerf = getCachedInterval(cleaned, intervalKey, { silent: true });
 
-    // Default manual calculation from chart 
-    let change = last.close - prevC;
-    let changePct = prevC ? (change / prevC) * 100 : 0;
+    let changePct = cachedPerf?.changePct ?? 0;
+    let change = cachedPerf?.close ? cachedPerf.close - cachedPerf.close / (1 + changePct / 100) : 0;
 
-    // When rendered inside a mobile gallery or pure display mode, disable interaction hooks 
+    // When rendered inside a mobile gallery or pure display mode, disable interaction hooks
     // to allow native browser swiping (overflow-x-auto) to work properly.
     useEffect(() => {
         if (disabled) return undefined;
@@ -507,7 +489,6 @@ const FinvizChart = React.memo(function FinvizChart({
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
             const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
 
-            // Only prevent default if we are actively dragging/panning to avoid blocking vertical page scroll
             if ((dragRef.current.isDragging || dragRef.current.isYDragging) && e.cancelable) {
                 e.preventDefault();
             }
@@ -517,14 +498,14 @@ const FinvizChart = React.memo(function FinvizChart({
                 setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
             } else {
                 const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDays);
-                const dyPrice = (clientY - dragRef.current.startY); // Pixels transferred to price logic via getY later
+                const dyPrice = (clientY - dragRef.current.startY);
                 setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
                 setPriceOffset(dragRef.current.startVPan + dyPrice);
             }
         };
 
         const onEnd = () => { dragRef.current.isDragging = false; dragRef.current.isYDragging = false; };
-        const onDblClick = (e) => {
+        const onDblClick = () => {
             setVScale(1.0);
             setPriceOffset(0);
         };
@@ -550,7 +531,7 @@ const FinvizChart = React.memo(function FinvizChart({
         };
     }, [handleWheel, panOffset, priceOffset, zoomDays, vScale, disabled, !!data]);
 
-    // Override absolutely everywhere with synchronized live market data for Daily performance (to fix cache races)
+    // For 1D: use live price data which has accurate intraday change from prev close
     if (timeframe === '1D' && liveData.changePct !== null) {
         change = liveData.change ?? 0;
         changePct = liveData.changePct;
@@ -605,9 +586,8 @@ const FinvizChart = React.memo(function FinvizChart({
                                     </span>
                                 </div>
                             )}
-                            <div className="flex flex-col text-[9px] font-black leading-tight mt-1">
-                                <span style={{ color: colorSma50 }}>SMA 50</span>
-                                <span style={{ color: colorSma200 }}>SMA 200</span>
+                            <div className="flex flex-col gap-0 text-[9px] font-black leading-tight mt-1">
+                                {Object.keys(maMap).map(k => { const [t, p] = k.split('_'); return <span key={k} style={{ color: MA_COLORS[+p] || '#888' }}>{t} {p}</span>; })}
                             </div>
                         </div>
 
@@ -639,6 +619,7 @@ const FinvizChart = React.memo(function FinvizChart({
                         className={`flex-1 relative cursor-crosshair ${disabled ? 'touch-auto' : 'touch-pan-y'}`}
                         onMouseMove={handleMouseMove}
                         onMouseLeave={handleMouseLeave}
+                        style={{ opacity: measuredRef.current ? 1 : 0 }}
                     >
                         <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
 
@@ -650,7 +631,7 @@ const FinvizChart = React.memo(function FinvizChart({
                                 </g>
                             )}
 
-                            {smaLines}
+                            {maLines}
 
                             {candleGraphics}
 
@@ -703,6 +684,8 @@ const FinvizChart = React.memo(function FinvizChart({
         if (prevProps.series !== nextProps.series) return false;
         if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
         if (prevProps.chartStyle !== nextProps.chartStyle) return false;
+        if (prevProps.maConfig !== nextProps.maConfig) return false;
+        if (prevProps.disabled !== nextProps.disabled) return false;
         return true;
     });
 

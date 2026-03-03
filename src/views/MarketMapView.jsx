@@ -792,10 +792,10 @@ export const MarketMapView = ({ hierarchy }) => {
             setDropdownPos({
                 top: rect.bottom + window.scrollY + 6,
                 right: window.innerWidth - rect.right,
-                width: rect.width
+                width: isMobile ? Math.max(window.innerWidth - (window.innerWidth - rect.right) - 16, 280) : rect.width
             });
         }
-    }, [isSearchFocused, searchQuery]);
+    }, [isSearchFocused, searchQuery, isMobile]);
 
     const nseHierarchy = useMemo(() => {
         if (!hierarchy) return null;
@@ -1013,7 +1013,7 @@ export const MarketMapView = ({ hierarchy }) => {
                     </div>
 
                     {/* Search Bar */}
-                    <div ref={searchRef} className="relative md:w-56 z-[100]">
+                    <div ref={searchRef} className="relative flex-1 md:flex-none md:w-56 z-[100]">
                         <div className={cn(
                             "flex items-center gap-2.5 px-3.5 py-1.5 glass-card border-[var(--ui-divider)]/30 bg-[var(--bg-main)]/20 rounded-full transition-all duration-300",
                             isSearchFocused && "border-[var(--accent-primary)]/40 bg-[var(--bg-main)]/40 shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.05)]"
@@ -1028,7 +1028,7 @@ export const MarketMapView = ({ hierarchy }) => {
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 onFocus={() => setIsSearchFocused(true)}
                                 placeholder="FIND STOCKS..."
-                                className="bg-transparent border-none outline-none text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-30 w-full"
+                                className="bg-transparent border-none outline-none text-[12px] md:text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--text-main)] placeholder:text-[var(--text-muted)] placeholder:opacity-30 w-full"
                             />
                         </div>
 
@@ -1056,17 +1056,17 @@ export const MarketMapView = ({ hierarchy }) => {
                                                     scrollToBlock(result.blockId, result.themeName);
                                                 }
                                             }}
-                                            className="w-full flex items-center justify-between py-1.5 px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
+                                            className="w-full flex items-center justify-between py-2.5 md:py-1.5 px-3 md:px-2.5 hover:bg-[var(--accent-primary)]/5 rounded-lg transition-colors group/res"
                                         >
-                                            <div className="flex flex-col items-start min-w-0">
-                                                <span className="text-[10px] font-bold uppercase tracking-tight text-[var(--text-main)]/90 truncate">
+                                            <div className="flex flex-col items-start min-w-0 flex-1">
+                                                <span className="text-[11px] md:text-[10px] font-bold uppercase tracking-tight text-[var(--text-main)]/90 truncate w-full text-left">
                                                     {result.name}
                                                 </span>
-                                                <span className="text-[8px] font-medium text-[var(--text-muted)] opacity-30 uppercase">
+                                                <span className="text-[9px] md:text-[8px] font-medium text-[var(--text-muted)] opacity-30 uppercase truncate w-full text-left">
                                                     {result.symbol} • {result.themeName}
                                                 </span>
                                             </div>
-                                            <span className="text-[8px] font-black text-[var(--accent-primary)]/60 uppercase tracking-tighter bg-[var(--accent-primary)]/5 px-1.5 py-1 rounded-sm flex-shrink-0 ml-2">
+                                            <span className="text-[9px] md:text-[8px] font-black text-[var(--accent-primary)]/60 uppercase tracking-tighter bg-[var(--accent-primary)]/5 px-2 py-1 rounded-sm flex-shrink-0 ml-3">
                                                 {result.groupTitle.split(' ')[0]}
                                             </span>
                                         </button>

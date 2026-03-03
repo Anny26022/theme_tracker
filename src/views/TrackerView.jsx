@@ -7,6 +7,7 @@ import { ViewWrapper } from '../components/ViewWrapper';
 import { Virtuoso } from 'react-virtuoso';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { UniverseLoader } from '../components/UniverseLoader';
+import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
 
 const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 
@@ -256,6 +257,19 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                                 {tf}
                             </button>
                         ))}
+                    </div>
+                </div>
+
+                <div className="mt-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <p className="text-[9px] font-black tracking-[0.3em] text-[var(--text-muted)] uppercase opacity-30">
+                        * Ready for TradingView Integration
+                    </p>
+                    <div className="w-full md:w-auto min-w-[320px]">
+                        <WatchlistSyncCard
+                            sectors={sectors}
+                            hierarchy={hierarchy}
+                            allIndustries={allIndustries}
+                        />
                     </div>
                 </div>
             </div>

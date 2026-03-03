@@ -2274,10 +2274,17 @@ export function getCachedComparisonSeries(symbol, interval = '1D', options = {})
     const key = cleanSymbol(symbol);
     const window = INTERVAL_WINDOWS[interval] || 1;
     const cacheKey = `${key}:${window}:full`;
-    const cached = comparisonCacheMap.get(cacheKey);
+    let cached = comparisonCacheMap.get(cacheKey);
+
+    // SMARTER CACHE: If requesting 1Y (6) and we have MAX (8), use it.
+    if (!cached && window < 8) {
+        const maxKey = `${key}:8:full`;
+        cached = comparisonCacheMap.get(maxKey);
+    }
+
     if (cached && isCacheRowFresh(cached, COMPARISON_CACHE_TTL)) {
         if (!options?.silent) markLocalCacheHit();
-        return cached.series;
+        return cached.series || cached.data || []; // Handle both formats just in case
     }
     if (!options?.silent) markLocalCacheMiss(cacheLookupMissReason(cached, cacheKey), cacheKey);
     return null;

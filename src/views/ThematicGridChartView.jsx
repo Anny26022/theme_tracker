@@ -132,14 +132,20 @@ const ThematicGridChartView = ({
     allThemeCompanies = {},
     onBack,
     onSelectTheme,
-    viewMode = 'THEMATIC'
+    onViewModeChange,
+    viewMode = 'THEMATIC',
+    loading = false
 }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef(null);
     const { subscribeChartSymbols } = useMarketDataRegistry();
     const chartVersion = useChartVersion();
-    const [proViewSymbol, setProViewSymbol] = useState(null);
-    const [proViewTimeframe, setProViewTimeframe] = useState('1D');
+    const [proViewSymbol, setProViewSymbol] = useState(() => JSON.parse(localStorage.getItem('tt_pvs') || 'null'));
+    const [proViewTimeframe, setProViewTimeframe] = useState(() => localStorage.getItem('tt_pvtf') || '1D');
+    useEffect(() => {
+        localStorage.setItem('tt_pvs', JSON.stringify(proViewSymbol));
+        localStorage.setItem('tt_pvtf', proViewTimeframe);
+    }, [proViewSymbol, proViewTimeframe]);
     const [isMobileMode, setIsMobileMode] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
     const [mobileLayout, setMobileLayout] = useState('VERTICAL'); // VERTICAL or HORIZONTAL
 
@@ -236,7 +242,6 @@ const ThematicGridChartView = ({
             series: seriesBySymbol.get(cleanSymbol(company.symbol)) || []
         }));
     }, [companies, seriesBySymbol]);
-
 
     return (
         <div className="flex flex-col gap-6">
@@ -404,7 +409,9 @@ const ThematicGridChartView = ({
 
             {companies.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 opacity-20">
-                    <span className="text-[10px] font-black uppercase tracking-[0.5em]">No Stocks in Cluster</span>
+                    <span className="text-[10px] font-black uppercase tracking-[0.5em]">
+                        {loading ? 'Initializing Data...' : 'No Stocks in Cluster'}
+                    </span>
                 </div>
             )}
             {proViewSymbol && (
@@ -416,10 +423,14 @@ const ThematicGridChartView = ({
                     allCompanies={globalCompanyList}
                     navigationCompanies={companies}
                     initialTimeframe={proViewTimeframe}
+                    themeName={themeName}
+                    onSelectTheme={onSelectTheme}
+                    onViewModeChange={onViewModeChange}
+                    viewMode={viewMode}
                     onClose={() => setProViewSymbol(null)}
                     onSymbolChange={(s) => {
                         setProViewSymbol(s);
-                        if (s.theme && s.theme !== themeName) {
+                        if (s.theme && s.theme !== themeName && s.theme !== 'Current Cluster') {
                             onSelectTheme(s.theme);
                         }
                     }}

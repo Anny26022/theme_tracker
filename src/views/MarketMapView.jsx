@@ -6,6 +6,7 @@ import { cn } from '../lib/utils';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
 import { Search, X, BarChart3, LayoutGrid } from 'lucide-react';
 import { UniverseLoader } from '../components/UniverseLoader';
+import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
 import ThematicGridChartView from './ThematicGridChartView';
 
 const COLUMNS = [
@@ -917,6 +918,47 @@ export const MarketMapView = ({ hierarchy }) => {
         })
         .join(' | ');
 
+    const thematicSyncData = useMemo(() => {
+        const sectors = THEMATIC_MAP.map(b => b.title);
+        const hierarchy = {};
+        const allIndustries = [];
+
+        THEMATIC_MAP.forEach(block => {
+            hierarchy[block.title] = {};
+            block.themes.forEach(theme => {
+                const companies = themeCompaniesMap[theme.name] || [];
+                hierarchy[block.title][theme.name] = companies;
+                allIndustries.push({ name: theme.name, sector: block.title, count: companies.length });
+            });
+        });
+
+        return { sectors, hierarchy, allIndustries };
+    }, [themeCompaniesMap]);
+
+    const macroSyncData = useMemo(() => {
+        const sectors = MACRO_PILLARS.map(p => p.title);
+        const hierarchy = {};
+        const allIndustries = [];
+
+        MACRO_PILLARS.forEach(pillar => {
+            hierarchy[pillar.title] = {};
+            pillar.blocks.forEach(blockTitle => {
+                const block = THEMATIC_MAP.find(b => b.title === blockTitle);
+                if (block) {
+                    block.themes.forEach(theme => {
+                        const companies = themeCompaniesMap[theme.name] || [];
+                        hierarchy[pillar.title][theme.name] = companies;
+                        allIndustries.push({ name: theme.name, sector: pillar.title, count: companies.length });
+                    });
+                }
+            });
+        });
+
+        return { sectors, hierarchy, allIndustries };
+    }, [themeCompaniesMap]);
+
+    const activeSyncData = viewMode === 'THEMATIC' ? thematicSyncData : macroSyncData;
+
     return (
         <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 overflow-x-hidden relative">
             {loading && !hasHeatmapData && <UniverseLoader />}
@@ -1078,7 +1120,14 @@ export const MarketMapView = ({ hierarchy }) => {
             <div className="w-full">
                 {displayMode === 'HEATMAP' ? (
                     <>
-                        <Legend />
+                        <div className="flex flex-col md:flex-row items-start justify-between gap-6 mb-8">
+                            <Legend />
+                            <div className="w-full md:w-auto min-w-[320px]">
+                                <WatchlistSyncCard
+                                    {...activeSyncData}
+                                />
+                            </div>
+                        </div>
                         <ThemeGridSection
                             viewMode={viewMode}
                             macroMap={macroMap}
@@ -1099,7 +1148,9 @@ export const MarketMapView = ({ hierarchy }) => {
                         allThemeCompanies={themeCompaniesMap}
                         onBack={onExitCharts}
                         onSelectTheme={setSelectedThemeName}
+                        onViewModeChange={setViewMode}
                         viewMode={viewMode}
+                        loading={loading}
                     />
                 )}
             </div>

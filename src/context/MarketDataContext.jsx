@@ -112,66 +112,90 @@ export function MarketDataProvider({ children }) {
     }, []);
 
     const refreshInterval = useCallback(async (interval, symbolsOverride) => {
-        const key = `interval:${interval}`;
-        if (inFlightRef.current.has(key)) return;
-        const symbols = symbolsOverride || extractSymbols(intervalSymbolsRef.current, interval);
-        if (symbols.length === 0) return;
+        if (!symbolsOverride) {
+            const key = `interval:${interval}`;
+            if (inFlightRef.current.has(key)) return;
+            const symbols = extractSymbols(intervalSymbolsRef.current, interval);
+            if (symbols.length === 0) return;
 
-        inFlightRef.current.add(key);
-        try {
-            await fetchBatchIntervalPerformance(symbols, interval);
-            lastIntervalRefreshRef.current.set(interval, Date.now());
+            inFlightRef.current.add(key);
+            try {
+                await fetchBatchIntervalPerformance(symbols, interval);
+                lastIntervalRefreshRef.current.set(interval, Date.now());
+                notifyInterval();
+            } finally {
+                inFlightRef.current.delete(key);
+            }
+        } else {
+            // Specific symbols - let the service handle deduplication
+            await fetchBatchIntervalPerformance(symbolsOverride, interval);
             notifyInterval();
-        } finally {
-            inFlightRef.current.delete(key);
         }
     }, [notifyInterval]);
 
     const refreshCharts = useCallback(async (interval, symbolsOverride) => {
-        const key = `chart:${interval}`;
-        if (inFlightRef.current.has(key)) return;
-        const symbols = symbolsOverride || extractSymbols(chartSymbolsRef.current, interval);
-        if (symbols.length === 0) return;
+        if (!symbolsOverride) {
+            const key = `chart:${interval}`;
+            if (inFlightRef.current.has(key)) return;
+            const symbols = extractSymbols(chartSymbolsRef.current, interval);
+            if (symbols.length === 0) return;
 
-        inFlightRef.current.add(key);
-        try {
-            await fetchComparisonCharts(symbols, interval);
-            lastChartRefreshRef.current.set(interval, Date.now());
+            inFlightRef.current.add(key);
+            try {
+                await fetchComparisonCharts(symbols, interval);
+                lastChartRefreshRef.current.set(interval, Date.now());
+                notifyChart();
+            } finally {
+                inFlightRef.current.delete(key);
+            }
+        } else {
+            // Specific symbols - let the service handle deduplication
+            await fetchComparisonCharts(symbolsOverride, interval);
             notifyChart();
-        } finally {
-            inFlightRef.current.delete(key);
         }
     }, [notifyChart]);
 
     const refreshLive = useCallback(async (symbolsOverride, options = {}) => {
-        const key = 'live';
-        if (inFlightRef.current.has(key)) return;
-        const symbols = symbolsOverride || Array.from(liveSymbolsRef.current.keys());
-        if (symbols.length === 0) return;
+        if (!symbolsOverride) {
+            const key = 'live';
+            if (inFlightRef.current.has(key)) return;
+            const symbols = Array.from(liveSymbolsRef.current.keys());
+            if (symbols.length === 0) return;
 
-        inFlightRef.current.add(key);
-        try {
-            await fetchLivePrices(symbols, options);
-            lastLiveRefreshRef.current = Date.now();
+            inFlightRef.current.add(key);
+            try {
+                await fetchLivePrices(symbols, options);
+                lastLiveRefreshRef.current = Date.now();
+                notifyLive();
+            } finally {
+                inFlightRef.current.delete(key);
+            }
+        } else {
+            // Specific symbols refresh
+            await fetchLivePrices(symbolsOverride, options);
             notifyLive();
-        } finally {
-            inFlightRef.current.delete(key);
         }
     }, [notifyLive]);
 
     const refreshFundamentals = useCallback(async (symbolsOverride) => {
-        const key = 'funda';
-        if (inFlightRef.current.has(key)) return;
-        const symbols = symbolsOverride || Array.from(fundaSymbolsRef.current.keys());
-        if (symbols.length === 0) return;
+        if (!symbolsOverride) {
+            const key = 'funda';
+            if (inFlightRef.current.has(key)) return;
+            const symbols = Array.from(fundaSymbolsRef.current.keys());
+            if (symbols.length === 0) return;
 
-        inFlightRef.current.add(key);
-        try {
-            await fetchFundamentals(symbols);
-            lastFundaRefreshRef.current = Date.now();
+            inFlightRef.current.add(key);
+            try {
+                await fetchFundamentals(symbols);
+                lastFundaRefreshRef.current = Date.now();
+                notifyFundamentals();
+            } finally {
+                inFlightRef.current.delete(key);
+            }
+        } else {
+            // Specific symbols refresh
+            await fetchFundamentals(symbolsOverride);
             notifyFundamentals();
-        } finally {
-            inFlightRef.current.delete(key);
         }
     }, [notifyFundamentals]);
 

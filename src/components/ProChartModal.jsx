@@ -18,18 +18,74 @@ const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2
 const loadTemplates = () => {
     try { const v = localStorage.getItem(TT_TEMPLATES_KEY); return v ? JSON.parse(v) : []; } catch { return []; }
 };
+
+const SleekSwitch = ({ active, onClick, disabled }) => (
+    <button
+        onClick={(e) => { e.stopPropagation(); if (!disabled) onClick(); }}
+        disabled={disabled}
+        className={`w-8 h-4.5 rounded-full relative transition-all duration-300 shadow-inner ${disabled ? 'bg-white/5 cursor-not-allowed' : (active ? 'bg-[var(--accent-primary)]' : 'bg-white/10')}`}
+    >
+        <div
+            className={`absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-lg transition-all duration-300 transform ${disabled ? 'translate-x-0.5 bg-white/10' : (active ? 'translate-x-[14px] bg-black' : 'translate-x-0.5 bg-white/30')}`}
+        />
+    </button>
+);
 const saveTemplates = (list) => { localStorage.setItem(TT_TEMPLATES_KEY, JSON.stringify(list)); };
 const loadActiveId = () => localStorage.getItem(TT_ACTIVE_TPL_KEY) || null;
 const saveActiveId = (id) => { if (id) localStorage.setItem(TT_ACTIVE_TPL_KEY, id); else localStorage.removeItem(TT_ACTIVE_TPL_KEY); };
 const DEFAULT_TEMPLATE_ID = '__tt_default_template__';
 const DEFAULT_SYNC_OPTIONS = { symbol: false, interval: true, crosshair: false, cluster: true, slotNav: true, pageNav: true };
 const DEFAULT_MA_CONFIG = [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }];
+const WATCHLISTS_STORAGE_KEY = 'tt_pro_watchlists';
+const ACTIVE_WATCHLIST_STORAGE_KEY = 'tt_pro_active_watchlist';
+const SYMBOL_COLORS_STORAGE_KEY = 'tt_pro_symbol_colors';
+const WATCHLIST_FILTER_COLOR_KEY = 'tt_pro_watchlist_filter_color';
+const WATCHLIST_NAV_MODE_KEY = 'tt_pro_watchlist_nav_mode';
+const WATCHLISTS_CHANGE_EVENT = 'tt_pro_watchlists_changed';
+const FLAG_VIEW_PREFIX = 'flag:';
 const makeDefaultChartStates = (symbol, name, timeframe) =>
     Array.from({ length: 16 }, (_, i) => (
         i === 0
             ? { symbol, name, timeframe }
             : { symbol: '', name: 'Empty', timeframe }
     ));
+const loadWatchlistNavigationCompanies = (allCompanies) => {
+    const companyBySymbol = new Map((allCompanies || []).map((company) => [company.symbol, company]));
+    const parse = (value, fallback) => {
+        try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
+    };
+    const watchlists = parse(localStorage.getItem(WATCHLISTS_STORAGE_KEY), []);
+    const activeListId = localStorage.getItem(ACTIVE_WATCHLIST_STORAGE_KEY);
+    const filterColor = localStorage.getItem(WATCHLIST_FILTER_COLOR_KEY) || 'all';
+    if (!watchlists.length) return [];
+
+    const symbolColors = parse(localStorage.getItem(SYMBOL_COLORS_STORAGE_KEY), {});
+    let symbols = [];
+    if (activeListId?.startsWith(FLAG_VIEW_PREFIX)) {
+        const activeFlag = activeListId.slice(FLAG_VIEW_PREFIX.length);
+        symbols = Object.entries(symbolColors)
+            .filter(([_, color]) => color === activeFlag)
+            .map(([symbol]) => symbol);
+    } else {
+        const activeList = watchlists.find((list) => list.id === activeListId) || watchlists[0];
+        let listSymbols = (activeList?.symbols || [])
+            .filter((entry) => entry?.symbol && !entry?.isHeader)
+            .map((entry) => entry.symbol);
+        if (filterColor !== 'all') {
+            listSymbols = listSymbols.filter((entrySymbol) => (symbolColors[entrySymbol] || 'none') === filterColor);
+        }
+        symbols = listSymbols;
+    }
+
+    const uniqueSymbols = [];
+    const seen = new Set();
+    symbols.forEach((symbol) => {
+        if (!symbol || seen.has(symbol)) return;
+        seen.add(symbol);
+        uniqueSymbols.push(symbol);
+    });
+    return uniqueSymbols.map((symbol) => companyBySymbol.get(symbol) || { symbol, name: symbol });
+};
 
 const CHART_LAYOUTS = {
     '1': { r: 1, c: 1 },
@@ -85,10 +141,19 @@ const ProChartModal = ({
     const [isMaOpen, setIsMaOpen] = useState(false);
     const [isTemplateSelectOpen, setIsTemplateSelectOpen] = useState(false);
     const [isWatchlistOpen, setIsWatchlistOpen] = useState(() => localStorage.getItem('tt_pro_watchlist_open') !== 'false');
+    const [isWatchlistNavMode, setIsWatchlistNavMode] = useState(() => localStorage.getItem(WATCHLIST_NAV_MODE_KEY) === 'true');
 
     const toggleWatchlist = () => {
         setIsWatchlistOpen(!isWatchlistOpen);
         localStorage.setItem('tt_pro_watchlist_open', !isWatchlistOpen);
+    };
+    const toggleWatchlistNavMode = () => {
+        setIsWatchlistNavMode((prev) => {
+            const next = !prev;
+            localStorage.setItem(WATCHLIST_NAV_MODE_KEY, next ? 'true' : 'false');
+            return next;
+        });
+        setIsClusterOpen(false);
     };
 
     const switcherData = useMemo(() => {
@@ -119,6 +184,7 @@ const ProChartModal = ({
     }), []);
 
     const [clusterOffset, setClusterOffset] = useState(0);
+    const [watchlistNavVersion, setWatchlistNavVersion] = useState(0);
     const chartsCount = useMemo(() => {
         const cfg = CHART_LAYOUTS[layoutId];
         if (cfg.custom) {
@@ -128,11 +194,48 @@ const ProChartModal = ({
         return cfg.r * cfg.c;
     }, [layoutId]);
 
-    // Initialize offset only when theme changes
     useEffect(() => {
-        const idx = navigationCompanies.findIndex(c => c.symbol === symbol);
+        const handleWatchlistChange = (event) => {
+            const changeKind = event?.detail?.kind;
+            if (changeKind === 'symbolColors') {
+                const activeListId = localStorage.getItem(ACTIVE_WATCHLIST_STORAGE_KEY) || '';
+                if (activeListId.startsWith(FLAG_VIEW_PREFIX)) {
+                    setWatchlistNavVersion((prev) => prev + 1);
+                    return;
+                }
+                const filterColor = localStorage.getItem(WATCHLIST_FILTER_COLOR_KEY) || 'all';
+                if (filterColor === 'all') return;
+                setWatchlistNavVersion((prev) => prev + 1);
+                return;
+            }
+            setWatchlistNavVersion((prev) => prev + 1);
+        };
+        window.addEventListener(WATCHLISTS_CHANGE_EVENT, handleWatchlistChange);
+        window.addEventListener('storage', handleWatchlistChange);
+        return () => {
+            window.removeEventListener(WATCHLISTS_CHANGE_EVENT, handleWatchlistChange);
+            window.removeEventListener('storage', handleWatchlistChange);
+        };
+    }, []);
+
+    const watchlistNavigationCompanies = useMemo(
+        () => loadWatchlistNavigationCompanies(allCompanies),
+        [allCompanies, watchlistNavVersion]
+    );
+    const clusterNavigationCompanies = useMemo(
+        () => (navigationCompanies.length > 0 ? navigationCompanies : allCompanies),
+        [navigationCompanies, allCompanies]
+    );
+    const activeNavigationCompanies = useMemo(
+        () => (isWatchlistNavMode ? watchlistNavigationCompanies : clusterNavigationCompanies),
+        [clusterNavigationCompanies, isWatchlistNavMode, watchlistNavigationCompanies]
+    );
+
+    // Keep current page aligned to selected symbol when source/theme changes.
+    useEffect(() => {
+        const idx = activeNavigationCompanies.findIndex((company) => cleanSymbol(company.symbol) === cleanSymbol(symbol));
         setClusterOffset(idx !== -1 ? Math.floor(idx / chartsCount) * chartsCount : 0);
-    }, [themeName, navigationCompanies.length]);
+    }, [activeNavigationCompanies, chartsCount, symbol, themeName]);
 
     const [syncOptions, _setSyncOptions] = useState(() => load('tt_pro_sync', DEFAULT_SYNC_OPTIONS));
     const setSyncOptions = useCallback((updater) => _setSyncOptions((prev) => {
@@ -140,6 +243,7 @@ const ProChartModal = ({
         localStorage.setItem('tt_pro_sync', JSON.stringify(next));
         return next;
     }), []);
+    const isBatchSyncEnabled = layoutId !== '1' && (syncOptions.cluster || isWatchlistNavMode);
     const [chartStates, _setChartStates] = useState(() => load('tt_pro_charts', makeDefaultChartStates(symbol, name, initialTimeframe)));
     const setChartStates = useCallback((updater) => _setChartStates((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
@@ -160,6 +264,13 @@ const ProChartModal = ({
         window.dispatchEvent(new Event('tt_chart_settings'));
         return next;
     }), []);
+    const [paintBars, _setPaintBars] = useState(() => localStorage.getItem('tt_pro_paint_bars') === 'true');
+    const setPaintBars = useCallback((val) => {
+        _setPaintBars(val);
+        localStorage.setItem('tt_pro_paint_bars', val);
+        window.dispatchEvent(new Event('tt_chart_settings'));
+    }, []);
+
     const toggleMa = (type, period) => setMaConfig(prev => prev.find(m => m.type === type && m.period === period) ? prev.filter(m => !(m.type === type && m.period === period)) : [...prev, { type, period }].sort((a, b) => a.period - b.period));
     const hasMa = (type, period) => maConfig.some(m => m.type === type && m.period === period);
     const [activeChartIndex, setActiveChartIndex] = useState(0);
@@ -323,15 +434,22 @@ const ProChartModal = ({
         prevOpenRef.current = isOpen;
     }, [isOpen, symbol, name]);
 
-
-    // Bulk Sync Cluster: Only when theme or page manually changes
+    // Batch sync for multi-chart pages from active navigation source.
     useEffect(() => {
-        if (!isOpen || layoutId === '1' || !syncOptions.cluster || !navigationCompanies.length) return;
-        setChartStates(prev => prev.map((s, i) => {
-            const stock = navigationCompanies[clusterOffset + i];
-            return stock ? { ...s, symbol: stock.symbol, name: stock.name } : { ...s, symbol: '', name: 'Empty' };
-        }));
-    }, [themeName, clusterOffset, layoutId, isOpen, syncOptions.cluster]);
+        if (!isOpen || !isBatchSyncEnabled || !activeNavigationCompanies.length) return;
+        setChartStates(prev => {
+            let changed = false;
+            const next = prev.map((slot, i) => {
+                const stock = activeNavigationCompanies[clusterOffset + i];
+                const nextSymbol = stock?.symbol || '';
+                const nextName = stock?.name || 'Empty';
+                if (slot.symbol === nextSymbol && slot.name === nextName) return slot;
+                changed = true;
+                return { ...slot, symbol: nextSymbol, name: nextName };
+            });
+            return changed ? next : prev;
+        });
+    }, [activeNavigationCompanies, clusterOffset, isBatchSyncEnabled, isOpen, setChartStates]);
 
 
     // Keyboard Hotkeys
@@ -375,14 +493,14 @@ const ProChartModal = ({
     }, [isOpen, isSearchOpen, allCompanies, symbol, onClose]);
 
     const navigateSymbol = (dir) => {
-        const navList = navigationCompanies.length > 0 ? navigationCompanies : allCompanies;
+        const navList = activeNavigationCompanies;
         if (!navList.length) return;
 
         // Page Nav: shift the whole batch by one page
-        if (syncOptions.pageNav && layoutId !== '1') {
+        if (syncOptions.pageNav && layoutId !== '1' && isBatchSyncEnabled) {
             setClusterOffset(prev => {
                 const next = prev + dir * chartsCount;
-                return next >= 0 && next < navigationCompanies.length ? next : prev;
+                return next >= 0 && next < navList.length ? next : prev;
             });
             return;
         }
@@ -561,15 +679,19 @@ const ProChartModal = ({
                     {/* Cluster Switcher */}
                     <div className="relative">
                         <button
-                            onClick={() => setIsClusterOpen(!isClusterOpen)}
-                            className={`flex items-center gap-2 px-2.5 py-1 rounded transition-all border ${isClusterOpen ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30 text-[var(--accent-primary)]' : 'bg-white/5 border-white/5 text-white/30 hover:text-white hover:bg-white/10'}`}
+                            onClick={() => { if (!isWatchlistNavMode) setIsClusterOpen(!isClusterOpen); }}
+                            className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-full transition-all duration-300 border ${isWatchlistNavMode
+                                ? 'bg-white/[0.02] border-white/5 text-white/15 cursor-not-allowed opacity-50'
+                                : (isClusterOpen ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)]/40 text-[var(--accent-primary)] shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.15)]' : 'bg-white/5 border-white/5 text-white/35 hover:text-white hover:bg-white/10 hover:border-white/10')}`}
                         >
-                            <Hash size={11} />
-                            <span className="text-[9px] font-black uppercase tracking-widest truncate max-w-[100px]">{themeName}</span>
-                            <ChevronDown size={9} className={`transition-transform duration-300 opacity-30 ${isClusterOpen ? 'rotate-180' : ''}`} />
+                            <Hash size={12} className={`${isWatchlistNavMode ? 'opacity-20' : (isClusterOpen ? 'text-[var(--accent-primary)]' : 'text-white/30')} transition-colors`} />
+                            <span className="text-[10px] font-black uppercase tracking-[0.15em] truncate max-w-[140px]">
+                                {isWatchlistNavMode ? 'WATCHLIST ACTIVE' : themeName}
+                            </span>
+                            <ChevronDown size={10} className={`transition-transform duration-500 opacity-20 group-hover:opacity-100 ${isClusterOpen ? 'rotate-180' : ''}`} />
                         </button>
 
-                        {isClusterOpen && (
+                        {isClusterOpen && !isWatchlistNavMode && (
                             <>
                                 <div className="fixed inset-0 z-[100]" onClick={() => setIsClusterOpen(false)} />
                                 <div className="absolute top-full left-0 mt-1 w-[260px] max-h-[420px] overflow-y-auto no-scrollbar bg-[#080a0f]/98 backdrop-blur-xl border border-white/8 rounded-lg shadow-[0_16px_48px_rgba(0,0,0,0.9)] p-1.5 z-[101] animate-in fade-in slide-in-from-top-2 duration-200">
@@ -658,10 +780,22 @@ const ProChartModal = ({
                     <div className="h-4 w-[1px] bg-white/5 mx-2" />
 
                     {/* Simplified Batch Controls */}
-                    {layoutId !== '1' && syncOptions.cluster && (
+                    {isBatchSyncEnabled && (
                         <div className="flex bg-white/5 p-0.5 rounded border border-white/5 mr-2">
-                            <button onClick={() => setClusterOffset(o => Math.max(0, o - (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols)))} className="p-1 opacity-40 hover:opacity-100"><ChevronLeft size={14} /></button>
-                            <button onClick={() => setClusterOffset(o => o + (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols) < navigationCompanies.length ? o + (CHART_LAYOUTS[layoutId].rows * CHART_LAYOUTS[layoutId].cols) : o)} className="p-1 opacity-40 hover:opacity-100"><ChevronRight size={14} /></button>
+                            <button
+                                onClick={() => setClusterOffset((offset) => Math.max(0, offset - chartsCount))}
+                                className="p-1 opacity-40 hover:opacity-100"
+                            >
+                                <ChevronLeft size={14} />
+                            </button>
+                            <button
+                                onClick={() => setClusterOffset((offset) => (
+                                    offset + chartsCount < activeNavigationCompanies.length ? offset + chartsCount : offset
+                                ))}
+                                className="p-1 opacity-40 hover:opacity-100"
+                            >
+                                <ChevronRight size={14} />
+                            </button>
                         </div>
                     )}
 
@@ -726,6 +860,19 @@ const ProChartModal = ({
                                         {['SMA', 'EMA'].map(t => <button key={t} onClick={() => toggleMa(t, p)} className={`px-2 py-0.5 rounded-[3px] text-[9px] font-black transition-all border ml-auto ${hasMa(t, p) ? 'text-black border-transparent' : 'bg-white/[0.03] text-white/25 border-white/[0.06] hover:text-white/50'}`} style={hasMa(t, p) ? { background: MA_COLORS[p] } : {}}>{t}</button>)}
                                     </div>
                                 ))}
+                                <div className="px-2 pb-1.5 mb-1 border-b border-white/[0.06] mt-3 flex justify-between items-center">
+                                    <span className="text-[8px] font-black text-white/25 uppercase tracking-[0.15em]">Signals</span>
+                                </div>
+                                <button
+                                    onClick={() => setPaintBars(!paintBars)}
+                                    className={`flex items-center justify-between w-full px-2 py-1.5 rounded transition-all ${paintBars ? 'text-[var(--accent-primary)] bg-[var(--accent-primary)]/5' : 'text-white/30 hover:text-white/50'}`}
+                                >
+                                    <span className="text-[10px] font-bold">Paint Price Bars</span>
+                                    <div className={`w-6 h-3 rounded-full relative transition-colors ${paintBars ? 'bg-[var(--accent-primary)]' : 'bg-white/10'}`}>
+                                        <div className={`absolute top-0.5 left-0.5 w-2 h-2 rounded-full bg-white transition-transform ${paintBars ? 'translate-x-3' : ''}`} />
+                                    </div>
+                                </button>
+
                                 {maConfig.length > 0 && <button onClick={() => setMaConfig([])} className="w-full text-center text-[8px] font-black text-white/20 uppercase tracking-widest hover:text-white/40 py-1 mt-1 border-t border-white/[0.06]">Clear All</button>}
                             </div>
                         </>)}
@@ -906,19 +1053,27 @@ const ProChartModal = ({
                                                 { key: 'interval', label: 'Sync Interval', icon: <Clock size={12} /> },
                                                 { key: 'crosshair', label: 'Sync Crosshair', icon: <Crosshair size={12} /> },
                                             ].map(opt => (
-                                                <button
-                                                    key={opt.key}
-                                                    onClick={() => setSyncOptions(prev => ({ ...prev, [opt.key]: !prev[opt.key] }))}
-                                                    className={`w-full flex items-center justify-between p-2 rounded transition-all ${syncOptions[opt.key] ? 'bg-white/5 text-[var(--accent-primary)] shadow-sm shadow-[var(--accent-primary)]/5' : 'text-white/30 hover:text-white'}`}
-                                                >
-                                                    <div className="flex items-center gap-2.5">
-                                                        {React.cloneElement(opt.icon, { size: 12, className: syncOptions[opt.key] ? 'text-[var(--accent-primary)]' : 'opacity-30' })}
-                                                        <span className="text-[10px] font-black uppercase tracking-widest">{opt.label}</span>
-                                                    </div>
-                                                    <div className={`w-6 h-3 rounded-full relative transition-all ${syncOptions[opt.key] ? 'bg-[var(--accent-primary)]' : 'bg-white/10'}`}>
-                                                        <div className={`absolute top-0.5 w-2 h-2 rounded-full bg-black transition-all ${syncOptions[opt.key] ? 'right-0.5' : 'left-0.5'}`} />
-                                                    </div>
-                                                </button>
+                                                (() => {
+                                                    const isDisabled = opt.key === 'cluster' && isWatchlistNavMode;
+                                                    return (
+                                                        <div
+                                                            key={opt.key}
+                                                            className={`w-full flex items-center justify-between p-2 rounded transition-all ${isDisabled
+                                                                ? 'text-white/15 opacity-50'
+                                                                : (syncOptions[opt.key] ? 'bg-white/[0.03] text-[var(--accent-primary)]' : 'text-white/30 hover:text-white hover:bg-white/[0.01]')}`}
+                                                        >
+                                                            <div className="flex items-center gap-2.5">
+                                                                {React.cloneElement(opt.icon, { size: 12, className: isDisabled ? 'opacity-15' : (syncOptions[opt.key] ? 'text-[var(--accent-primary)]' : 'opacity-30') })}
+                                                                <span className="text-[10px] font-black uppercase tracking-widest">{opt.label}</span>
+                                                            </div>
+                                                            <SleekSwitch
+                                                                active={syncOptions[opt.key]}
+                                                                onClick={() => setSyncOptions(prev => ({ ...prev, [opt.key]: !prev[opt.key] }))}
+                                                                disabled={isDisabled}
+                                                            />
+                                                        </div>
+                                                    );
+                                                })()
                                             ))}
                                             <div className="h-[1px] bg-white/5 my-1" />
                                             <p className="text-[9px] text-white/20 uppercase tracking-widest px-1 pb-1">Arrow Key Behaviour</p>
@@ -947,14 +1102,42 @@ const ProChartModal = ({
                         )}
                     </div>
 
-                    {/* Sidebar Toggles */}
-                    <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded-full border border-white/5 mx-1">
+                    {/* Navigation & Sidebar Control Unit */}
+                    <div className="flex items-center gap-1.5 p-1 bg-black/40 backdrop-blur-xl border border-white/5 rounded-full shadow-2xl mx-1 select-none">
+                        {/* Nav Source Toggle: Cluster vs Watchlist */}
+                        <div className="relative flex items-center bg-white/5 p-0.5 rounded-full">
+                            {/* Sliding highlight */}
+                            <div
+                                className="absolute h-6 w-[34px] bg-[var(--accent-primary)] rounded-full transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] shadow-[0_0_15px_rgba(var(--accent-primary-rgb),0.3)]"
+                                style={{ transform: `translateX(${isWatchlistNavMode ? '34px' : '0px'})` }}
+                            />
+
+                            <button
+                                onClick={() => isWatchlistNavMode && toggleWatchlistNavMode()}
+                                className={`relative z-10 w-[34px] h-6 flex items-center justify-center rounded-full transition-colors duration-200 ${!isWatchlistNavMode ? 'text-black' : 'text-white/20 hover:text-white/40'}`}
+                                title="Cluster Navigation"
+                            >
+                                <Hash size={12} className={!isWatchlistNavMode ? 'stroke-[2.5]' : ''} />
+                            </button>
+
+                            <button
+                                onClick={() => !isWatchlistNavMode && toggleWatchlistNavMode()}
+                                className={`relative z-10 w-[34px] h-6 flex items-center justify-center rounded-full transition-colors duration-200 ${isWatchlistNavMode ? 'text-black' : 'text-white/20 hover:text-white/40'}`}
+                                title="Watchlist Navigation"
+                            >
+                                <span className={`text-[9px] font-black ${isWatchlistNavMode ? '' : 'opacity-40'}`}>WL</span>
+                            </button>
+                        </div>
+
+                        {/* Sidebar Visibility Toggle */}
                         <button
                             onClick={toggleWatchlist}
-                            className={`w-7 h-7 flex items-center justify-center rounded-full transition-all ${isWatchlistOpen ? 'text-black bg-[var(--accent-primary)]' : 'text-white/30 hover:text-white hover:bg-white/5'}`}
-                            title="Watchlist Sidebar"
+                            className={`group relative w-7 h-7 flex items-center justify-center rounded-full transition-all duration-300 ${isWatchlistOpen ? 'text-black bg-[var(--accent-primary)] shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.4)]' : 'text-white/20 hover:text-white hover:bg-white/10'}`}
                         >
-                            <ListIcon size={14} />
+                            <ListIcon size={14} className={`${isWatchlistOpen ? 'stroke-[2.5]' : 'group-hover:scale-110 transition-transform'}`} />
+                            {!isWatchlistOpen && isWatchlistNavMode && (
+                                <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-[var(--accent-primary)] rounded-full border-2 border-[#080a0f] animate-pulse" />
+                            )}
                         </button>
                     </div>
 
@@ -981,7 +1164,7 @@ const ProChartModal = ({
                     >
                         {Array.from({ length: 16 }).slice(0, chartsCount).map((_, idx) => {
                             const chart = chartStates[idx] || chartStates[0];
-                            if (layoutId !== '1' && syncOptions.cluster && !chart?.symbol) return null;
+                            if (isBatchSyncEnabled && !chart?.symbol) return null;
                             const isActive = activeChartIndex === idx;
                             const isMulti = layoutId !== '1';
 
@@ -1005,10 +1188,10 @@ const ProChartModal = ({
                                                 {isActive && <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />}
                                             </div>
                                             <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest truncate max-w-[100px]">
-                                                    {(chart.name && chart.name !== 'Empty')
-                                                        ? chart.name
-                                                        : companyNameBySymbol.get(chart.symbol) || ''
-                                                    }
+                                                {(chart.name && chart.name !== 'Empty')
+                                                    ? chart.name
+                                                    : companyNameBySymbol.get(chart.symbol) || ''
+                                                }
                                             </span>
                                             <div className="ml-auto flex gap-1.5">
                                                 {['1D', '1W', '1M', '1Y'].map(tf => (

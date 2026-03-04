@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
-import { Plus, Trash2, ChevronDown, MoreHorizontal, LayoutPanelLeft, Flag, Check } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, MoreHorizontal, LayoutPanelLeft, Flag, Check } from 'lucide-react';
 import { cleanSymbol, getCachedInterval, getCachedPrice } from '../services/priceService';
 import { useLiveVersion } from '../context/MarketDataContext';
 import { Virtuoso } from 'react-virtuoso';
@@ -17,7 +17,12 @@ const FLAG_COLORS = [
 const FALLBACK_LIST = { id: 'default', name: 'WATCHLIST', symbols: [] };
 const MISSING_SYMBOL_LOGOS = new Set();
 const SYMBOL_COLOR_KEY = 'tt_pro_symbol_colors';
+const WATCHLIST_FILTER_COLOR_KEY = 'tt_pro_watchlist_filter_color';
 const FLAG_VIEW_PREFIX = 'flag:';
+const WATCHLISTS_CHANGE_EVENT = 'tt_pro_watchlists_changed';
+const emitWatchlistChange = (kind) => {
+    window.dispatchEvent(new CustomEvent(WATCHLISTS_CHANGE_EVENT, { detail: { kind } }));
+};
 
 const deriveSymbolColorsFromWatchlists = (lists) => {
     const next = {};
@@ -34,6 +39,7 @@ const deriveSymbolColorsFromWatchlists = (lists) => {
 const WatchlistScroller = React.forwardRef(({ className = '', ...props }, ref) => (
     <div
         ref={ref}
+        data-watchlist-scroller="1"
         {...props}
         className={`h-full overflow-y-auto no-scrollbar ${className}`.trim()}
     />
@@ -72,22 +78,28 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
             return savedMap;
         }
     });
-    const [filterColor, setFilterColor] = useState('all');
+    const [filterColor, _setFilterColor] = useState(() => localStorage.getItem(WATCHLIST_FILTER_COLOR_KEY) || 'all');
     const addInputRef = useRef(null);
     const isResizing = useRef(false);
     const containerRef = useRef(null);
+    const dragFromIndexRef = useRef(null);
+    const autoScrollRafRef = useRef(null);
+    const autoScrollVelocityRef = useRef(0);
     const onSymbolSelectRef = useRef(onSymbolSelect);
     onSymbolSelectRef.current = onSymbolSelect;
+    const [dragOverState, setDragOverState] = useState({ index: null, after: false });
 
     const setWatchlists = useCallback((updater) => _setWatchlists((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         localStorage.setItem('tt_pro_watchlists', JSON.stringify(next));
+        if (next !== prev) emitWatchlistChange('watchlists');
         return next;
     }), []);
     const setActiveListId = useCallback((updater) => _setActiveListId((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         if (next) localStorage.setItem('tt_pro_active_watchlist', next);
         else localStorage.removeItem('tt_pro_active_watchlist');
+        if (next !== prev) emitWatchlistChange('activeList');
         return next;
     }), []);
     const setConfig = useCallback((updater) => _setConfig((prev) => {
@@ -95,9 +107,17 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         localStorage.setItem('tt_pro_wl_config', JSON.stringify(next));
         return next;
     }), []);
+    const setFilterColor = useCallback((updater) => _setFilterColor((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        const normalized = next || 'all';
+        localStorage.setItem(WATCHLIST_FILTER_COLOR_KEY, normalized);
+        if (normalized !== prev) emitWatchlistChange('filter');
+        return normalized;
+    }), []);
     const setSymbolColors = useCallback((updater) => _setSymbolColors((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         localStorage.setItem(SYMBOL_COLOR_KEY, JSON.stringify(next));
+        if (next !== prev) emitWatchlistChange('symbolColors');
         return next;
     }), []);
 
@@ -166,7 +186,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     useEffect(() => {
         // Keep filter UX predictable when switching lists.
         setFilterColor('all');
-    }, [activeListId]);
+    }, [activeListId, setFilterColor]);
     useEffect(() => {
         if (isFlagView) setIsAdding(false);
     }, [isFlagView]);
@@ -304,6 +324,8 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
 
     const handleSetColor = useCallback((symbol, color) => {
         setSymbolColors((prev) => {
+            const current = prev[symbol] || 'none';
+            if (current === color) return prev;
             const next = { ...prev };
             if (color === 'none') delete next[symbol];
             else next[symbol] = color;
@@ -377,34 +399,190 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
             return { ...l, symbols: l.symbols.filter((_, i) => i !== targetIndex) };
         }));
     }, [activeListId, setWatchlists]);
+    const handleMoveAtIndex = useCallback((fromIndex, delta) => {
+        setWatchlists(prev => prev.map((list) => {
+            if (list.id !== activeListId) return list;
+            const toIndex = fromIndex + delta;
+            if (fromIndex < 0 || toIndex < 0 || fromIndex >= list.symbols.length || toIndex >= list.symbols.length) {
+                return list;
+            }
+            const symbols = [...list.symbols];
+            const [moved] = symbols.splice(fromIndex, 1);
+            symbols.splice(toIndex, 0, moved);
+            return { ...list, symbols };
+        }));
+    }, [activeListId, setWatchlists]);
+    const moveSymbolAtIndex = useCallback((fromIndex, insertIndex) => {
+        setWatchlists((prev) => prev.map((list) => {
+            if (list.id !== activeListId) return list;
+            if (fromIndex < 0 || fromIndex >= list.symbols.length) return list;
+            const symbols = [...list.symbols];
+            const [moved] = symbols.splice(fromIndex, 1);
+            let toIndex = insertIndex;
+            if (fromIndex < insertIndex) toIndex -= 1;
+            toIndex = Math.max(0, Math.min(toIndex, symbols.length));
+            if (toIndex === fromIndex) return list;
+            symbols.splice(toIndex, 0, moved);
+            return { ...list, symbols };
+        }));
+    }, [activeListId, setWatchlists]);
+
+    const stopAutoScroll = useCallback(() => {
+        autoScrollVelocityRef.current = 0;
+        if (autoScrollRafRef.current) {
+            cancelAnimationFrame(autoScrollRafRef.current);
+            autoScrollRafRef.current = null;
+        }
+    }, []);
+
+    const runAutoScroll = useCallback(() => {
+        const scroller = containerRef.current?.querySelector('[data-watchlist-scroller="1"]');
+        if (!scroller || autoScrollVelocityRef.current === 0) {
+            autoScrollRafRef.current = null;
+            return;
+        }
+        scroller.scrollTop += autoScrollVelocityRef.current;
+        autoScrollRafRef.current = requestAnimationFrame(runAutoScroll);
+    }, []);
+
+    const updateAutoScroll = useCallback((clientY) => {
+        const scroller = containerRef.current?.querySelector('[data-watchlist-scroller="1"]');
+        if (!scroller) return;
+        const rect = scroller.getBoundingClientRect();
+        const edge = 56;
+        let velocity = 0;
+        if (clientY < rect.top + edge) {
+            velocity = -Math.ceil(((rect.top + edge) - clientY) / edge * 14);
+        } else if (clientY > rect.bottom - edge) {
+            velocity = Math.ceil((clientY - (rect.bottom - edge)) / edge * 14);
+        }
+        autoScrollVelocityRef.current = velocity;
+        if (velocity !== 0 && !autoScrollRafRef.current) {
+            autoScrollRafRef.current = requestAnimationFrame(runAutoScroll);
+        }
+        if (velocity === 0) stopAutoScroll();
+    }, [runAutoScroll, stopAutoScroll]);
+
+    const clearDragState = useCallback(() => {
+        dragFromIndexRef.current = null;
+        setDragOverState({ index: null, after: false });
+        stopAutoScroll();
+    }, [stopAutoScroll]);
+
+    useEffect(() => () => stopAutoScroll(), [stopAutoScroll]);
 
     const renderVisibleEntry = useCallback((_, { symbolEntry, originalIndex }) => {
-        if (symbolEntry.isHeader) {
-            return (
-                <div className="group relative px-3 py-1.5 flex items-center justify-between border-b border-white/5 bg-[#0b0e14] mt-2 first:mt-0">
-                    <span className="text-[9px] font-black text-white/40 tracking-[0.2em] uppercase">{symbolEntry.header}</span>
-                    <button
-                        onClick={() => handleRemoveAtIndex(originalIndex)}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-all"
-                    >
-                        <Trash2 size={10} />
-                    </button>
-                </div>
-            );
-        }
+        const showReorder = !isFlagView;
+        const canMoveUp = showReorder && originalIndex > 0;
+        const canMoveDown = showReorder && originalIndex < (activeList.symbols.length - 1);
+        const isDropTarget = showReorder && dragOverState.index === originalIndex;
+        const dropStyle = isDropTarget
+            ? { boxShadow: dragOverState.after ? 'inset 0 -2px 0 0 var(--accent-primary)' : 'inset 0 2px 0 0 var(--accent-primary)' }
+            : undefined;
+
+        const onDragStartRow = (e) => {
+            if (!showReorder) return;
+            if (e.target instanceof Element && e.target.closest('button, input, a, [data-no-drag]')) {
+                e.preventDefault();
+                return;
+            }
+            dragFromIndexRef.current = originalIndex;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(originalIndex));
+        };
+
+        const onDragOverRow = (e) => {
+            if (!showReorder || dragFromIndexRef.current === null) return;
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            const after = e.clientY > rect.top + rect.height / 2;
+            if (dragOverState.index !== originalIndex || dragOverState.after !== after) {
+                setDragOverState({ index: originalIndex, after });
+            }
+            updateAutoScroll(e.clientY);
+        };
+
+        const onDropRow = (e) => {
+            if (!showReorder || dragFromIndexRef.current === null) return;
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            const after = e.clientY > rect.top + rect.height / 2;
+            const insertIndex = originalIndex + (after ? 1 : 0);
+            moveSymbolAtIndex(dragFromIndexRef.current, insertIndex);
+            clearDragState();
+        };
+
+        const onDragEndRow = () => clearDragState();
+        const onDragLeaveRow = (e) => {
+            if (!showReorder) return;
+            if (!e.currentTarget.contains(e.relatedTarget)) {
+                setDragOverState((prev) => (prev.index === originalIndex ? { index: null, after: false } : prev));
+            }
+        };
 
         return (
-            <WatchlistItem
-                s={symbolEntry}
-                symbolColor={symbolColors[symbolEntry.symbol] || 'none'}
-                config={config}
-                onSymbolSelect={handleSymbolSelect}
-                onRemoveSymbol={handleRemoveSymbol}
-                onSetSymbolColor={handleSetColor}
-                removeLabel={isFlagView ? 'CLEAR FLAG' : 'REMOVE FROM LIST'}
-            />
+            <div
+                draggable={showReorder}
+                onDragStart={onDragStartRow}
+                onDragOver={onDragOverRow}
+                onDrop={onDropRow}
+                onDragEnd={onDragEndRow}
+                onDragLeave={onDragLeaveRow}
+                style={dropStyle}
+                className={showReorder ? 'cursor-grab active:cursor-grabbing' : ''}
+            >
+                {symbolEntry.isHeader ? (
+                    <div className="group relative px-3 py-1.5 flex items-center justify-between border-b border-white/5 bg-[#0b0e14] mt-2 first:mt-0">
+                        <span className="text-[9px] font-black text-white/40 tracking-[0.2em] uppercase">{symbolEntry.header}</span>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                            {showReorder && (
+                                <>
+                                    <button
+                                        onClick={() => handleMoveAtIndex(originalIndex, -1)}
+                                        disabled={!canMoveUp}
+                                        className={`p-1 transition-all ${canMoveUp ? 'hover:text-white/80' : 'text-white/10 cursor-not-allowed'}`}
+                                        title="Move Up"
+                                    >
+                                        <ChevronUp size={10} />
+                                    </button>
+                                    <button
+                                        onClick={() => handleMoveAtIndex(originalIndex, 1)}
+                                        disabled={!canMoveDown}
+                                        className={`p-1 transition-all ${canMoveDown ? 'hover:text-white/80' : 'text-white/10 cursor-not-allowed'}`}
+                                        title="Move Down"
+                                    >
+                                        <ChevronDown size={10} />
+                                    </button>
+                                </>
+                            )}
+                            <button
+                                onClick={() => handleRemoveAtIndex(originalIndex)}
+                                className="p-1 hover:text-red-500 transition-all"
+                                title="Remove Header"
+                            >
+                                <Trash2 size={10} />
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <WatchlistItem
+                        s={symbolEntry}
+                        symbolColor={symbolColors[symbolEntry.symbol] || 'none'}
+                        config={config}
+                        onSymbolSelect={handleSymbolSelect}
+                        onRemoveSymbol={handleRemoveSymbol}
+                        onSetSymbolColor={handleSetColor}
+                        removeLabel={isFlagView ? 'CLEAR FLAG' : 'REMOVE FROM LIST'}
+                        showReorder={showReorder}
+                        onMoveUp={() => handleMoveAtIndex(originalIndex, -1)}
+                        onMoveDown={() => handleMoveAtIndex(originalIndex, 1)}
+                        canMoveUp={canMoveUp}
+                        canMoveDown={canMoveDown}
+                    />
+                )}
+            </div>
         );
-    }, [config, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, isFlagView, symbolColors]);
+    }, [activeList.symbols.length, clearDragState, config, dragOverState.after, dragOverState.index, handleMoveAtIndex, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, isFlagView, moveSymbolAtIndex, symbolColors, updateAutoScroll]);
 
     return (
         <div
@@ -503,24 +681,29 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                                     <div className="px-2 py-1.5 border-b border-white/5 mb-1">
                                         <span className="text-[8px] font-black text-white/20 uppercase tracking-widest">Display Options</span>
                                     </div>
-                                    <button
-                                        onClick={() => setConfig(prev => ({ ...prev, showLast: !prev.showLast }))}
-                                        className="w-full text-left px-2.5 py-1.5 text-[9px] font-black text-white/50 hover:text-white hover:bg-white/5 rounded flex items-center justify-between uppercase tracking-widest"
-                                    >
-                                        Last Price {config.showLast && <Check size={10} className="text-white/80" />}
-                                    </button>
-                                    <button
-                                        onClick={() => setConfig(prev => ({ ...prev, showChange: !prev.showChange }))}
-                                        className="w-full text-left px-2.5 py-1.5 text-[9px] font-black text-white/50 hover:text-white hover:bg-white/5 rounded flex items-center justify-between uppercase tracking-widest"
-                                    >
-                                        Change % {config.showChange && <Check size={10} className="text-white/80" />}
-                                    </button>
-                                    <button
-                                        onClick={() => setConfig(prev => ({ ...prev, compact: !prev.compact }))}
-                                        className="w-full text-left px-2.5 py-1.5 text-[9px] font-black text-white/50 hover:text-white hover:bg-white/5 rounded flex items-center justify-between uppercase tracking-widest"
-                                    >
-                                        Compact Mode {config.compact && <Check size={10} className="text-white/80" />}
-                                    </button>
+                                    <div className="flex flex-col gap-1 px-1">
+                                        <div className="flex items-center justify-between px-2.5 py-1.5 hover:bg-white/[0.02] rounded transition-all">
+                                            <span className="text-[9px] font-black text-white/50 uppercase tracking-widest">Last Price</span>
+                                            <SleekSwitch
+                                                active={config.showLast}
+                                                onClick={() => setConfig(prev => ({ ...prev, showLast: !prev.showLast }))}
+                                            />
+                                        </div>
+                                        <div className="flex items-center justify-between px-2.5 py-1.5 hover:bg-white/[0.02] rounded transition-all">
+                                            <span className="text-[9px] font-black text-white/50 uppercase tracking-widest">Change %</span>
+                                            <SleekSwitch
+                                                active={config.showChange}
+                                                onClick={() => setConfig(prev => ({ ...prev, showChange: !prev.showChange }))}
+                                            />
+                                        </div>
+                                        <div className="flex items-center justify-between px-2.5 py-1.5 hover:bg-white/[0.02] rounded transition-all">
+                                            <span className="text-[9px] font-black text-white/50 uppercase tracking-widest">Compact Mode</span>
+                                            <SleekSwitch
+                                                active={config.compact}
+                                                onClick={() => setConfig(prev => ({ ...prev, compact: !prev.compact }))}
+                                            />
+                                        </div>
+                                    </div>
                                     <div className="h-[1px] bg-white/5 my-1" />
                                     <button
                                         onClick={() => { handleDeleteList(); setIsMenuOpen(false); }}
@@ -626,7 +809,16 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                         {config.showLast && <span className="w-16 text-right">Last</span>}
                         {config.showChange && <span className="w-16 text-right">Chg%</span>}
                     </div>
-                    <div className="flex-1 min-h-0">
+                    <div
+                        className="flex-1 min-h-0"
+                        onDragOver={(e) => {
+                            if (!isFlagView && dragFromIndexRef.current !== null) {
+                                e.preventDefault();
+                                updateAutoScroll(e.clientY);
+                            }
+                        }}
+                        onDrop={() => clearDragState()}
+                    >
                         {visibleEntries.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-20 opacity-20 select-none">
                                 {isFlagView ? (
@@ -662,7 +854,20 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     );
 });
 
-const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSymbol, onSetSymbolColor, removeLabel = 'REMOVE FROM LIST' }) => {
+const WatchlistItem = memo(({
+    s,
+    symbolColor,
+    config,
+    onSymbolSelect,
+    onRemoveSymbol,
+    onSetSymbolColor,
+    removeLabel = 'REMOVE FROM LIST',
+    showReorder = false,
+    onMoveUp,
+    onMoveDown,
+    canMoveUp = false,
+    canMoveDown = false
+}) => {
     const cleaned = cleanSymbol(s.symbol);
     useLiveVersion(); // subscribe to global tick for price refresh
     const [hasLogo, setHasLogo] = useState(() => !MISSING_SYMBOL_LOGOS.has(s.symbol));
@@ -730,15 +935,14 @@ const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSy
                 </div>
             )}
 
-            {/* Quick Actions (Hover) */}
-            <div className="absolute inset-0 bg-[#0b0e14] opacity-0 group-hover:opacity-100 transition-all flex items-center justify-end pr-2 pointer-events-none group-hover:pointer-events-auto">
-                <div className="flex items-center gap-1.5 p-1 bg-white/[0.03] rounded-full border border-white/5 shadow-2xl">
-                    <div className="flex items-center gap-1 px-1.5 border-r border-white/5 mr-0.5">
+            <div className="absolute inset-0 bg-gradient-to-l from-[#0b0e14] via-[#0b0e14]/80 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center justify-end pr-1 pointer-events-none group-hover:pointer-events-auto z-20">
+                <div className="flex items-center gap-1 p-0.5 bg-black/60 backdrop-blur-2xl rounded-full border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.7)] transform scale-[0.85] origin-right">
+                    <div className="flex items-center gap-0.5 px-1 border-r border-white/10 mr-0.5">
                         {FLAG_COLORS.map(f => (
                             <button
                                 key={f.id}
                                 onClick={(e) => handleColor(f.id, e)}
-                                className={`w-6 h-6 rounded-full hover:bg-white/10 transition-all flex items-center justify-center ${f.id === symbolColor ? 'ring-1 ring-white/50 bg-white/5' : ''}`}
+                                className={`w-6 h-6 rounded-full hover:bg-white/10 transition-all flex items-center justify-center ${f.id === symbolColor ? 'ring-2 ring-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/10' : ''}`}
                                 title={f.id.toUpperCase()}
                             >
                                 {f.id === 'none' ? (
@@ -755,9 +959,29 @@ const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSy
                             </button>
                         ))}
                     </div>
+                    {showReorder && (
+                        <div className="flex items-center gap-0.5 border-r border-white/5 pr-1 mr-0.5">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+                                disabled={!canMoveUp}
+                                className={`p-1 rounded-full transition-all ${canMoveUp ? 'hover:bg-white/10 text-white/35 hover:text-white' : 'text-white/10 cursor-not-allowed'}`}
+                                title="Move Up"
+                            >
+                                <ChevronUp size={12} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+                                disabled={!canMoveDown}
+                                className={`p-1 rounded-full transition-all ${canMoveDown ? 'hover:bg-white/10 text-white/35 hover:text-white' : 'text-white/10 cursor-not-allowed'}`}
+                                title="Move Down"
+                            >
+                                <ChevronDown size={12} />
+                            </button>
+                        </div>
+                    )}
                     <button
                         onClick={handleRemove}
-                        className="p-1.5 hover:bg-red-500/20 text-white/30 hover:text-red-500 rounded-full transition-all"
+                        className="p-1 hover:bg-red-500/20 text-white/30 hover:text-red-500 rounded-full transition-all"
                         title={removeLabel}
                     >
                         <Trash2 size={12} />
@@ -767,6 +991,17 @@ const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSy
         </div>
     );
 });
+
+const SleekSwitch = ({ active, onClick }) => (
+    <button
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        className={`w-8 h-4.5 rounded-full relative transition-all duration-300 shadow-inner ${active ? 'bg-[var(--accent-primary)]' : 'bg-white/10'}`}
+    >
+        <div
+            className={`absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-lg transition-all duration-300 transform ${active ? 'translate-x-[14px] bg-black' : 'translate-x-0.5 bg-white/30'}`}
+        />
+    </button>
+);
 
 const X = ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">

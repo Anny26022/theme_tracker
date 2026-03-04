@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { cleanSymbol, fetchBatchIntervalPerformance, fetchComparisonCharts, fetchFundamentals, fetchLivePrices } from '../services/priceService';
+import { cleanSymbol, fetchBatchIntervalPerformance, fetchComparisonCharts, fetchFundamentals, fetchLivePrices, getCachedComparisonSeries } from '../services/priceService';
 
 const MarketDataContext = createContext({
     subscribeIntervalSymbols: () => () => { },
@@ -85,6 +85,7 @@ export function MarketDataProvider({ children }) {
     const fundaListenersRef = useRef(new Set());
     const intervalVersionRef = useRef(0);
     const chartVersionRef = useRef(0);
+    const chartNotifyRafRef = useRef(null);
     const liveVersionRef = useRef(0);
     const fundaVersionRef = useRef(0);
     const loopTimerRef = useRef(null);
@@ -100,6 +101,28 @@ export function MarketDataProvider({ children }) {
         chartVersionRef.current += 1;
         chartListenersRef.current.forEach((listener) => listener());
     }, []);
+
+    const scheduleChartNotify = useCallback(() => {
+        if (chartNotifyRafRef.current) return;
+        if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+            chartNotifyRafRef.current = setTimeout(() => {
+                chartNotifyRafRef.current = null;
+                notifyChart();
+            }, 16);
+            return;
+        }
+        chartNotifyRafRef.current = window.requestAnimationFrame(() => {
+            chartNotifyRafRef.current = null;
+            notifyChart();
+        });
+    }, [notifyChart]);
+
+    const getMissingChartSymbols = useCallback((interval, symbols = []) => (
+        (symbols || []).filter((symbol) => {
+            const cached = getCachedComparisonSeries(symbol, interval, { silent: true });
+            return !(Array.isArray(cached) && cached.length > 1);
+        })
+    ), []);
 
     const notifyLive = useCallback(() => {
         liveVersionRef.current += 1;
@@ -139,21 +162,28 @@ export function MarketDataProvider({ children }) {
             if (inFlightRef.current.has(key)) return;
             const symbols = extractSymbols(chartSymbolsRef.current, interval);
             if (symbols.length === 0) return;
+            const missingSymbols = getMissingChartSymbols(interval, symbols);
+            if (missingSymbols.length === 0) {
+                lastChartRefreshRef.current.set(interval, Date.now());
+                return;
+            }
 
             inFlightRef.current.add(key);
             try {
-                await fetchComparisonCharts(symbols, interval);
+                await fetchComparisonCharts(missingSymbols, interval);
                 lastChartRefreshRef.current.set(interval, Date.now());
-                notifyChart();
+                scheduleChartNotify();
             } finally {
                 inFlightRef.current.delete(key);
             }
         } else {
+            const missingSymbols = getMissingChartSymbols(interval, symbolsOverride);
+            if (missingSymbols.length === 0) return;
             // Specific symbols - let the service handle deduplication
-            await fetchComparisonCharts(symbolsOverride, interval);
-            notifyChart();
+            await fetchComparisonCharts(missingSymbols, interval);
+            scheduleChartNotify();
         }
-    }, [notifyChart]);
+    }, [getMissingChartSymbols, scheduleChartNotify]);
 
     const refreshLive = useCallback(async (symbolsOverride, options = {}) => {
         if (!symbolsOverride) {
@@ -281,6 +311,14 @@ export function MarketDataProvider({ children }) {
         document.addEventListener('visibilitychange', handleVisibility);
         return () => {
             document.removeEventListener('visibilitychange', handleVisibility);
+            if (chartNotifyRafRef.current) {
+                if (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+                    window.cancelAnimationFrame(chartNotifyRafRef.current);
+                } else {
+                    clearTimeout(chartNotifyRafRef.current);
+                }
+                chartNotifyRafRef.current = null;
+            }
             if (loopTimerRef.current) clearInterval(loopTimerRef.current);
         };
     }, [maybeStartLoop, refreshCharts, refreshFundamentals, refreshIntervals, refreshLive]);

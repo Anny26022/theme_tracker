@@ -21,9 +21,17 @@ const buildEmaSeries = (values, period) => {
 };
 const MA_COLORS = { 5: '#ff6b6b', 10: '#ffa94d', 21: '#ffd43b', 50: '#51cf66', 100: '#22b8cf', 200: '#9d27b0' };
 const _defaultMa = [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }];
-let _maSnap = { raw: null, val: _defaultMa };
+let _maSnap = { raw: null, pb: null, val: { lines: _defaultMa, paintBars: false } };
 let _styleSnap = { raw: null, val: 'candles' };
-const getMAConfig = () => { const r = localStorage.getItem('tt_pro_ma'); if (r === _maSnap.raw) return _maSnap.val; try { _maSnap = { raw: r, val: r ? JSON.parse(r) : _defaultMa }; } catch { _maSnap = { raw: r, val: _defaultMa }; } return _maSnap.val; };
+const getMAConfig = () => {
+    const r = localStorage.getItem('tt_pro_ma');
+    const pb = localStorage.getItem('tt_pro_paint_bars') === 'true';
+    if (r === _maSnap.raw && pb === _maSnap.pb) return _maSnap.val;
+    let lines = _defaultMa;
+    try { lines = r ? JSON.parse(r) : _defaultMa; } catch { lines = _defaultMa; }
+    _maSnap = { raw: r, pb, val: { lines, paintBars: pb } };
+    return _maSnap.val;
+};
 const getStyle = () => { const r = localStorage.getItem('tt_pro_style'); if (r === _styleSnap.raw) return _styleSnap.val; _styleSnap = { raw: r, val: r || 'candles' }; return _styleSnap.val; };
 const subChartSettings = (cb) => { window.addEventListener('tt_chart_settings', cb); return () => window.removeEventListener('tt_chart_settings', cb); };
 
@@ -65,11 +73,20 @@ const FinvizChart = React.memo(function FinvizChart({
     const setTimeframe = setInternalTimeframe;
 
     const init = cs()[cleaned]?.[timeframe] || {};
-    const [zoomDays, setZoomDays] = useState(init.z ?? 168);
+    const [zoomDays, setZoomDays] = useState(init.z ?? (isProMode ? 260 : 168));
     const [panOffset, setPanOffset] = useState(init.p ?? 0);
     const [priceOffset, setPriceOffset] = useState(init.y ?? 0);
     const [vScale, setVScale] = useState(init.v ?? 1.0);
     const dragRef = useRef({ isDragging: false, isYDragging: false, isFreeDragging: false, startX: 0, startY: 0, startPan: 0, startVPan: 0, startVScale: 1.0 });
+    const zoomDaysRef = useRef(zoomDays);
+    const panOffsetRef = useRef(panOffset);
+    const priceOffsetRef = useRef(priceOffset);
+    const vScaleRef = useRef(vScale);
+
+    useEffect(() => { zoomDaysRef.current = zoomDays; }, [zoomDays]);
+    useEffect(() => { panOffsetRef.current = panOffset; }, [panOffset]);
+    useEffect(() => { priceOffsetRef.current = priceOffset; }, [priceOffset]);
+    useEffect(() => { vScaleRef.current = vScale; }, [vScale]);
 
     useEffect(() => setCs(cleaned, timeframe, { z: zoomDays, p: panOffset, y: priceOffset, v: vScale }),
         [cleaned, timeframe, zoomDays, panOffset, priceOffset, vScale]);
@@ -128,6 +145,7 @@ const FinvizChart = React.memo(function FinvizChart({
 
     const handleWheel = useCallback((e) => {
         e.preventDefault();
+        e.stopPropagation();
         const factor = e.deltaY < 0 ? 0.9 : 1.1;
         setZoomDays(p => {
             const next = Math.max(20, Math.min(totalPointsRef.current, Math.round(p * factor)));
@@ -141,9 +159,7 @@ const FinvizChart = React.memo(function FinvizChart({
     const baseData = useMemo(() => {
         if (!activeSeries || activeSeries.length === 0) return null;
 
-        // 1. Process points
         let ordered = [...activeSeries].sort((a, b) => a.time - b.time);
-
         if (timeframe !== '1D') {
             const b = new Map();
             ordered.forEach(p => {
@@ -157,7 +173,6 @@ const FinvizChart = React.memo(function FinvizChart({
                 } else if (timeframe === '1Y') {
                     k = new Date(d.getFullYear(), 0, 1).getTime();
                 }
-
                 if (!b.has(k)) b.set(k, { time: k, open: p.open ?? p.close, high: p.high ?? p.close, low: p.low ?? p.close, close: p.close, volume: p.volume ?? 0 });
                 else {
                     const cur = b.get(k);
@@ -182,16 +197,87 @@ const FinvizChart = React.memo(function FinvizChart({
             .filter(p => !isNaN(p.time) && p.time > 0 && isFinite(p.close) && p.close > 0);
 
         if (allPoints.length < 2) return null;
+
         const allCloses = allPoints.map(p => p.close);
+        const allVolumes = allPoints.map(p => p.volume);
+
+        // --- Volume Metrics (Simple Volume Logic) ---
+        const volSMA50 = buildSmaSeries(allVolumes, 50);
+
+        // Process each point for labels and colors
+        for (let i = 0; i < allPoints.length; i++) {
+            const p = allPoints[i];
+            const prev = i > 0 ? allPoints[i - 1] : p;
+            const sma = volSMA50[i];
+            const isUp = p.close > prev.close || (p.close === prev.close && p.close >= p.open);
+
+            // 1. PPV (Pocket Pivot Volume) - Up day, volume > max(down-day volumes in last 10 trading days)
+            let maxDownVol10 = 0;
+            const lookback = 10;
+            for (let j = Math.max(0, i - lookback); j < i; j++) {
+                const ref = allPoints[j];
+                const preRef = j > 0 ? allPoints[j - 1] : ref;
+                const refIsDown = ref.close < preRef.close || (ref.close === preRef.close && ref.close < ref.open);
+                if (refIsDown) maxDownVol10 = Math.max(maxDownVol10, ref.volume);
+            }
+            const isPPV = isUp && p.volume > maxDownVol10 && i >= 10;
+
+            // 2. Bull Snort - 3x vol SMA50, close in top 35%, above previous close
+            const range = p.high - p.low || 0.01;
+            const relativeClose = (p.close - p.low) / range;
+            const isBullSnort = (sma > 0 && p.volume > 3 * sma) && (relativeClose >= 0.65) && (p.close > prev.close);
+
+            // 3. Dry/Low Volume - Volume < 1/5 SMA50
+            const isDry = sma > 0 && p.volume < (sma / 5);
+
+            // 4. Color Decision
+            let color = '#8b95a7'; // Neutral Grey-Blue (clear visibility)
+            if (isPPV) color = '#3b82f6'; // Blue
+            else if (isUp && sma > 0 && p.volume > sma) color = '#22c55e'; // Green
+            else if (!isUp && sma > 0 && p.volume > sma) color = '#ef4444'; // Red
+            else if (isDry) color = '#f59e0b'; // Orange
+
+            p.volColor = color;
+            p.volSMA50 = sma;
+            p.isBullSnort = isBullSnort;
+            p.isPPV = isPPV;
+            p.isDry = isDry;
+
+            // Relative Volume (RVol)
+            p.rVol = sma > 0 ? (p.volume / sma) : 0;
+        }
+
+        // 5. Summary Stats (for the last points or 50 bars)
+        const last50 = allPoints.slice(-50);
+        let sumUpVol = 0, sumDownVol = 0, sumVol = 0, sumPrice = 0;
+        last50.forEach((p, idx) => {
+            sumVol += p.volume;
+            sumPrice += p.close;
+            const prev = idx > 0 ? last50[idx - 1] : p;
+            const isUp = p.close >= prev.close;
+            if (isUp) sumUpVol += p.volume;
+            else sumDownVol += p.volume;
+        });
+
+        const avgVol50 = sumVol / (last50.length || 1);
+        const avgPrice50 = sumPrice / (last50.length || 1);
+        const udRatio = sumDownVol > 0 ? (sumUpVol / sumDownVol) : (sumUpVol > 0 ? 99 : 0);
+        const avgDollarVol = avgVol50 * avgPrice50;
+        const currentRVol = allPoints[allPoints.length - 1].rVol || 0;
+
         const maSeriesMap = {};
-        (maConfig).forEach(m => { maSeriesMap[`${m.type}_${m.period}`] = (m.type === 'EMA' ? buildEmaSeries : buildSmaSeries)(allCloses, m.period); });
-        return { allPoints, maSeriesMap, totalPoints: allPoints.length };
-    }, [activeSeries, timeframe, maConfig]);
+        (maConfig.lines || []).forEach(m => { maSeriesMap[`${m.type}_${m.period}`] = (m.type === 'EMA' ? buildEmaSeries : buildSmaSeries)(allCloses, m.period); });
+
+        return {
+            allPoints, maSeriesMap, totalPoints: allPoints.length,
+            stats: { udRatio, avgDollarVol: avgDollarVol / 10000000, currentRVol, avgVol50 } // avgDollarVol in Crores (approx)
+        };
+    }, [activeSeries, timeframe, maConfig.lines]);
 
     // Sync view state cleanly on timeframe/symbol change
     useEffect(() => {
         const s = cs()[cleaned]?.[timeframe] || {};
-        setZoomDays(s.z ?? { '1W': 100, '1M': 60, '1Y': 20 }[timeframe] ?? 168);
+        setZoomDays(s.z ?? (timeframe === '1D' ? (isProMode ? 260 : 168) : { '1W': 100, '1M': 60, '1Y': 20 }[timeframe]) ?? 168);
         setPanOffset(s.p ?? 0);
         setPriceOffset(s.y ?? 0);
         setVScale(s.v ?? 1.0);
@@ -272,7 +358,7 @@ const FinvizChart = React.memo(function FinvizChart({
             points, maMap: slicedMaMap, minP, maxP, maxV, pRange: maxP - minP || 0.01,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH, chartStyle, maConfig]);
+    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH, chartStyle, maConfig.lines]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -387,7 +473,9 @@ const FinvizChart = React.memo(function FinvizChart({
             );
         }
 
-        const volUp = [], volDown = [];
+        const volBars = [];
+        const bullSnortDots = [];
+
         const wickUp = [], wickDown = [];
         const bodyUpFill = [], bodyUpStroke = [], bodyDownStroke = [], bodyDownFill = [];
         const barUp = [], barDown = [];
@@ -398,22 +486,26 @@ const FinvizChart = React.memo(function FinvizChart({
             const isUp = p.close >= p.open;
             const isGrowth = i > 0 ? p.close >= points[i - 1].close : true;
 
-            // Volume (respect growth color, not just intra-period)
+            const vColor = p.volColor || (isGrowth ? colorUp : colorDown);
+            const pColor = (maConfig && maConfig.paintBars && p.volColor && p.volColor !== '#8b95a7') ? p.volColor : (isUp ? colorUp : colorDown);
+
+            // Volume
             if (maxV > 0 && p.volume > 0) {
                 const vh = (p.volume / maxV) * volH;
                 const vy = H - paddingBottom - vh;
-                (isGrowth ? volUp : volDown).push(`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`);
+                volBars.push(<path key={`v-${i}`} d={`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`} fill={vColor} opacity={isProMode ? "1" : "0.78"} />);
+
             }
 
             if (chartStyle === 'bars') {
                 const highY = getY(p.high), lowY = getY(p.low), openY = getY(p.open), closeY = getY(p.close);
                 const path = `M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)} M${(x - hw).toFixed(1)},${openY.toFixed(1)}H${x.toFixed(1)} M${x.toFixed(1)},${closeY.toFixed(1)}H${(x + hw).toFixed(1)}`;
-                if (isUp) barUp.push(path);
-                else barDown.push(path);
+                if (isUp) barUp.push({ path, color: pColor });
+                else barDown.push({ path, color: pColor });
             } else {
                 // Wicks
                 const highY = getY(p.high), lowY = getY(p.low);
-                (isUp ? wickUp : wickDown).push(`M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`);
+                (isUp ? wickUp : wickDown).push({ d: `M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`, color: pColor });
 
                 // Bodies
                 const openY = getY(p.open), closeY = getY(p.close);
@@ -421,38 +513,43 @@ const FinvizChart = React.memo(function FinvizChart({
                 const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
 
                 if (chartStyle === 'hollow' || chartStyle === 'white') {
-                    if (isUp) bodyUpStroke.push(bodyD);
-                    else bodyDownFill.push(bodyD);
+                    if (isUp) bodyUpStroke.push({ d: bodyD, color: pColor });
+                    else bodyDownFill.push({ d: bodyD, color: pColor });
                 } else {
-                    if (isUp) bodyUpFill.push(bodyD);
-                    else bodyDownFill.push(bodyD);
+                    if (isUp) bodyUpFill.push({ d: bodyD, color: pColor });
+                    else bodyDownFill.push({ d: bodyD, color: pColor });
+                }
+
+                // Bull Snort Dot
+                if (p.isBullSnort) {
+                    bullSnortDots.push(<circle key={`bs-${i}`} cx={x} cy={lowY + 10} r="2" fill="#a855f7" />);
                 }
             }
         });
 
         return (
             <>
-                {volUp.length > 0 && <path d={volUp.join('')} fill={colorUp} opacity="0.15" />}
-                {volDown.length > 0 && <path d={volDown.join('')} fill={colorDown} opacity="0.15" />}
+                {volBars}
+                {bullSnortDots}
 
                 {chartStyle === 'bars' ? (
                     <>
-                        {barUp.length > 0 && <path d={barUp.join('')} fill="none" stroke={colorUp} strokeWidth="1.2" />}
-                        {barDown.length > 0 && <path d={barDown.join('')} fill="none" stroke={colorDown} strokeWidth="1.2" />}
+                        {barUp.map((b, i) => <path key={`up-${i}`} d={b.path} fill="none" stroke={b.color} strokeWidth="1.2" />)}
+                        {barDown.map((b, i) => <path key={`dn-${i}`} d={b.path} fill="none" stroke={b.color} strokeWidth="1.2" />)}
                     </>
                 ) : (
                     <>
-                        {wickUp.length > 0 && <path d={wickUp.join('')} fill="none" stroke={colorUp} strokeWidth="1" />}
-                        {wickDown.length > 0 && <path d={wickDown.join('')} fill="none" stroke={colorDown} strokeWidth="1" />}
-                        {bodyUpFill.length > 0 && <path d={bodyUpFill.join('')} fill={colorUp} />}
-                        {bodyUpStroke.length > 0 && <path d={bodyUpStroke.join('')} fill="#0b0e14" stroke={colorUp} strokeWidth="0.8" />}
-                        {bodyDownFill.length > 0 && <path d={bodyDownFill.join('')} fill={colorDown} />}
-                        {bodyDownStroke.length > 0 && <path d={bodyDownStroke.join('')} fill="#0b0e14" stroke={colorDown} strokeWidth="0.8" />}
+                        {wickUp.map((w, i) => <path key={`wup-${i}`} d={w.d} fill="none" stroke={w.color} strokeWidth="1" />)}
+                        {wickDown.map((w, i) => <path key={`wdn-${i}`} d={w.d} fill="none" stroke={w.color} strokeWidth="1" />)}
+                        {bodyUpFill.map((b, i) => <path key={`buf-${i}`} d={b.d} fill={b.color} />)}
+                        {bodyUpStroke.map((b, i) => <path key={`bus-${i}`} d={b.d} fill="#0b0e14" stroke={b.color} strokeWidth="0.8" />)}
+                        {bodyDownFill.map((b, i) => <path key={`bdf-${i}`} d={b.d} fill={b.color} />)}
+                        {bodyDownStroke.map((b, i) => <path key={`bds-${i}`} d={b.d} fill="#0b0e14" stroke={b.color} strokeWidth="0.8" />)}
                     </>
                 )}
             </>
         );
-    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned]);
+    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned, isProMode, maConfig]);
 
     const liveData = useLivePrice(cleaned);
 
@@ -472,15 +569,16 @@ const FinvizChart = React.memo(function FinvizChart({
         if (!node) return undefined;
 
         const onStart = (e) => {
+            e.stopPropagation();
             const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
             const clientY = e.clientY || e.touches?.[0]?.clientY || 0;
             const rect = node.getBoundingClientRect();
             const isRight = (clientX - rect.left) > (rect.width - 50);
 
             if (isRight || e.shiftKey) {
-                dragRef.current = { ...dragRef.current, isYDragging: true, startY: clientY, startVScale: vScale };
+                dragRef.current = { ...dragRef.current, isYDragging: true, startY: clientY, startVScale: vScaleRef.current };
             } else {
-                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startY: clientY, startPan: panOffset, startVPan: priceOffset };
+                dragRef.current = { ...dragRef.current, isDragging: true, startX: clientX, startY: clientY, startPan: panOffsetRef.current, startVPan: priceOffsetRef.current };
             }
         };
 
@@ -497,9 +595,9 @@ const FinvizChart = React.memo(function FinvizChart({
                 const dy = dragRef.current.startY - clientY;
                 setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
             } else {
-                const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDays);
+                const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDaysRef.current);
                 const dyPrice = (clientY - dragRef.current.startY);
-                setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDays, dragRef.current.startPan + dxPoints)));
+                setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDaysRef.current, dragRef.current.startPan + dxPoints)));
                 setPriceOffset(dragRef.current.startVPan + dyPrice);
             }
         };
@@ -529,7 +627,24 @@ const FinvizChart = React.memo(function FinvizChart({
             window.removeEventListener('touchmove', onMove);
             window.removeEventListener('touchend', onEnd);
         };
-    }, [handleWheel, panOffset, priceOffset, zoomDays, vScale, disabled, !!data]);
+    }, [handleWheel, disabled, !!data]);
+
+    const projectedStats = useMemo(() => {
+        if (!isProMode || !liveData || !data?.stats?.avgVol50) return null;
+        const now = new Date();
+        const start = new Date(now); start.setHours(9, 15, 0, 0);
+        const end = new Date(now); end.setHours(15, 30, 0, 0);
+        let elapsed = (now - start) / 60000;
+        if (elapsed < 0) elapsed = 0; if (elapsed > 375) elapsed = 375;
+        const prog = elapsed / 375;
+        const currentVol = liveData.volume || 0;
+        const liquidity1m = elapsed > 3 ? (currentVol / elapsed) : 0;
+        const projVol = prog > 0.05 ? (currentVol / prog) : 0;
+        const projRVol = data.stats.avgVol50 > 0 ? (projVol / data.stats.avgVol50) : 0;
+        return { projRVol, liquidity1m };
+    }, [liveData, data, isProMode]);
+
+    if (!data) return null;
 
     // For 1D: use live price data which has accurate intraday change from prev close
     if (timeframe === '1D' && liveData.changePct !== null) {
@@ -586,8 +701,36 @@ const FinvizChart = React.memo(function FinvizChart({
                                     </span>
                                 </div>
                             )}
-                            <div className="flex flex-col gap-0 text-[9px] font-black leading-tight mt-1">
+                            <div className="flex flex-col gap-0 text-[10px] font-black leading-tight mt-1">
                                 {Object.keys(maMap).map(k => { const [t, p] = k.split('_'); return <span key={k} style={{ color: MA_COLORS[+p] || '#888' }}>{t} {p}</span>; })}
+                                {isProMode && data?.stats && (
+                                    <div className="flex items-center gap-1.5 mt-2 select-none pointer-events-auto flex-wrap max-w-[400px]">
+                                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded border border-white/5">
+                                            <span className="text-[8px] text-white/40 uppercase tracking-tighter font-bold">Avg₹Vol:</span>
+                                            <span className="text-[9px] text-[var(--accent-primary)] font-black">{data.stats.avgDollarVol.toFixed(2)} Cr</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded border border-white/5">
+                                            <span className="text-[8px] text-white/40 uppercase tracking-tighter font-bold">RVol:</span>
+                                            <span className="text-[9px] text-white font-black">{(data.stats.currentRVol * 100).toFixed(0)}%</span>
+                                        </div>
+                                        {projectedStats && projectedStats.projRVol > 0 && (
+                                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded border border-white/5">
+                                                <span className="text-[8px] text-white/40 uppercase tracking-tighter font-bold">Proj RVol:</span>
+                                                <span className={`text-[9px] font-black ${projectedStats.projRVol >= 1 ? 'text-[#00c805]' : 'text-white/60'}`}>{projectedStats.projRVol.toFixed(1)}x</span>
+                                            </div>
+                                        )}
+                                        {projectedStats && projectedStats.liquidity1m > 0 && (
+                                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded border border-white/5">
+                                                <span className="text-[8px] text-white/40 uppercase tracking-tighter font-bold">1mL:</span>
+                                                <span className="text-[9px] text-[#22b8cf] font-black">{projectedStats.liquidity1m > 100000 ? (projectedStats.liquidity1m / 100000).toFixed(2) + ' L' : projectedStats.liquidity1m.toFixed(0)}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded border border-white/5">
+                                            <span className="text-[8px] text-white/40 uppercase tracking-tighter font-bold">U/D Vol:</span>
+                                            <span className={`text-[9px] font-black ${data.stats.udRatio >= 1 ? 'text-[#00c805]' : 'text-[#ff2e2e]'}`}>{data.stats.udRatio.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -603,7 +746,7 @@ const FinvizChart = React.memo(function FinvizChart({
                     <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-row gap-px z-30 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md border border-white/10 rounded px-0.5 py-0.5">
                         <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.max(20, Math.round(prev * 0.7))); }} className="p-0.5 hover:bg-white/10 rounded"><ZoomIn size={10} /></button>
                         <button onClick={(e) => { e.stopPropagation(); setZoomDays(prev => Math.min(data.totalPoints, Math.round(prev * 1.4))); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><ZoomOut size={10} /></button>
-                        <button onClick={(e) => { e.stopPropagation(); setZoomDays(190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); setZoomDays(isProMode ? 260 : 190); setPanOffset(0); setVScale(1.0); }} className="p-0.5 hover:bg-white/10 rounded ml-1"><Maximize2 size={10} /></button>
                         {!isProMode && onExpand && (
                             <button
                                 onClick={(e) => { e.stopPropagation(); onExpand({ symbol, name, series, timeframe }); }}
@@ -623,17 +766,17 @@ const FinvizChart = React.memo(function FinvizChart({
                     >
                         <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
 
-                            {/* Volume Labels (Left Axis) */}
-                            {maxV > 0 && (
-                                <g opacity="0.4" fontFamily="monospace" fontSize="9" fontWeight="bold">
-                                    <text x={paddingLeft - 5} y={H - paddingBottom - volH + 3} textAnchor="end" fill="#666">{(maxV / 1000000).toFixed(1)}M</text>
-                                    <text x={paddingLeft - 5} y={H - paddingBottom - (volH / 2) + 3} textAnchor="end" fill="#666">{(maxV / 2000000).toFixed(1)}M</text>
-                                </g>
-                            )}
-
                             {maLines}
 
                             {candleGraphics}
+
+                            {isProMode && points.length > 0 && (
+                                <line
+                                    x1={getX(points.length - 1)} x2={getX(points.length - 1)}
+                                    y1={0} y2={H - paddingBottom}
+                                    stroke="white" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.25"
+                                />
+                            )}
 
                             <g transform={`translate(${W - paddingX + 5}, 0)`}>
                                 {[0, 0.25, 0.5, 0.75, 1].map(v => (

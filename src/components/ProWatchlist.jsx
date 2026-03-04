@@ -17,6 +17,7 @@ const FLAG_COLORS = [
 const FALLBACK_LIST = { id: 'default', name: 'WATCHLIST', symbols: [] };
 const MISSING_SYMBOL_LOGOS = new Set();
 const SYMBOL_COLOR_KEY = 'tt_pro_symbol_colors';
+const FLAG_VIEW_PREFIX = 'flag:';
 
 const deriveSymbolColorsFromWatchlists = (lists) => {
     const next = {};
@@ -57,16 +58,18 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         return saved ? JSON.parse(saved) : { showLast: true, showChange: true, compact: false };
     });
     const [symbolColors, _setSymbolColors] = useState(() => {
+        let savedMap = {};
         const saved = localStorage.getItem(SYMBOL_COLOR_KEY);
         if (saved) {
-            try { return JSON.parse(saved); } catch { /* ignore */ }
+            try { savedMap = JSON.parse(saved) || {}; } catch { /* ignore */ }
         }
         const watchlistsRaw = localStorage.getItem('tt_pro_watchlists');
-        if (!watchlistsRaw) return {};
+        if (!watchlistsRaw) return savedMap;
         try {
-            return deriveSymbolColorsFromWatchlists(JSON.parse(watchlistsRaw));
+            const migrated = deriveSymbolColorsFromWatchlists(JSON.parse(watchlistsRaw));
+            return { ...migrated, ...savedMap };
         } catch {
-            return {};
+            return savedMap;
         }
     });
     const [filterColor, setFilterColor] = useState('all');
@@ -97,6 +100,26 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         localStorage.setItem(SYMBOL_COLOR_KEY, JSON.stringify(next));
         return next;
     }), []);
+
+    useEffect(() => {
+        // Migration cleanup: keep colors in the global map only.
+        setWatchlists((prev) => {
+            let changed = false;
+            const next = prev.map((list) => {
+                let listChanged = false;
+                const symbols = list.symbols.map((entry) => {
+                    if (!entry || entry.isHeader || entry.color === undefined) return entry;
+                    const { color, ...rest } = entry;
+                    listChanged = true;
+                    return rest;
+                });
+                if (!listChanged) return list;
+                changed = true;
+                return { ...list, symbols };
+            });
+            return changed ? next : prev;
+        });
+    }, [setWatchlists]);
 
     useEffect(() => {
         const onMove = (e) => {
@@ -134,6 +157,8 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         document.body.style.userSelect = 'none';
     };
 
+    const isFlagView = activeListId.startsWith(FLAG_VIEW_PREFIX);
+    const activeFlagColor = isFlagView ? activeListId.slice(FLAG_VIEW_PREFIX.length) : null;
     const activeList = useMemo(() =>
         watchlists.find(l => l.id === activeListId) || watchlists[0] || FALLBACK_LIST,
         [watchlists, activeListId]);
@@ -142,6 +167,9 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         // Keep filter UX predictable when switching lists.
         setFilterColor('all');
     }, [activeListId]);
+    useEffect(() => {
+        if (isFlagView) setIsAdding(false);
+    }, [isFlagView]);
 
     const globalFlagColors = useMemo(() => {
         const set = new Set();
@@ -150,11 +178,40 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         });
         return set;
     }, [symbolColors]);
+    const flagCounts = useMemo(() => {
+        const counts = {};
+        Object.values(symbolColors || {}).forEach((color) => {
+            if (!color || color === 'none') return;
+            counts[color] = (counts[color] || 0) + 1;
+        });
+        return counts;
+    }, [symbolColors]);
+    const flagSelectorItems = useMemo(() => (
+        FLAG_COLORS.filter((flag) => flag.id !== 'none' && (flagCounts[flag.id] || 0) > 0)
+    ), [flagCounts]);
+    const activeListLabel = useMemo(() => {
+        if (!isFlagView) return activeList.name;
+        return `${(activeFlagColor || 'flag').toUpperCase()} FLAGS`;
+    }, [isFlagView, activeList.name, activeFlagColor]);
 
     const effectiveFilterColor = useMemo(() => {
         if (filterColor === 'all') return 'all';
         return globalFlagColors.has(filterColor) ? filterColor : 'all';
     }, [filterColor, globalFlagColors]);
+
+    useEffect(() => {
+        if (isFlagView) {
+            if (activeFlagColor && globalFlagColors.has(activeFlagColor)) return;
+            const fallbackId = watchlists[0]?.id || 'default';
+            setActiveListId(fallbackId);
+            return;
+        }
+        const exists = watchlists.some((list) => list.id === activeListId);
+        if (!exists) {
+            const fallbackId = watchlists[0]?.id || 'default';
+            setActiveListId(fallbackId);
+        }
+    }, [activeListId, activeFlagColor, globalFlagColors, isFlagView, setActiveListId, watchlists]);
 
     const handleCreateList = () => {
         const name = prompt('Enter Watchlist Name:');
@@ -166,6 +223,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     };
 
     const handleDeleteList = () => {
+        if (isFlagView) return;
         if (watchlists.length <= 1) return;
         if (confirm(`Delete ${activeList.name}?`)) {
             const next = watchlists.filter(l => l.id !== activeListId);
@@ -175,6 +233,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     };
 
     const handleAddSymbol = (symbolObj) => {
+        if (isFlagView) return;
         if (!symbolObj) return;
         setWatchlists(prev => prev.map(l => {
             if (l.id === activeListId) {
@@ -189,6 +248,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     };
 
     const handleBulkAdd = (text) => {
+        if (isFlagView) return;
         const lines = text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
         const newItems = [];
 
@@ -225,13 +285,22 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     };
 
     const handleRemoveSymbol = useCallback((symbol) => {
+        if (isFlagView) {
+            setSymbolColors((prev) => {
+                if (!prev[symbol]) return prev;
+                const next = { ...prev };
+                delete next[symbol];
+                return next;
+            });
+            return;
+        }
         setWatchlists(prev => prev.map(l => {
             if (l.id === activeListId) {
                 return { ...l, symbols: l.symbols.filter(s => s.symbol !== symbol) };
             }
             return l;
         }));
-    }, [activeListId]);
+    }, [activeListId, isFlagView, setSymbolColors]);
 
     const handleSetColor = useCallback((symbol, color) => {
         setSymbolColors((prev) => {
@@ -264,7 +333,34 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         }).slice(0, 8);
     }, [searchQuery, allCompanies]);
 
+    const symbolCatalog = useMemo(() => {
+        const map = new Map();
+        allCompanies.forEach((company) => {
+            map.set(company.symbol, company);
+        });
+        watchlists.forEach((list) => {
+            list.symbols.forEach((entry) => {
+                if (entry?.isHeader || !entry?.symbol) return;
+                if (map.has(entry.symbol)) return;
+                map.set(entry.symbol, { symbol: entry.symbol, name: entry.name || entry.symbol });
+            });
+        });
+        return map;
+    }, [allCompanies, watchlists]);
+
+    const flagViewEntries = useMemo(() => {
+        if (!isFlagView || !activeFlagColor) return [];
+        return Object.entries(symbolColors)
+            .filter(([_, color]) => color === activeFlagColor)
+            .map(([symbol]) => ({
+                symbolEntry: symbolCatalog.get(symbol) || { symbol, name: symbol },
+                originalIndex: -1
+            }))
+            .sort((a, b) => a.symbolEntry.symbol.localeCompare(b.symbolEntry.symbol));
+    }, [activeFlagColor, isFlagView, symbolCatalog, symbolColors]);
+
     const visibleEntries = useMemo(() => {
+        if (isFlagView) return flagViewEntries;
         return activeList.symbols.reduce((acc, symbolEntry, originalIndex) => {
             if (effectiveFilterColor !== 'all') {
                 if (symbolEntry.isHeader) return acc;
@@ -273,7 +369,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
             acc.push({ symbolEntry, originalIndex });
             return acc;
         }, []);
-    }, [activeList.symbols, effectiveFilterColor, symbolColors]);
+    }, [activeList.symbols, effectiveFilterColor, flagViewEntries, isFlagView, symbolColors]);
 
     const handleRemoveAtIndex = useCallback((targetIndex) => {
         setWatchlists(prev => prev.map(l => {
@@ -305,9 +401,10 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 onSymbolSelect={handleSymbolSelect}
                 onRemoveSymbol={handleRemoveSymbol}
                 onSetSymbolColor={handleSetColor}
+                removeLabel={isFlagView ? 'CLEAR FLAG' : 'REMOVE FROM LIST'}
             />
         );
-    }, [config, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, symbolColors]);
+    }, [config, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, isFlagView, symbolColors]);
 
     return (
         <div
@@ -328,7 +425,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                         className="flex items-center gap-2 hover:text-white transition-colors group"
                     >
                         <LayoutPanelLeft size={12} className="text-white/40 opacity-80" />
-                        <span className="text-[11px] font-black tracking-widest uppercase truncate max-w-[120px]">{activeList.name}</span>
+                        <span className="text-[11px] font-black tracking-widest uppercase truncate max-w-[140px]">{activeListLabel}</span>
                         <ChevronDown size={10} className={`opacity-30 group-hover:opacity-100 transition-transform ${isListSelectorOpen ? 'rotate-180' : ''}`} />
                     </button>
 
@@ -346,6 +443,32 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                                         {l.id === activeListId && <Check size={10} />}
                                     </button>
                                 ))}
+                                {flagSelectorItems.length > 0 && (
+                                    <>
+                                        <div className="h-[1px] bg-white/5 my-1" />
+                                        <div className="px-2 py-1 text-[8px] font-black text-white/20 uppercase tracking-[0.16em]">Flagged</div>
+                                        {flagSelectorItems.map((flag) => {
+                                            const flagId = `${FLAG_VIEW_PREFIX}${flag.id}`;
+                                            const isActive = activeListId === flagId;
+                                            return (
+                                                <button
+                                                    key={flagId}
+                                                    onClick={() => { setActiveListId(flagId); setIsListSelectorOpen(false); }}
+                                                    className={`w-full text-left px-3 py-2 rounded-[4px] text-[10px] font-black tracking-widest uppercase flex items-center justify-between ${isActive ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5 hover:text-white'}`}
+                                                >
+                                                    <span className="flex items-center gap-2 min-w-0">
+                                                        <span
+                                                            className="w-[8px] h-[12px] shrink-0"
+                                                            style={{ backgroundColor: flag.hex, clipPath: 'polygon(0 0, 100% 0, 70% 50%, 100% 100%, 0 100%)' }}
+                                                        />
+                                                        <span className="truncate">{flag.id} FLAGS</span>
+                                                    </span>
+                                                    <span className="text-[9px] opacity-70">{flagCounts[flag.id]}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </>
+                                )}
                                 <div className="h-[1px] bg-white/5 my-1" />
                                 <button
                                     onClick={() => { handleCreateList(); setIsListSelectorOpen(false); }}
@@ -359,7 +482,11 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 </div>
 
                 <div className="flex items-center gap-1">
-                    <button onClick={() => setIsAdding(true)} className="p-1.5 rounded hover:bg-white/10 text-white/30 hover:text-white transition-all">
+                    <button
+                        onClick={() => { if (!isFlagView) setIsAdding(true); }}
+                        disabled={isFlagView}
+                        className={`p-1.5 rounded transition-all ${isFlagView ? 'text-white/10 cursor-not-allowed' : 'hover:bg-white/10 text-white/30 hover:text-white'}`}
+                    >
                         <Plus size={14} />
                     </button>
                     <button className="p-1.5 rounded hover:bg-white/10 text-white/30 hover:text-white transition-all">
@@ -408,7 +535,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 </div>
             </div>
             {/* Flag Filters Row */}
-            {globalFlagColors.size > 0 && (
+            {!isFlagView && globalFlagColors.size > 0 && (
                 <div className="px-3 py-1.5 flex items-center gap-1.5 border-b border-white/5 bg-white/[0.02]">
                     <button
                         onClick={() => setFilterColor('all')}
@@ -436,7 +563,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
 
             {/* Symbols Area */}
             <div className="flex-1 min-h-0 flex flex-col py-1">
-                {isAdding && (
+                {isAdding && !isFlagView && (
                     <div className="px-2 mb-2">
                         <div className="relative">
                             <input
@@ -500,15 +627,19 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                         {config.showChange && <span className="w-16 text-right">Chg%</span>}
                     </div>
                     <div className="flex-1 min-h-0">
-                        {activeList.symbols.length === 0 ? (
+                        {visibleEntries.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-20 opacity-20 select-none">
-                                <Plus size={24} className="mb-2" />
-                                <span className="text-[9px] font-black tracking-[0.2em]">EMPTY LIST</span>
-                            </div>
-                        ) : visibleEntries.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-20 opacity-20 select-none">
-                                <Flag size={20} className="mb-2" />
-                                <span className="text-[9px] font-black tracking-[0.2em]">NO MATCHING FLAGS</span>
+                                {isFlagView ? (
+                                    <>
+                                        <Flag size={20} className="mb-2" />
+                                        <span className="text-[9px] font-black tracking-[0.2em]">NO SYMBOLS WITH {(activeFlagColor || 'FLAG').toUpperCase()} FLAG</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        {activeList.symbols.length === 0 ? <Plus size={24} className="mb-2" /> : <Flag size={20} className="mb-2" />}
+                                        <span className="text-[9px] font-black tracking-[0.2em]">{activeList.symbols.length === 0 ? 'EMPTY LIST' : 'NO MATCHING FLAGS'}</span>
+                                    </>
+                                )}
                             </div>
                         ) : (
                             <Virtuoso
@@ -531,7 +662,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     );
 });
 
-const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSymbol, onSetSymbolColor }) => {
+const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSymbol, onSetSymbolColor, removeLabel = 'REMOVE FROM LIST' }) => {
     const cleaned = cleanSymbol(s.symbol);
     useLiveVersion(); // subscribe to global tick for price refresh
     const [hasLogo, setHasLogo] = useState(() => !MISSING_SYMBOL_LOGOS.has(s.symbol));
@@ -627,7 +758,7 @@ const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSy
                     <button
                         onClick={handleRemove}
                         className="p-1.5 hover:bg-red-500/20 text-white/30 hover:text-red-500 rounded-full transition-all"
-                        title="REMOVE FROM LIST"
+                        title={removeLabel}
                     >
                         <Trash2 size={12} />
                     </button>

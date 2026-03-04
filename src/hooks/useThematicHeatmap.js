@@ -53,42 +53,62 @@ export function useThematicHeatmap(thematicMap, hierarchy, options = {}) {
     );
 
     const themeMappings = useMemo(() => {
-        const themeToSymbols = new Map();
-        const allSymbolsSet = new Set();
-        if (!thematicMap || !hierarchy) return { themeToSymbols, allSymbols: [] };
+        if (!thematicMap || !hierarchy) return { themeToSymbols: new Map(), allSymbols: [] };
 
-        thematicMap.forEach((block) => {
-            block.themes.forEach((theme) => {
-                const symbols = new Set();
-                if (theme.industries) {
-                    theme.industries.forEach((indName) => {
-                        for (const sector in hierarchy) {
-                            if (hierarchy[sector][indName]) {
-                                hierarchy[sector][indName].forEach((c) => {
-                                    if (c.symbol) {
-                                        symbols.add(c.symbol);
-                                        allSymbolsSet.add(c.symbol);
-                                    }
-                                });
-                                break;
-                            }
-                        }
-                    });
-                }
-                if (theme.symbols) {
-                    theme.symbols.forEach((symbol) => {
-                        symbols.add(symbol);
-                        allSymbolsSet.add(symbol);
-                    });
-                }
-                themeToSymbols.set(theme.name, Array.from(symbols));
+        const industryMap = {};
+        Object.values(hierarchy).forEach((industries) => {
+            if (!industries) return;
+            Object.entries(industries).forEach(([indName, companies]) => {
+                industryMap[indName] = companies;
             });
         });
 
-        return {
-            themeToSymbols,
-            allSymbols: Array.from(allSymbolsSet)
-        };
+        const tToS = new Map(); // Use Map for themeToSymbols
+        const assigned = new Set();
+        const allSymsSet = new Set();
+
+        // Pass 1: Explicit symbols priority
+        thematicMap.forEach((block) => {
+            block.themes.forEach((theme) => {
+                if (!tToS.has(theme.name)) tToS.set(theme.name, new Set());
+                if (theme.symbols) {
+                    theme.symbols.forEach((sym) => {
+                        if (!assigned.has(sym)) {
+                            assigned.add(sym);
+                            tToS.get(theme.name).add(sym);
+                            allSymsSet.add(sym);
+                        }
+                    });
+                }
+            });
+        });
+
+        // Pass 2: Industry symbols
+        thematicMap.forEach((block) => {
+            block.themes.forEach((theme) => {
+                if (!tToS.has(theme.name)) tToS.set(theme.name, new Set()); // Ensure theme exists even if no explicit symbols
+                if (theme.industries) {
+                    theme.industries.forEach((ind) => {
+                        const companies = industryMap[ind] || [];
+                        companies.forEach((c) => {
+                            if (c?.symbol && !assigned.has(c.symbol)) {
+                                assigned.add(c.symbol);
+                                tToS.get(theme.name).add(c.symbol);
+                                allSymsSet.add(c.symbol);
+                            }
+                        });
+                    });
+                }
+            });
+        });
+
+        // Convert sets to arrays for the final Map
+        const finalThemeToSymbols = new Map();
+        tToS.forEach((set, name) => {
+            finalThemeToSymbols.set(name, Array.from(set));
+        });
+
+        return { themeToSymbols: finalThemeToSymbols, allSymbols: Array.from(allSymsSet) };
     }, [thematicMap, hierarchy]);
 
     const { themeToSymbols, allSymbols } = themeMappings;

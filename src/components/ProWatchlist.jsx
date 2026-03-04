@@ -45,8 +45,10 @@ const WatchlistScroller = React.forwardRef(({ className = '', ...props }, ref) =
     />
 ));
 WatchlistScroller.displayName = 'WatchlistScroller';
+const VIRTUOSO_COMPONENTS = Object.freeze({ Scroller: WatchlistScroller });
 
 const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
+    const liveVersion = useLiveVersion();
     const [watchlists, _setWatchlists] = useState(() => {
         const saved = localStorage.getItem('tt_pro_watchlists');
         return saved ? JSON.parse(saved) : [{ id: 'default', name: 'WATCHLIST', symbols: [] }];
@@ -567,6 +569,8 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 ) : (
                     <WatchlistItem
                         s={symbolEntry}
+                        liveVersion={liveVersion}
+                        rowIndex={originalIndex}
                         symbolColor={symbolColors[symbolEntry.symbol] || 'none'}
                         config={config}
                         onSymbolSelect={handleSymbolSelect}
@@ -574,15 +578,14 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                         onSetSymbolColor={handleSetColor}
                         removeLabel={isFlagView ? 'CLEAR FLAG' : 'REMOVE FROM LIST'}
                         showReorder={showReorder}
-                        onMoveUp={() => handleMoveAtIndex(originalIndex, -1)}
-                        onMoveDown={() => handleMoveAtIndex(originalIndex, 1)}
+                        onMoveAtIndex={handleMoveAtIndex}
                         canMoveUp={canMoveUp}
                         canMoveDown={canMoveDown}
                     />
                 )}
             </div>
         );
-    }, [activeList.symbols.length, clearDragState, config, dragOverState.after, dragOverState.index, handleMoveAtIndex, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, isFlagView, moveSymbolAtIndex, symbolColors, updateAutoScroll]);
+    }, [activeList.symbols.length, clearDragState, config, dragOverState.after, dragOverState.index, handleMoveAtIndex, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, isFlagView, liveVersion, moveSymbolAtIndex, symbolColors, updateAutoScroll]);
 
     return (
         <div
@@ -838,7 +841,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                                 data={visibleEntries}
                                 overscan={320}
                                 style={{ height: '100%' }}
-                                components={{ Scroller: WatchlistScroller }}
+                                components={VIRTUOSO_COMPONENTS}
                                 computeItemKey={(index, { symbolEntry }) => (
                                     symbolEntry.isHeader
                                         ? symbolEntry.id || `header-${index}`
@@ -856,6 +859,8 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
 
 const WatchlistItem = memo(({
     s,
+    liveVersion,
+    rowIndex,
     symbolColor,
     config,
     onSymbolSelect,
@@ -863,13 +868,13 @@ const WatchlistItem = memo(({
     onSetSymbolColor,
     removeLabel = 'REMOVE FROM LIST',
     showReorder = false,
-    onMoveUp,
-    onMoveDown,
+    onMoveAtIndex,
     canMoveUp = false,
     canMoveDown = false
 }) => {
     const cleaned = cleanSymbol(s.symbol);
-    useLiveVersion(); // subscribe to global tick for price refresh
+    // Parent subscribes once and passes version down to avoid per-row subscriptions while scrolling.
+    void liveVersion;
     const [hasLogo, setHasLogo] = useState(() => !MISSING_SYMBOL_LOGOS.has(s.symbol));
 
     // Read directly from cache — no per-item subscription overhead
@@ -881,6 +886,16 @@ const WatchlistItem = memo(({
     const handleSelect = useCallback(() => onSymbolSelect(s), [s, onSymbolSelect]);
     const handleRemove = useCallback((e) => { e.stopPropagation(); onRemoveSymbol(s.symbol); }, [s.symbol, onRemoveSymbol]);
     const handleColor = useCallback((colorId, e) => { e.stopPropagation(); onSetSymbolColor(s.symbol, colorId); }, [s.symbol, onSetSymbolColor]);
+    const handleMoveUp = useCallback((e) => {
+        e.stopPropagation();
+        if (!canMoveUp) return;
+        onMoveAtIndex?.(rowIndex, -1);
+    }, [canMoveUp, onMoveAtIndex, rowIndex]);
+    const handleMoveDown = useCallback((e) => {
+        e.stopPropagation();
+        if (!canMoveDown) return;
+        onMoveAtIndex?.(rowIndex, 1);
+    }, [canMoveDown, onMoveAtIndex, rowIndex]);
     const handleLogoError = useCallback((e) => {
         MISSING_SYMBOL_LOGOS.add(s.symbol);
         e.currentTarget.style.display = 'none';
@@ -962,7 +977,7 @@ const WatchlistItem = memo(({
                     {showReorder && (
                         <div className="flex items-center gap-0.5 border-r border-white/5 pr-1 mr-0.5">
                             <button
-                                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+                                onClick={handleMoveUp}
                                 disabled={!canMoveUp}
                                 className={`p-1 rounded-full transition-all ${canMoveUp ? 'hover:bg-white/10 text-white/35 hover:text-white' : 'text-white/10 cursor-not-allowed'}`}
                                 title="Move Up"
@@ -970,7 +985,7 @@ const WatchlistItem = memo(({
                                 <ChevronUp size={12} />
                             </button>
                             <button
-                                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+                                onClick={handleMoveDown}
                                 disabled={!canMoveDown}
                                 className={`p-1 rounded-full transition-all ${canMoveDown ? 'hover:bg-white/10 text-white/35 hover:text-white' : 'text-white/10 cursor-not-allowed'}`}
                                 title="Move Down"
@@ -991,6 +1006,8 @@ const WatchlistItem = memo(({
         </div>
     );
 });
+ProWatchlist.displayName = 'ProWatchlist';
+WatchlistItem.displayName = 'WatchlistItem';
 
 const SleekSwitch = ({ active, onClick }) => (
     <button

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
+import { THEMATIC_MAP } from '../data/thematicMap';
 import { Search, Plus, Play, Info, ListTree, ChevronRight, Check, Copy, LayoutGrid, RotateCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { m, AnimatePresence } from 'framer-motion';
@@ -46,6 +47,61 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
     const [selectedWatchlistId, setSelectedWatchlistId] = useState(() => localStorage.getItem('preferred_mapper_watchlist') || '');
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [dropdownSearch, setDropdownSearch] = useState('');
+
+    // Build reverse lookup: symbol → { theme, block } from THEMATIC_MAP
+    // Strictly one-theme-per-symbol based on priority
+    const symbolToTheme = useMemo(() => {
+        const map = new Map();
+        const assigned = new Set();
+
+        // Build industry → companies index from hierarchy
+        const industryCompanies = {};
+        if (hierarchy) {
+            Object.values(hierarchy).forEach(industries => {
+                if (!industries) return;
+                Object.entries(industries).forEach(([indName, companies]) => {
+                    if (Array.isArray(companies)) {
+                        industryCompanies[indName] = companies;
+                    }
+                });
+            });
+        }
+
+        // PASS 1: Explicit symbols (Hand-curated priority)
+        THEMATIC_MAP.forEach(block => {
+            block.themes.forEach(theme => {
+                const label = `${theme.name} [${block.title}]`;
+                if (theme.symbols) {
+                    theme.symbols.forEach(sym => {
+                        if (!assigned.has(sym)) {
+                            assigned.add(sym);
+                            map.set(sym, { theme: theme.name, block: block.title, label });
+                        }
+                    });
+                }
+            });
+        });
+
+        // PASS 2: Industry mapping
+        THEMATIC_MAP.forEach(block => {
+            block.themes.forEach(theme => {
+                const label = `${theme.name} [${block.title}]`;
+                if (theme.industries) {
+                    theme.industries.forEach(ind => {
+                        const cos = industryCompanies[ind] || [];
+                        cos.forEach(c => {
+                            if (c?.symbol && !assigned.has(c.symbol)) {
+                                assigned.add(c.symbol);
+                                map.set(c.symbol, { theme: theme.name, block: block.title, label });
+                            }
+                        });
+                    });
+                }
+            });
+        });
+
+        return map;
+    }, [hierarchy]);
 
     // Create a mapping index for fast lookups
     const symbolMap = useMemo(() => {
@@ -95,12 +151,14 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
             }
         });
 
+        // Group by THEMATIC_MAP theme instead of raw industry
         const groups = {};
         mapped.forEach(item => {
-            const ind = item.industry || 'Uncategorized';
-            if (!groups[ind]) groups[ind] = [];
-            if (!groups[ind].find(c => c.symbol === item.symbol)) {
-                groups[ind].push(item);
+            const themeInfo = symbolToTheme.get(item.symbol);
+            const groupLabel = themeInfo ? themeInfo.label : `Uncategorized [${item.industry || 'Unknown'}]`;
+            if (!groups[groupLabel]) groups[groupLabel] = [];
+            if (!groups[groupLabel].find(c => c.symbol === item.symbol)) {
+                groups[groupLabel].push(item);
             }
         });
 
@@ -363,7 +421,9 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
                                                                 <span className="text-[9px] font-black tracking-widest text-[var(--text-main)] transition-colors group-hover:text-[var(--accent-primary)]">{s.name}</span>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-[7px] font-black px-1.5 py-0.5 bg-[var(--ui-muted)]/20 rounded text-[var(--accent-primary)]">{s.symbol}</span>
-                                                                    <span className="text-[7px] font-bold text-[var(--text-muted)] uppercase tracking-tight opacity-40">{s.industry}</span>
+                                                                    <span className="text-[7px] font-bold text-[var(--text-muted)] uppercase tracking-tight opacity-40">
+                                                                        {symbolToTheme.get(s.symbol)?.theme || s.industry}
+                                                                    </span>
                                                                 </div>
                                                             </div>
                                                         </div>

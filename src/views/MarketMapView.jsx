@@ -71,38 +71,51 @@ const buildSymbolNameMap = (industryMap) => {
 
 const buildThemeCompaniesMap = (industryMap, symbolNameMap) => {
     const next = {};
+    // Global set — once a symbol is assigned to a theme, it won't appear in any other.
+    const assigned = new Set();
 
+    // PASS 1: Explicit symbols get priority (hand-curated = most intentional).
+    // First explicit mention wins across the entire map.
     THEMATIC_MAP.forEach((block) => {
         block.themes.forEach((theme) => {
-            const symbolToName = new Map();
-
-            if (theme.industries) {
-                theme.industries.forEach((industry) => {
-                    const companies = industryMap[industry];
-                    if (!Array.isArray(companies)) return;
-                    companies.forEach((company) => {
-                        if (company?.symbol && !symbolToName.has(company.symbol)) {
-                            symbolToName.set(company.symbol, company.name || company.symbol);
-                        }
-                    });
-                });
-            }
-
-            if (theme.symbols) {
-                theme.symbols.forEach((symbol) => {
-                    if (!symbolToName.has(symbol)) {
-                        symbolToName.set(symbol, symbolNameMap.get(symbol) || symbol);
-                    }
-                });
-            }
-
-            next[theme.name] = Array.from(symbolToName.entries())
-                .map(([symbol, name]) => ({ symbol, name }))
-                .sort((a, b) => a.name.localeCompare(b.name));
+            if (!theme.symbols) return;
+            if (!next[theme.name]) next[theme.name] = new Map();
+            theme.symbols.forEach((symbol) => {
+                if (assigned.has(symbol)) return;
+                assigned.add(symbol);
+                next[theme.name].set(symbol, symbolNameMap.get(symbol) || symbol);
+            });
         });
     });
 
-    return next;
+    // PASS 2: Industry-based companies fill remaining slots.
+    // Only added if the symbol hasn't already been claimed by an explicit listing
+    // or by an earlier industry theme.
+    THEMATIC_MAP.forEach((block) => {
+        block.themes.forEach((theme) => {
+            if (!theme.industries) return;
+            if (!next[theme.name]) next[theme.name] = new Map();
+            theme.industries.forEach((industry) => {
+                const companies = industryMap[industry];
+                if (!Array.isArray(companies)) return;
+                companies.forEach((company) => {
+                    if (!company?.symbol) return;
+                    if (assigned.has(company.symbol)) return;
+                    assigned.add(company.symbol);
+                    next[theme.name].set(company.symbol, company.name || company.symbol);
+                });
+            });
+        });
+    });
+
+    // Convert Maps to sorted arrays
+    const result = {};
+    for (const [themeName, symMap] of Object.entries(next)) {
+        result[themeName] = Array.from(symMap.entries())
+            .map(([symbol, name]) => ({ symbol, name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return result;
 };
 
 const buildNseThemeCompaniesMap = (allThemeCompaniesMap) => {
@@ -1069,7 +1082,7 @@ export const MarketMapView = ({ hierarchy }) => {
                                                     {result.symbol}
                                                 </span>
                                                 <span className="text-[7px] font-black text-[var(--accent-primary)]/80 uppercase tracking-tighter shrink-0">
-                                                    {result.groupTitle.split(' ')[0]}
+                                                    {result.themeName}
                                                 </span>
                                             </div>
                                             <span className="text-[7px] font-bold text-white/30 uppercase truncate w-full text-left">

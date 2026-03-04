@@ -126,20 +126,36 @@ const FinvizChart = React.memo(function FinvizChart({
 
         return (cachedTarget && cachedTarget.length > 0) ? cachedTarget : (series || []);
     }, [cleaned, apiInterval, chartVersion, series]);
+    const hasSeriesData = (activeSeries?.length || 0) > 1;
 
     const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
-    const measuredRef = useRef(false);
+    const [isMeasured, setIsMeasured] = useState(false);
     useEffect(() => {
-        if (!containerRef.current) return;
+        const node = containerRef.current;
+        if (!node) return;
+
+        const applySize = (nextWidth, nextHeight) => {
+            if (nextWidth <= 0 || nextHeight <= 0) return;
+            setIsMeasured(true);
+            setDimensions((prev) => (
+                prev.width === nextWidth && prev.height === nextHeight
+                    ? prev
+                    : { width: nextWidth, height: nextHeight }
+            ));
+        };
+
+        const rect = node.getBoundingClientRect();
+        applySize(rect.width, rect.height);
+
         const obs = new ResizeObserver((entries) => {
             if (entries[0]) {
                 const { width, height } = entries[0].contentRect;
-                if (width > 0 && height > 0) { measuredRef.current = true; setDimensions({ width, height }); }
+                applySize(width, height);
             }
         });
-        obs.observe(containerRef.current);
+        obs.observe(node);
         return () => obs.disconnect();
-    }, []);
+    }, [hasSeriesData, symbol, timeframe, height]);
 
     const rafRef = useRef(null);
 
@@ -188,11 +204,11 @@ const FinvizChart = React.memo(function FinvizChart({
         const allPoints = ordered
             .map(p => ({
                 time: p.time,
-                open: p.open,
-                high: p.high,
-                low: p.low,
+                open: p.open ?? p.close,
+                high: p.high ?? p.close,
+                low: p.low ?? p.close,
                 close: p.close,
-                volume: p.volume,
+                volume: p.volume ?? 0,
             }))
             .filter(p => !isNaN(p.time) && p.time > 0 && isFinite(p.close) && p.close > 0);
 
@@ -762,7 +778,7 @@ const FinvizChart = React.memo(function FinvizChart({
                         className={`flex-1 relative cursor-crosshair ${disabled ? 'touch-auto' : 'touch-pan-y'}`}
                         onMouseMove={handleMouseMove}
                         onMouseLeave={handleMouseLeave}
-                        style={{ opacity: measuredRef.current ? 1 : 0 }}
+                        style={{ opacity: isMeasured ? 1 : 0 }}
                     >
                         <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none" style={{ shapeRendering: 'crispEdges' }}>
 

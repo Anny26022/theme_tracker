@@ -120,7 +120,10 @@ export function MarketDataProvider({ children }) {
     const getMissingChartSymbols = useCallback((interval, symbols = []) => (
         (symbols || []).filter((symbol) => {
             const cached = getCachedComparisonSeries(symbol, interval, { silent: true });
-            return !(Array.isArray(cached) && cached.length > 1);
+            if (!Array.isArray(cached) || cached.length <= 1) return true;
+            const first = cached[0];
+            const hasOhlc = Number.isFinite(first?.open) && Number.isFinite(first?.high) && Number.isFinite(first?.low) && Number.isFinite(first?.close);
+            return !hasOhlc;
         })
     ), []);
 

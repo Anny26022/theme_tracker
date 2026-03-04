@@ -275,6 +275,7 @@ const ProChartModal = ({
     const hasMa = (type, period) => maConfig.some(m => m.type === type && m.period === period);
     const [activeChartIndex, setActiveChartIndex] = useState(0);
     const currentChart = chartStates[activeChartIndex] || chartStates[0];
+    const [isHeaderLogoVisible, setIsHeaderLogoVisible] = useState(true);
     const activeChartIndexRef = useRef(activeChartIndex);
     const syncSymbolRef = useRef(syncOptions.symbol);
     const onSymbolChangeRef = useRef(onSymbolChange);
@@ -420,6 +421,10 @@ const ProChartModal = ({
     let changePct = perf?.changePct ?? 0;
     let change = perf?.close ? perf.close - perf.close / (1 + changePct / 100) : 0;
     if (currentChart.timeframe === '1D' && liveData.changePct !== null) { change = liveData.change ?? 0; changePct = liveData.changePct; }
+
+    useEffect(() => {
+        setIsHeaderLogoVisible(true);
+    }, [currentChart.symbol]);
 
     const prevOpenRef = useRef(false);
     useEffect(() => {
@@ -592,14 +597,17 @@ const ProChartModal = ({
                     {layoutId === '1' && (
                         <>
                             <div className="w-7 h-7 rounded bg-white/5 flex items-center justify-center border border-white/5 p-1">
-                                <img
-                                    src={`https://images.dhan.co/symbol/${currentChart.symbol}.png`}
-                                    alt=""
-                                    className="w-full h-full object-contain brightness-110"
-                                    onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                                />
-                                <div className="hidden w-full h-full items-center justify-center">
-                                    <span className="text-[10px] font-black text-[var(--accent-primary)]">{currentChart.symbol.charAt(0)}</span>
+                                {isHeaderLogoVisible && (
+                                    <img
+                                        src={`https://images.dhan.co/symbol/${currentChart.symbol}.png`}
+                                        alt=""
+                                        className="w-full h-full object-contain brightness-110"
+                                        onLoad={() => setIsHeaderLogoVisible(true)}
+                                        onError={() => setIsHeaderLogoVisible(false)}
+                                    />
+                                )}
+                                <div className={`${isHeaderLogoVisible ? 'hidden' : 'flex'} w-full h-full items-center justify-center`}>
+                                    <span className="text-[10px] font-black text-[var(--accent-primary)]">{(currentChart.symbol || '?').charAt(0)}</span>
                                 </div>
                             </div>
                             <div className="flex flex-col -space-y-1">

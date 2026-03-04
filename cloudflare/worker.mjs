@@ -62,11 +62,13 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
-const WORKER_BUILD_ID = '2026-03-02-005';
+const WORKER_BUILD_ID = '2026-03-04-201';
 const DEFAULT_SNAPSHOT_SOURCE_URL = 'https://24e8e3a97bab753a1a1d82e0b7a5b283.r2.cloudflarestorage.com/nexusmap/data.json';
 const REFRESH_STATUS_KEY = 'snapshots/system/refresh-status.json';
+const REFRESH_PROGRESS_KEY = 'snapshots/system/refresh-progress.json';
 
 let cachedDecryptKey = null;
+let cpuBudgetRemaining = 8000; // ~8ms CPU time buffer
 let lastRefreshState = {
     runId: null,
     startedAt: null,
@@ -95,6 +97,31 @@ async function readRefreshStatus(env) {
     } catch {
         return null;
     }
+}
+
+async function writeRefreshProgress(env, progress) {
+    if (!env?.NSE_SNAPSHOTS?.put) return;
+    try {
+        await putSnapshotObject(env, REFRESH_PROGRESS_KEY, progress, { gzip: false, cacheControl: 'no-store' });
+    } catch (error) {
+        console.error('[Refresh Progress] write failed', error);
+    }
+}
+
+async function readRefreshProgress(env) {
+    if (!env?.NSE_SNAPSHOTS?.get) return null;
+    try {
+        const object = await env.NSE_SNAPSHOTS.get(REFRESH_PROGRESS_KEY);
+        if (!object) return null;
+        const text = await object.text();
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function getNoStoreHeaders() {
@@ -581,6 +608,12 @@ async function putSnapshotObject(env, key, payload, { gzip = true, cacheControl 
 }
 
 async function refreshNseSnapshots(env) {
+    const existingMeta = await env.NSE_SNAPSHOTS.get(NSE_META_KEY);
+    if (existingMeta) {
+        console.log('[NSE Snapshot] Already exists, skipping');
+        return;
+    }
+
     let payload;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort('timeout'), 120_000);
@@ -669,6 +702,7 @@ async function runRefreshPipeline(env) {
         stages.nse = { status: 'error', startedAt: stages.nse?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[NSE Snapshot] refresh failed', error);
     }
+
     try {
         stages.intervals = { status: 'running', startedAt: new Date().toISOString() };
         await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
@@ -680,6 +714,7 @@ async function runRefreshPipeline(env) {
         stages.intervals = { status: 'error', startedAt: stages.intervals?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[Interval Snapshot] refresh failed', error);
     }
+
     try {
         stages.prices = { status: 'running', startedAt: new Date().toISOString() };
         await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
@@ -691,6 +726,7 @@ async function runRefreshPipeline(env) {
         stages.prices = { status: 'error', startedAt: stages.prices?.startedAt || null, finishedAt: new Date().toISOString() };
         console.error('[Price Snapshot] refresh failed', error);
     }
+
     try {
         stages.charts = { status: 'running', startedAt: new Date().toISOString() };
         await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages });
@@ -715,8 +751,177 @@ async function runRefreshPipeline(env) {
     return result;
 }
 
+async function checkAndFixStuckStages(env) {
+    const status = await readRefreshStatus(env);
+    if (!status || status.status !== 'running') return status;
+    
+    const stuckTimeout = 5 * 60 * 1000;
+    const stages = status.stages || {};
+    const now = Date.now();
+    const fixedStages = { ...stages };
+    let hasStuck = false;
+    
+    for (const [key, stage] of Object.entries(stages)) {
+        if (stage.status === 'running' && stage.startedAt) {
+            const startTime = new Date(stage.startedAt).getTime();
+            if (now - startTime > stuckTimeout) {
+                console.log(`[Incremental] Detected stuck stage: ${key}, resetting`);
+                fixedStages[key] = { status: 'pending', startedAt: null, finishedAt: null };
+                hasStuck = true;
+            }
+        }
+    }
+    
+    if (hasStuck) {
+        await writeRefreshStatus(env, {
+            ...status,
+            status: 'partial',
+            stages: fixedStages,
+        });
+        return { ...status, stages: fixedStages };
+    }
+    
+    return status;
+}
+
+async function runIncrementalRefresh(env) {
+    const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const startedAt = new Date().toISOString();
+    const errors = {};
+
+    const status = await checkAndFixStuckStages(env);
+    console.log('[Incremental] Status after fix:', JSON.stringify(status));
+    const lastRunId = status?.runId;
+    const stages = status?.stages || {};
+    const currentErrors = status?.errors || {};
+
+    const isNsePending = !stages.nse || stages.nse.status !== 'success';
+    const isIntervalsPending = !stages.intervals || stages.intervals.status !== 'success';
+    const isPricesPending = !stages.prices || stages.prices.status !== 'success';
+    const isChartsPending = !stages.charts || stages.charts.status !== 'success';
+
+    console.log('[Incremental] isNsePending:', isNsePending, 'isIntervalsPending:', isIntervalsPending, 'isPricesPending:', isPricesPending, 'isChartsPending:', isChartsPending, 'status.status:', status.status);
+
+    const allComplete = !isNsePending && !isIntervalsPending && !isPricesPending && !isChartsPending;
+
+    if (allComplete || !lastRunId || status.status === 'success' || status.status === 'error') {
+        await writeRefreshStatus(env, {
+            runId,
+            startedAt,
+            finishedAt: null,
+            status: 'running',
+            errors: {},
+            stages: {},
+        });
+    } else {
+        await writeRefreshStatus(env, {
+            ...status,
+            runId,
+        });
+    }
+
+    const currentStages = { ...stages };
+
+    console.log('[Incremental] currentStages:', JSON.stringify(currentStages));
+
+    if (isNsePending && !currentStages.nse?.startedAt) {
+        try {
+            currentStages.nse = { status: 'running', startedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages: currentStages });
+            await refreshNseSnapshots(env);
+            currentStages.nse = { status: 'success', startedAt: currentStages.nse.startedAt, finishedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors, ok: false, stage: 'nse', stages: currentStages };
+        } catch (error) {
+            errors.nse = error?.message || 'NSE snapshot failed';
+            currentStages.nse = { status: 'error', startedAt: currentStages.nse?.startedAt || null, finishedAt: new Date().toISOString() };
+            console.error('[NSE Snapshot] refresh failed', error);
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: new Date().toISOString(), status: 'partial', errors: { ...currentErrors, ...errors }, stages: currentStages });
+            return { runId, startedAt, finishedAt: new Date().toISOString(), errors: { ...currentErrors, ...errors }, ok: false, stage: 'nse', stages: currentStages };
+        }
+    }
+
+    console.log('[Incremental] Checking intervals, isIntervalsPending:', isIntervalsPending, 'startedAt:', currentStages.intervals?.startedAt);
+    if (isIntervalsPending && !currentStages.intervals?.startedAt) {
+        console.log('[Incremental] RUNNING INTERVALS');
+        try {
+            currentStages.intervals = { status: 'running', startedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            await refreshIntervalSnapshots(env);
+            currentStages.intervals = { status: 'success', startedAt: currentStages.intervals.startedAt, finishedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: currentErrors, ok: false, stage: 'intervals', stages: currentStages };
+        } catch (error) {
+            errors.intervals = error?.message || 'Interval snapshot failed';
+            currentStages.intervals = { status: 'error', startedAt: currentStages.intervals?.startedAt || null, finishedAt: new Date().toISOString() };
+            console.error('[Interval Snapshot] refresh failed', error);
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: new Date().toISOString(), status: 'partial', errors: { ...currentErrors, ...errors }, stages: currentStages });
+            return { runId, startedAt, finishedAt: new Date().toISOString(), errors: { ...currentErrors, ...errors }, ok: false, stage: 'intervals', stages: currentStages };
+        }
+    }
+
+    if (isPricesPending && !currentStages.prices?.startedAt) {
+        try {
+            currentStages.prices = { status: 'running', startedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            await refreshPriceSnapshots(env);
+            currentStages.prices = { status: 'success', startedAt: currentStages.prices.startedAt, finishedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: currentErrors, ok: false, stage: 'prices', stages: currentStages };
+        } catch (error) {
+            errors.prices = error?.message || 'Price snapshot failed';
+            currentStages.prices = { status: 'error', startedAt: currentStages.prices?.startedAt || null, finishedAt: new Date().toISOString() };
+            console.error('[Price Snapshot] refresh failed', error);
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: new Date().toISOString(), status: 'partial', errors: { ...currentErrors, ...errors }, stages: currentStages });
+            return { runId, startedAt, finishedAt: new Date().toISOString(), errors: { ...currentErrors, ...errors }, ok: false, stage: 'prices', stages: currentStages };
+        }
+    }
+
+    if (isChartsPending && !currentStages.charts?.startedAt) {
+        try {
+            currentStages.charts = { status: 'running', startedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            await refreshChartSnapshots(env);
+            currentStages.charts = { status: 'success', startedAt: currentStages.charts.startedAt, finishedAt: new Date().toISOString() };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: currentErrors, ok: false, stage: 'charts', stages: currentStages };
+        } catch (error) {
+            errors.charts = error?.message || 'Chart snapshot failed';
+            currentStages.charts = { status: 'error', startedAt: currentStages.charts?.startedAt || null, finishedAt: new Date().toISOString() };
+            console.error('[Chart Snapshot] refresh failed', error);
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: new Date().toISOString(), status: 'partial', errors: { ...currentErrors, ...errors }, stages: currentStages });
+            return { runId, startedAt, finishedAt: new Date().toISOString(), errors: { ...currentErrors, ...errors }, ok: false, stage: 'charts', stages: currentStages };
+        }
+    }
+
+    const finishedAt = new Date().toISOString();
+    const finalStages = {
+        nse: currentStages.nse || { status: 'success' },
+        intervals: currentStages.intervals || { status: 'success' },
+        prices: currentStages.prices || { status: 'success' },
+        charts: currentStages.charts || { status: 'success' },
+    };
+    const isComplete = finalStages.nse?.status === 'success' && finalStages.intervals?.status === 'success' && finalStages.prices?.status === 'success' && finalStages.charts?.status === 'success';
+    const result = { runId, startedAt, finishedAt, errors: { ...currentErrors, ...errors }, ok: isComplete, stages: finalStages };
+    await writeRefreshStatus(env, {
+        runId,
+        startedAt,
+        finishedAt,
+        status: result.ok ? 'success' : 'partial',
+        errors: { ...currentErrors, ...errors },
+        stages: finalStages,
+    });
+    return result;
+}
+
 async function refreshIntervalSnapshots(env) {
     if (!env?.NSE_INTERVAL_SNAPSHOT_ENABLED || String(env.NSE_INTERVAL_SNAPSHOT_ENABLED).toLowerCase() !== 'true') {
+        return;
+    }
+
+    const existingMeta = await env.NSE_SNAPSHOTS.get(INTERVAL_META_KEY);
+    if (existingMeta) {
+        console.log('[Interval Snapshot] Already exists, skipping');
         return;
     }
 
@@ -790,6 +995,8 @@ async function refreshIntervalSnapshots(env) {
                     const bucket = ensureBucket(chunkKey);
                     bucket[sym] = data;
                 });
+
+                await sleep(50);
             }
         };
 
@@ -837,6 +1044,12 @@ async function refreshIntervalSnapshots(env) {
 
 async function refreshPriceSnapshots(env) {
     if (!env?.NSE_PRICE_SNAPSHOT_ENABLED || String(env.NSE_PRICE_SNAPSHOT_ENABLED).toLowerCase() !== 'true') {
+        return;
+    }
+
+    const existingMeta = await env.NSE_SNAPSHOTS.get(PRICE_META_KEY);
+    if (existingMeta) {
+        console.log('[Price Snapshot] Already exists, skipping');
         return;
     }
 
@@ -897,6 +1110,8 @@ async function refreshPriceSnapshots(env) {
                 const bucket = ensureBucket(chunkKey);
                 bucket[sym] = data;
             });
+
+            await sleep(50);
         }
     };
 
@@ -1018,6 +1233,12 @@ async function refreshChartSnapshots(env) {
         return;
     }
 
+    const existingMeta = await env.NSE_SNAPSHOTS.get(CHART_META_KEY);
+    if (existingMeta) {
+        console.log('[Chart Snapshot] Already exists, skipping');
+        return;
+    }
+
     const rawUniverse = await fetchUniverseData(env);
     if (!Array.isArray(rawUniverse)) throw new Error('Universe payload invalid');
     const symbols = Array.from(new Set(rawUniverse.map((row) => normalizeSymbol(row?.symbol)).filter(Boolean)));
@@ -1069,6 +1290,8 @@ async function refreshChartSnapshots(env) {
                         { gzip: true, cacheControl: INTERVAL_SNAPSHOT_CACHE_CONTROL }
                     );
                 }
+
+                await sleep(50);
             }
         };
 
@@ -1738,8 +1961,9 @@ async function handleSnapshotRefresh(request, env, ctx) {
             runId: result.runId,
             startedAt: result.startedAt,
             finishedAt: result.finishedAt,
-            status: result.ok ? 'success' : 'error',
+            status: result.ok ? 'success' : 'partial',
             errors: result.errors,
+            stages: result.stages,
         };
     })();
 
@@ -1796,6 +2020,22 @@ async function handleApi(request, env, url, ctx) {
             return handleMobileStrike(request);
         case '/api/tv':
             return handleTradingView(request, url);
+        case '/api/nse/reset':
+            return (async () => {
+                if (request.method !== 'POST' && request.method !== 'GET') {
+                    return createMethodNotAllowedResponse('GET, POST');
+                }
+                const resetState = {
+                    runId: `reset-${Date.now()}`,
+                    startedAt: new Date().toISOString(),
+                    finishedAt: null,
+                    status: 'idle',
+                    errors: {},
+                    stages: {},
+                };
+                await writeRefreshStatus(env, resetState);
+                return createJsonResponse(200, { ok: true, message: 'Refresh status reset', state: resetState });
+            })();
         default: {
             const proxied = await proxyToOrigin(request, env, url);
             if (proxied) return proxied;
@@ -1817,23 +2057,51 @@ export default {
     },
     async scheduled(_event, env, ctx) {
         ctx.waitUntil((async () => {
+            const status = await readRefreshStatus(env);
+            const now = new Date().toISOString();
+            
+            if (status?.status === 'running') {
+                console.log('[Cron] Previous refresh still running, checking if stuck...');
+                const stuckTime = 10 * 60 * 1000;
+                const startTime = new Date(status.startedAt).getTime();
+                if (Date.now() - startTime > stuckTime) {
+                    console.log('[Cron] Previous refresh stuck, resetting for incremental retry');
+                    await writeRefreshStatus(env, {
+                        runId: `resumed-${Date.now()}`,
+                        startedAt: status.startedAt,
+                        finishedAt: now,
+                        status: 'partial',
+                        errors: { ...status.errors, timeout: 'Previous run stuck, resuming' },
+                        stages: status.stages,
+                    });
+                } else {
+                    console.log('[Cron] Skipping - previous refresh still in progress');
+                    return;
+                }
+            }
+            
             lastRefreshState = {
                 runId: `scheduled-${Date.now()}`,
-                startedAt: new Date().toISOString(),
+                startedAt: now,
                 finishedAt: null,
                 status: 'running',
                 errors: {},
                 stages: {},
             };
             await writeRefreshStatus(env, lastRefreshState);
-            const result = await runRefreshPipeline(env);
+            
+            const result = await runIncrementalRefresh(env);
+            
             lastRefreshState = {
                 runId: result.runId,
                 startedAt: result.startedAt,
                 finishedAt: result.finishedAt,
-                status: result.ok ? 'success' : 'error',
+                status: result.ok ? 'success' : 'partial',
                 errors: result.errors,
             };
+            await writeRefreshStatus(env, lastRefreshState);
+            
+            console.log('[Cron] Refresh result:', result.ok ? 'complete' : 'partial', Object.keys(result.errors));
         })());
     }
 };

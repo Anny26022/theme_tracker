@@ -16,6 +16,20 @@ const FLAG_COLORS = [
 ];
 const FALLBACK_LIST = { id: 'default', name: 'WATCHLIST', symbols: [] };
 const MISSING_SYMBOL_LOGOS = new Set();
+const SYMBOL_COLOR_KEY = 'tt_pro_symbol_colors';
+
+const deriveSymbolColorsFromWatchlists = (lists) => {
+    const next = {};
+    (lists || []).forEach((list) => {
+        (list?.symbols || []).forEach((entry) => {
+            if (entry?.isHeader || !entry?.symbol) return;
+            if (!entry.color || entry.color === 'none') return;
+            if (next[entry.symbol]) return;
+            next[entry.symbol] = entry.color;
+        });
+    });
+    return next;
+};
 const WatchlistScroller = React.forwardRef(({ className = '', ...props }, ref) => (
     <div
         ref={ref}
@@ -42,6 +56,19 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         const saved = localStorage.getItem('tt_pro_wl_config');
         return saved ? JSON.parse(saved) : { showLast: true, showChange: true, compact: false };
     });
+    const [symbolColors, _setSymbolColors] = useState(() => {
+        const saved = localStorage.getItem(SYMBOL_COLOR_KEY);
+        if (saved) {
+            try { return JSON.parse(saved); } catch { /* ignore */ }
+        }
+        const watchlistsRaw = localStorage.getItem('tt_pro_watchlists');
+        if (!watchlistsRaw) return {};
+        try {
+            return deriveSymbolColorsFromWatchlists(JSON.parse(watchlistsRaw));
+        } catch {
+            return {};
+        }
+    });
     const [filterColor, setFilterColor] = useState('all');
     const addInputRef = useRef(null);
     const isResizing = useRef(false);
@@ -63,6 +90,11 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     const setConfig = useCallback((updater) => _setConfig((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         localStorage.setItem('tt_pro_wl_config', JSON.stringify(next));
+        return next;
+    }), []);
+    const setSymbolColors = useCallback((updater) => _setSymbolColors((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        localStorage.setItem(SYMBOL_COLOR_KEY, JSON.stringify(next));
         return next;
     }), []);
 
@@ -105,10 +137,24 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     const activeList = useMemo(() =>
         watchlists.find(l => l.id === activeListId) || watchlists[0] || FALLBACK_LIST,
         [watchlists, activeListId]);
+
+    useEffect(() => {
+        // Keep filter UX predictable when switching lists.
+        setFilterColor('all');
+    }, [activeListId]);
+
+    const globalFlagColors = useMemo(() => {
+        const set = new Set();
+        Object.values(symbolColors || {}).forEach((color) => {
+            if (color && color !== 'none') set.add(color);
+        });
+        return set;
+    }, [symbolColors]);
+
     const effectiveFilterColor = useMemo(() => {
         if (filterColor === 'all') return 'all';
-        return activeList.symbols.some((s) => s.color === filterColor) ? filterColor : 'all';
-    }, [activeList, filterColor]);
+        return globalFlagColors.has(filterColor) ? filterColor : 'all';
+    }, [filterColor, globalFlagColors]);
 
     const handleCreateList = () => {
         const name = prompt('Enter Watchlist Name:');
@@ -133,7 +179,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         setWatchlists(prev => prev.map(l => {
             if (l.id === activeListId) {
                 if (l.symbols.some(s => s.symbol === symbolObj.symbol)) return l;
-                return { ...l, symbols: [{ ...symbolObj, color: 'none' }, ...l.symbols] };
+                return { ...l, symbols: [symbolObj, ...l.symbols] };
             }
             return l;
         }));
@@ -156,7 +202,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 const symbol = line.split(':').pop().toUpperCase();
                 const found = allCompanies.find(c => c.symbol.toUpperCase() === symbol);
                 if (found) {
-                    newItems.push({ ...found, color: 'none' });
+                    newItems.push(found);
                 }
             }
         });
@@ -188,13 +234,13 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     }, [activeListId]);
 
     const handleSetColor = useCallback((symbol, color) => {
-        setWatchlists(prev => prev.map(l => {
-            if (l.id === activeListId) {
-                return { ...l, symbols: l.symbols.map(s => s.symbol === symbol ? { ...s, color } : s) };
-            }
-            return l;
-        }));
-    }, [activeListId]);
+        setSymbolColors((prev) => {
+            const next = { ...prev };
+            if (color === 'none') delete next[symbol];
+            else next[symbol] = color;
+            return next;
+        });
+    }, [setSymbolColors]);
     const handleSymbolSelect = useCallback((symbolData) => {
         onSymbolSelectRef.current?.(symbolData);
     }, []);
@@ -222,12 +268,12 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         return activeList.symbols.reduce((acc, symbolEntry, originalIndex) => {
             if (effectiveFilterColor !== 'all') {
                 if (symbolEntry.isHeader) return acc;
-                if (symbolEntry.color !== effectiveFilterColor) return acc;
+                if ((symbolColors[symbolEntry.symbol] || 'none') !== effectiveFilterColor) return acc;
             }
             acc.push({ symbolEntry, originalIndex });
             return acc;
         }, []);
-    }, [activeList.symbols, effectiveFilterColor]);
+    }, [activeList.symbols, effectiveFilterColor, symbolColors]);
 
     const handleRemoveAtIndex = useCallback((targetIndex) => {
         setWatchlists(prev => prev.map(l => {
@@ -254,13 +300,14 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
         return (
             <WatchlistItem
                 s={symbolEntry}
+                symbolColor={symbolColors[symbolEntry.symbol] || 'none'}
                 config={config}
                 onSymbolSelect={handleSymbolSelect}
                 onRemoveSymbol={handleRemoveSymbol}
                 onSetSymbolColor={handleSetColor}
             />
         );
-    }, [config, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect]);
+    }, [config, handleRemoveAtIndex, handleRemoveSymbol, handleSetColor, handleSymbolSelect, symbolColors]);
 
     return (
         <div
@@ -361,9 +408,15 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 </div>
             </div>
             {/* Flag Filters Row */}
-            {activeList.symbols.some(s => s.color !== 'none') && (
+            {globalFlagColors.size > 0 && (
                 <div className="px-3 py-1.5 flex items-center gap-1.5 border-b border-white/5 bg-white/[0.02]">
-                    {FLAG_COLORS.filter(f => f.id !== 'none' && activeList.symbols.some(s => s.color === f.id)).map(f => (
+                    <button
+                        onClick={() => setFilterColor('all')}
+                        className={`h-7 px-2 rounded-full border flex items-center justify-center transition-all ${effectiveFilterColor === 'all' ? 'border-white/40 bg-white/10 ring-1 ring-white/20 text-white/85' : 'border-white/5 hover:border-white/20 hover:bg-white/5 text-white/40'}`}
+                    >
+                        <span className="text-[8px] font-black tracking-widest uppercase">All</span>
+                    </button>
+                    {FLAG_COLORS.filter(f => f.id !== 'none' && globalFlagColors.has(f.id)).map(f => (
                         <button
                             key={f.id}
                             onClick={() => setFilterColor(effectiveFilterColor === f.id ? 'all' : f.id)}
@@ -478,7 +531,7 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
     );
 });
 
-const WatchlistItem = memo(({ s, config, onSymbolSelect, onRemoveSymbol, onSetSymbolColor }) => {
+const WatchlistItem = memo(({ s, symbolColor, config, onSymbolSelect, onRemoveSymbol, onSetSymbolColor }) => {
     const cleaned = cleanSymbol(s.symbol);
     useLiveVersion(); // subscribe to global tick for price refresh
     const [hasLogo, setHasLogo] = useState(() => !MISSING_SYMBOL_LOGOS.has(s.symbol));
@@ -502,11 +555,11 @@ const WatchlistItem = memo(({ s, config, onSymbolSelect, onRemoveSymbol, onSetSy
         <div className={`group relative flex items-center pl-6 pr-3 hover:bg-white/[0.03] transition-colors cursor-pointer border-l-2 border-transparent hover:border-white/10 ${config.compact ? 'h-8' : 'h-10'}`}
             onClick={handleSelect}
         >
-            {s.color !== 'none' && (
+            {symbolColor !== 'none' && (
                 <div
                     className="absolute left-[4px] top-1/2 -translate-y-1/2 w-[10px] h-[14px] z-10"
                     style={{
-                        backgroundColor: FLAG_COLORS.find(f => f.id === s.color)?.hex,
+                        backgroundColor: FLAG_COLORS.find(f => f.id === symbolColor)?.hex,
                         clipPath: 'polygon(0 0, 100% 0, 70% 50%, 100% 100%, 0 100%)'
                     }}
                 />
@@ -554,7 +607,7 @@ const WatchlistItem = memo(({ s, config, onSymbolSelect, onRemoveSymbol, onSetSy
                             <button
                                 key={f.id}
                                 onClick={(e) => handleColor(f.id, e)}
-                                className={`w-6 h-6 rounded-full hover:bg-white/10 transition-all flex items-center justify-center ${f.id === s.color ? 'ring-1 ring-white/50 bg-white/5' : ''}`}
+                                className={`w-6 h-6 rounded-full hover:bg-white/10 transition-all flex items-center justify-center ${f.id === symbolColor ? 'ring-1 ring-white/50 bg-white/5' : ''}`}
                                 title={f.id.toUpperCase()}
                             >
                                 {f.id === 'none' ? (

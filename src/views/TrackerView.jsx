@@ -260,10 +260,7 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
                     </div>
                 </div>
 
-                <div className="mt-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <p className="text-[9px] font-black tracking-[0.3em] text-[var(--text-muted)] uppercase opacity-30">
-                        * Ready for TradingView Integration
-                    </p>
+                <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-end gap-4">
                     <div className="w-full md:w-auto min-w-[320px]">
                         <WatchlistSyncCard
                             sectors={sectors}

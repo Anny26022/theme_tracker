@@ -30,16 +30,18 @@ const CompanyInsights = React.lazy(() => import('./components/CompanyInsights').
 const VALID_VIEWS = new Set(Object.values(VIEWS));
 
 const AppLoadingScreen = React.memo(() => (
-    <LazyMotion features={domAnimation}>
-        <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--bg-main)]">
-            <m.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                className="w-12 h-12 border-2 border-white/5 border-t-[#c5a059] rounded-full mb-4"
+    <div className="fixed inset-0 flex flex-col items-center justify-center bg-[#050508] z-[999999] overflow-hidden">
+        <div className="relative flex flex-col items-center">
+            <div
+                style={{ animation: 's 0.6s linear infinite' }}
+                className="w-8 h-8 border border-[var(--accent-primary)]/10 border-t-[var(--accent-primary)] rounded-full will-change-transform"
             />
-            <span className="text-white/20 text-[10px] font-bold tracking-[0.2em] uppercase">Initializing Universe</span>
+            <span className="mt-4 text-[var(--accent-primary)] text-[8px] font-medium tracking-[0.5em] uppercase opacity-50">
+                Initializing
+            </span>
         </div>
-    </LazyMotion>
+        <style>{`@keyframes s { to { transform: rotate(360deg); } }`}</style>
+    </div>
 ));
 
 AppLoadingScreen.displayName = 'AppLoadingScreen';

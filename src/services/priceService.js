@@ -28,28 +28,7 @@ const IS_PROD = import.meta.env?.PROD === true;
 const CACHE_METRICS_LOG_INTERVAL_MS = 60_000;
 const INTERVAL_SOURCE_LOG_INTERVAL_MS = 15_000;
 const CACHE_METRICS_STATE_KEY = 'tt_cache_metrics_state:v1';
-const INTERVAL_SNAPSHOT_META_URL = '/api/nse/intervals/meta';
-const INTERVAL_SNAPSHOT_META_TTL = 60_000;
-const INTERVAL_SNAPSHOT_CHUNK_CONCURRENCY = Math.max(1, Math.min(
-    Number(import.meta.env?.VITE_INTERVAL_SNAPSHOT_CONCURRENCY || 4),
-    8
-));
-const PRICE_SNAPSHOT_META_URL = '/api/nse/prices/meta';
-const FUNDA_SNAPSHOT_META_URL = '/api/nse/fundamentals/meta';
-const CHART_SNAPSHOT_META_URL = '/api/nse/charts/meta';
-const SNAPSHOT_META_TTL = 60_000;
-const PRICE_SNAPSHOT_CHUNK_CONCURRENCY = Math.max(1, Math.min(
-    Number(import.meta.env?.VITE_PRICE_SNAPSHOT_CONCURRENCY || 4),
-    8
-));
-const FUNDA_SNAPSHOT_CHUNK_CONCURRENCY = Math.max(1, Math.min(
-    Number(import.meta.env?.VITE_FUNDA_SNAPSHOT_CONCURRENCY || 4),
-    8
-));
-const CHART_SNAPSHOT_CONCURRENCY = Math.max(1, Math.min(
-    Number(import.meta.env?.VITE_CHART_SNAPSHOT_CONCURRENCY || 4),
-    8
-));
+const DERIVE_INTERVALS_FROM_BASE_SERIES = String(import.meta.env?.VITE_DERIVE_INTERVALS_FROM_BASE_SERIES ?? 'true').toLowerCase() !== 'false';
 
 // ─── Persistent Caches (survive page refresh via sessionStorage) ──
 
@@ -68,15 +47,17 @@ const FUNDA_CACHE_TTL = 3600_000; // 1 hour (fundamentals move slowly)
 const MAX_PERSISTED_PRICE_ENTRIES = 1200;
 const MAX_PERSISTED_INTERVAL_ENTRIES_IDB = 30000;
 const MAX_PERSISTED_INTERVAL_ENTRIES_SESSION = 500;
-const MAX_PERSISTED_COMPARISON_ENTRIES_IDB = 1500;
-const MAX_PERSISTED_COMPARISON_ENTRIES_SESSION = 120;
-const MAX_COMPARISON_MEMORY_ENTRIES = 2500;
+const MAX_PERSISTED_COMPARISON_ENTRIES_IDB = 12000;
+const MAX_PERSISTED_COMPARISON_ENTRIES_SESSION = 500;
+const MAX_COMPARISON_MEMORY_ENTRIES = 12000;
 const MAX_INTERVAL_MEMORY_ENTRIES = 40000;
 const MAX_PERSISTED_FUNDA_ENTRIES = 1500;
 const INTERVAL_CACHE_DB_NAME = 'tt_cache_db';
 const INTERVAL_CACHE_DB_VERSION = 1;
 const INTERVAL_CACHE_STORE = 'kv';
+const PRICE_CACHE_IDB_KEY = 'price_cache_v1';
 const INTERVAL_CACHE_IDB_KEY = 'interval_cache_v1';
+const FUNDA_CACHE_IDB_KEY = 'funda_cache_v1';
 const COMPARISON_CACHE_IDB_KEY = 'comparison_cache_v1';
 const HAS_INDEXED_DB = typeof indexedDB !== 'undefined';
 
@@ -93,10 +74,21 @@ function pruneCacheEntries(cache, maxEntries) {
     return cache;
 }
 
-// Hydrate from sessionStorage on load
-function loadCache(storageKey, maxEntries) {
+function getStorage() {
     try {
-        const raw = sessionStorage.getItem(storageKey);
+        if (typeof window === 'undefined') return null;
+        return window.sessionStorage || null;
+    } catch {
+        return null;
+    }
+}
+
+// Hydrate cache from sessionStorage on load.
+function loadCache(storageKey, maxEntries) {
+    const storage = getStorage();
+    if (!storage) return new Map();
+    try {
+        const raw = storage.getItem(storageKey);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (!Array.isArray(parsed)) return new Map();
@@ -107,9 +99,11 @@ function loadCache(storageKey, maxEntries) {
 }
 
 function saveCache(cache, storageKey, maxEntries) {
+    const storage = getStorage();
+    if (!storage) return;
     try {
         pruneCacheEntries(cache, maxEntries);
-        sessionStorage.setItem(storageKey, JSON.stringify([...cache]));
+        storage.setItem(storageKey, JSON.stringify([...cache]));
     } catch { /* storage full — ignore */ }
 }
 
@@ -122,8 +116,12 @@ function getSortedCacheEntries(cache) {
 }
 
 let intervalCacheDbPromise = null;
+let priceCacheHydrated = false;
+let priceCacheHydrationPromise = null;
 let intervalCacheHydrated = false;
 let intervalCacheHydrationPromise = null;
+let fundaCacheHydrated = false;
+let fundaCacheHydrationPromise = null;
 let comparisonCacheHydrated = false;
 let comparisonCacheHydrationPromise = null;
 const idbHydratedIntervalKeys = new Set();
@@ -195,7 +193,7 @@ function openIntervalCacheDb() {
     return intervalCacheDbPromise;
 }
 
-async function readIntervalCacheEntriesFromIndexedDb() {
+async function readCacheEntriesFromIndexedDb(idbKey) {
     const db = await openIntervalCacheDb();
     if (!db) return null;
 
@@ -203,7 +201,7 @@ async function readIntervalCacheEntriesFromIndexedDb() {
         try {
             const tx = db.transaction(INTERVAL_CACHE_STORE, 'readonly');
             const store = tx.objectStore(INTERVAL_CACHE_STORE);
-            const request = store.get(INTERVAL_CACHE_IDB_KEY);
+            const request = store.get(idbKey);
             request.onsuccess = () => {
                 const value = request.result;
                 resolve(Array.isArray(value?.entries) ? value.entries : null);
@@ -213,94 +211,88 @@ async function readIntervalCacheEntriesFromIndexedDb() {
             resolve(null);
         }
     });
+}
+
+async function writeCacheEntriesToIndexedDb(idbKey, entries) {
+    const db = await openIntervalCacheDb();
+    if (!db) return;
+
+    await new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            store.put({ entries, updatedAt: Date.now() }, idbKey);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        } catch {
+            resolve();
+        }
+    });
+}
+
+async function clearCacheEntriesFromIndexedDb(idbKey) {
+    const db = await openIntervalCacheDb();
+    if (!db) return;
+
+    await new Promise((resolve) => {
+        try {
+            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
+            const store = tx.objectStore(INTERVAL_CACHE_STORE);
+            store.delete(idbKey);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        } catch {
+            resolve();
+        }
+    });
+}
+
+async function readPriceCacheEntriesFromIndexedDb() {
+    return readCacheEntriesFromIndexedDb(PRICE_CACHE_IDB_KEY);
+}
+
+async function writePriceCacheEntriesToIndexedDb(entries) {
+    return writeCacheEntriesToIndexedDb(PRICE_CACHE_IDB_KEY, entries);
+}
+
+async function clearPriceCacheFromIndexedDb() {
+    return clearCacheEntriesFromIndexedDb(PRICE_CACHE_IDB_KEY);
+}
+
+async function readIntervalCacheEntriesFromIndexedDb() {
+    return readCacheEntriesFromIndexedDb(INTERVAL_CACHE_IDB_KEY);
 }
 
 async function writeIntervalCacheEntriesToIndexedDb(entries) {
-    const db = await openIntervalCacheDb();
-    if (!db) return;
-
-    await new Promise((resolve) => {
-        try {
-            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
-            const store = tx.objectStore(INTERVAL_CACHE_STORE);
-            store.put({ entries, updatedAt: Date.now() }, INTERVAL_CACHE_IDB_KEY);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => resolve();
-        } catch {
-            resolve();
-        }
-    });
+    return writeCacheEntriesToIndexedDb(INTERVAL_CACHE_IDB_KEY, entries);
 }
 
 async function clearIntervalCacheFromIndexedDb() {
-    const db = await openIntervalCacheDb();
-    if (!db) return;
+    return clearCacheEntriesFromIndexedDb(INTERVAL_CACHE_IDB_KEY);
+}
 
-    await new Promise((resolve) => {
-        try {
-            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
-            const store = tx.objectStore(INTERVAL_CACHE_STORE);
-            store.delete(INTERVAL_CACHE_IDB_KEY);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => resolve();
-        } catch {
-            resolve();
-        }
-    });
+async function readFundaCacheEntriesFromIndexedDb() {
+    return readCacheEntriesFromIndexedDb(FUNDA_CACHE_IDB_KEY);
+}
+
+async function writeFundaCacheEntriesToIndexedDb(entries) {
+    return writeCacheEntriesToIndexedDb(FUNDA_CACHE_IDB_KEY, entries);
+}
+
+async function clearFundaCacheFromIndexedDb() {
+    return clearCacheEntriesFromIndexedDb(FUNDA_CACHE_IDB_KEY);
 }
 
 async function readComparisonCacheEntriesFromIndexedDb() {
-    const db = await openIntervalCacheDb();
-    if (!db) return null;
-
-    return new Promise((resolve) => {
-        try {
-            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readonly');
-            const store = tx.objectStore(INTERVAL_CACHE_STORE);
-            const request = store.get(COMPARISON_CACHE_IDB_KEY);
-            request.onsuccess = () => {
-                const value = request.result;
-                resolve(Array.isArray(value?.entries) ? value.entries : null);
-            };
-            request.onerror = () => resolve(null);
-        } catch {
-            resolve(null);
-        }
-    });
+    return readCacheEntriesFromIndexedDb(COMPARISON_CACHE_IDB_KEY);
 }
 
 async function writeComparisonCacheEntriesToIndexedDb(entries) {
-    const db = await openIntervalCacheDb();
-    if (!db) return;
-
-    await new Promise((resolve) => {
-        try {
-            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
-            const store = tx.objectStore(INTERVAL_CACHE_STORE);
-            store.put({ entries, updatedAt: Date.now() }, COMPARISON_CACHE_IDB_KEY);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => resolve();
-        } catch {
-            resolve();
-        }
-    });
+    return writeCacheEntriesToIndexedDb(COMPARISON_CACHE_IDB_KEY, entries);
 }
 
 async function clearComparisonCacheFromIndexedDb() {
-    const db = await openIntervalCacheDb();
-    if (!db) return;
-
-    await new Promise((resolve) => {
-        try {
-            const tx = db.transaction(INTERVAL_CACHE_STORE, 'readwrite');
-            const store = tx.objectStore(INTERVAL_CACHE_STORE);
-            store.delete(COMPARISON_CACHE_IDB_KEY);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => resolve();
-        } catch {
-            resolve();
-        }
-    });
+    return clearCacheEntriesFromIndexedDb(COMPARISON_CACHE_IDB_KEY);
 }
 
 const priceCache = loadCache(PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
@@ -312,6 +304,40 @@ comparisonSessionCache.forEach((row, key) => {
     if (!key || !row || typeof row.timestamp !== 'number') return;
     comparisonCacheMap.set(key, row);
 });
+
+async function hydratePriceCacheFromIndexedDb() {
+    const startedAt = Date.now();
+    const entries = await readPriceCacheEntriesFromIndexedDb();
+    let hydratedEntries = 0;
+    if (Array.isArray(entries)) {
+        hydratedEntries = entries.length;
+        entries.forEach(([key, row]) => {
+            if (!key || !row || typeof row.timestamp !== 'number') return;
+            const cleanKey = cleanSymbol(key);
+            const existing = priceCache.get(cleanKey);
+            if (!existing || row.timestamp > (existing.timestamp || 0)) {
+                priceCache.set(cleanKey, row);
+            }
+        });
+        pruneCacheEntries(priceCache, MAX_PERSISTED_PRICE_ENTRIES);
+    }
+    if (IS_DEV) {
+        console.info('[PriceService][IDB] Price hydration', {
+            entries: hydratedEntries,
+            ms: Math.max(0, Date.now() - startedAt),
+            usedIdb: hydratedEntries > 0
+        });
+    }
+    priceCacheHydrated = true;
+}
+
+function ensurePriceCacheHydrated() {
+    if (priceCacheHydrated) return Promise.resolve();
+    if (!priceCacheHydrationPromise) {
+        priceCacheHydrationPromise = hydratePriceCacheFromIndexedDb();
+    }
+    return priceCacheHydrationPromise;
+}
 
 async function hydrateIntervalCacheFromIndexedDb() {
     const startedAt = Date.now();
@@ -365,6 +391,40 @@ function ensureIntervalCacheHydrated() {
     return intervalCacheHydrationPromise;
 }
 
+async function hydrateFundaCacheFromIndexedDb() {
+    const startedAt = Date.now();
+    const entries = await readFundaCacheEntriesFromIndexedDb();
+    let hydratedEntries = 0;
+    if (Array.isArray(entries)) {
+        hydratedEntries = entries.length;
+        entries.forEach(([key, row]) => {
+            if (!key || !row || typeof row.timestamp !== 'number') return;
+            const cleanKey = cleanSymbol(key);
+            const existing = fundaCache.get(cleanKey);
+            if (!existing || row.timestamp > (existing.timestamp || 0)) {
+                fundaCache.set(cleanKey, row);
+            }
+        });
+        pruneCacheEntries(fundaCache, MAX_PERSISTED_FUNDA_ENTRIES);
+    }
+    if (IS_DEV) {
+        console.info('[PriceService][IDB] Fundamentals hydration', {
+            entries: hydratedEntries,
+            ms: Math.max(0, Date.now() - startedAt),
+            usedIdb: hydratedEntries > 0
+        });
+    }
+    fundaCacheHydrated = true;
+}
+
+function ensureFundaCacheHydrated() {
+    if (fundaCacheHydrated) return Promise.resolve();
+    if (!fundaCacheHydrationPromise) {
+        fundaCacheHydrationPromise = hydrateFundaCacheFromIndexedDb();
+    }
+    return fundaCacheHydrationPromise;
+}
+
 async function hydrateComparisonCacheFromIndexedDb() {
     const startedAt = Date.now();
     let hydratedEntries = 0;
@@ -408,12 +468,14 @@ function ensureComparisonCacheHydrated() {
     return comparisonCacheHydrationPromise;
 }
 
+ensurePriceCacheHydrated();
 ensureIntervalCacheHydrated();
+ensureFundaCacheHydrated();
 ensureComparisonCacheHydrated();
 
 // Debug: log hydration on module load
 if (IS_DEV) {
-    console.debug(`[PriceCache] Hydrated from sessionStorage — prices: ${priceCache.size}, intervals: ${intervalCache.size}, funda: ${fundaCache.size}`);
+    console.debug(`[PriceCache] Hydrated from storage — prices: ${priceCache.size}, intervals: ${intervalCache.size}, funda: ${fundaCache.size}`);
 }
 
 // Debounced save to avoid thrashing sessionStorage
@@ -424,7 +486,12 @@ let comparisonPersistInFlight = null;
 
 function schedulePriceSave() {
     if (priceSaveTimer) clearTimeout(priceSaveTimer);
-    priceSaveTimer = setTimeout(() => saveCache(priceCache, PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES), 500);
+    priceSaveTimer = setTimeout(() => {
+        pruneCacheEntries(priceCache, MAX_PERSISTED_PRICE_ENTRIES);
+        const entries = getSortedCacheEntries(priceCache).slice(0, MAX_PERSISTED_PRICE_ENTRIES);
+        void writePriceCacheEntriesToIndexedDb(entries);
+        saveCache(new Map(entries), PRICE_CACHE_KEY, MAX_PERSISTED_PRICE_ENTRIES);
+    }, 500);
 }
 
 function scheduleIntervalSave() {
@@ -440,7 +507,12 @@ function scheduleIntervalSave() {
 
 function scheduleFundaSave() {
     if (fundaSaveTimer) clearTimeout(fundaSaveTimer);
-    fundaSaveTimer = setTimeout(() => saveCache(fundaCache, FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES), 500);
+    fundaSaveTimer = setTimeout(() => {
+        pruneCacheEntries(fundaCache, MAX_PERSISTED_FUNDA_ENTRIES);
+        const entries = getSortedCacheEntries(fundaCache).slice(0, MAX_PERSISTED_FUNDA_ENTRIES);
+        void writeFundaCacheEntriesToIndexedDb(entries);
+        saveCache(new Map(entries), FUNDA_CACHE_KEY, MAX_PERSISTED_FUNDA_ENTRIES);
+    }, 500);
 }
 
 async function persistComparisonCacheNow() {
@@ -791,303 +863,6 @@ async function runWithConcurrency(items, concurrency, worker) {
             await worker(items[index], index);
         }
     }));
-}
-
-let intervalSnapshotMeta = null;
-let intervalSnapshotMetaFetchedAt = 0;
-let intervalSnapshotMetaPromise = null;
-
-const snapshotMetaState = new Map();
-
-function isIntervalSnapshotEnabled() {
-    if (typeof window !== 'undefined' && window.__TT_INTERVAL_SNAPSHOT__ === false) return false;
-    return String(import.meta.env?.VITE_INTERVAL_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
-}
-
-function isPriceSnapshotEnabled() {
-    if (typeof window !== 'undefined' && window.__TT_PRICE_SNAPSHOT__ === false) return false;
-    return String(import.meta.env?.VITE_PRICE_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
-}
-
-function isFundaSnapshotEnabled() {
-    if (typeof window !== 'undefined' && window.__TT_FUNDA_SNAPSHOT__ === false) return false;
-    return String(import.meta.env?.VITE_FUNDA_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
-}
-
-function isChartSnapshotEnabled() {
-    if (typeof window !== 'undefined' && window.__TT_CHART_SNAPSHOT__ === false) return false;
-    return String(import.meta.env?.VITE_CHART_SNAPSHOT ?? 'true').toLowerCase() !== 'false';
-}
-
-async function fetchSnapshotMeta(url, ttlMs, enabled) {
-    if (!enabled) return null;
-
-    const now = Date.now();
-    const existing = snapshotMetaState.get(url);
-    if (existing?.meta && now - existing.fetchedAt < ttlMs) return existing.meta;
-    if (existing?.promise) return existing.promise;
-
-    const state = existing || { meta: null, fetchedAt: 0, promise: null };
-    state.promise = (async () => {
-        try {
-            const response = await fetch(url, { cache: 'no-store' });
-            if (!response.ok) return null;
-            const json = await response.json();
-            state.meta = json;
-            state.fetchedAt = Date.now();
-            return json;
-        } catch {
-            state.meta = null;
-            state.fetchedAt = Date.now();
-            return null;
-        } finally {
-            state.promise = null;
-        }
-    })();
-
-    snapshotMetaState.set(url, state);
-    return state.promise;
-}
-
-function resolveIntervalChunkMode(meta) {
-    const mode = String(meta?.chunkMode || '').toLowerCase();
-    if (mode === 'alpha1' || mode === 'alpha2') return mode;
-    return 'alpha2';
-}
-
-function resolveIntervalChunkKey(symbol, mode) {
-    const sym = cleanSymbol(symbol);
-    if (!sym) return mode === 'alpha2' ? '__' : '_';
-    const first = sym[0];
-    const isAlpha = first >= 'A' && first <= 'Z';
-    const isDigit = first >= '0' && first <= '9';
-
-    if (mode === 'alpha2') {
-        if (isDigit) return '0-9';
-        if (!isAlpha) return '__';
-        const second = sym.length > 1 ? sym[1] : '_';
-        const secondKey = second >= 'A' && second <= 'Z' ? second : '_';
-        return `${first}${secondKey}`;
-    }
-
-    if (isDigit) return '0-9';
-    if (!isAlpha) return '_';
-    return first;
-}
-
-async function fetchIntervalSnapshotMeta() {
-    if (!isIntervalSnapshotEnabled()) return null;
-
-    const now = Date.now();
-    if (intervalSnapshotMeta && now - intervalSnapshotMetaFetchedAt < INTERVAL_SNAPSHOT_META_TTL) {
-        return intervalSnapshotMeta;
-    }
-    if (intervalSnapshotMetaPromise) return intervalSnapshotMetaPromise;
-
-    intervalSnapshotMetaPromise = (async () => {
-        const json = await fetchSnapshotMeta(INTERVAL_SNAPSHOT_META_URL, INTERVAL_SNAPSHOT_META_TTL, true);
-        intervalSnapshotMeta = json;
-        intervalSnapshotMetaFetchedAt = Date.now();
-        return json;
-    })().finally(() => {
-        intervalSnapshotMetaPromise = null;
-    });
-
-    return intervalSnapshotMetaPromise;
-}
-
-async function fetchIntervalSnapshot(interval, symbols, window, ttl) {
-    const meta = await fetchIntervalSnapshotMeta();
-    if (!meta) return null;
-
-    const intervals = Array.isArray(meta?.intervals) ? meta.intervals : [];
-    if (!intervals.includes(interval)) return null;
-
-    const chunkMode = resolveIntervalChunkMode(meta);
-    const version = meta?.generatedAt || meta?.version || 'snapshot';
-    const chunkKeys = new Set();
-    const symbolMap = new Map();
-
-    symbols.forEach((sym) => {
-        const key = resolveIntervalChunkKey(sym, chunkMode);
-        chunkKeys.add(key);
-    });
-
-    const chunkList = Array.from(chunkKeys);
-    const results = new Map();
-    const satisfied = new Set();
-
-    await runWithConcurrency(chunkList, INTERVAL_SNAPSHOT_CHUNK_CONCURRENCY, async (chunkKey) => {
-        const res = await fetch(`/api/nse/intervals/${interval}/chunks/${encodeURIComponent(chunkKey)}?v=${encodeURIComponent(version)}`, {
-            cache: 'force-cache'
-        });
-        if (!res.ok) return;
-        const chunk = await res.json();
-        if (!chunk || typeof chunk !== 'object') return;
-        Object.entries(chunk).forEach(([key, value]) => {
-            const sym = cleanSymbol(key);
-            if (!sym) return;
-            symbolMap.set(sym, value);
-        });
-    });
-
-    symbols.forEach((sym) => {
-        const key = cleanSymbol(sym);
-        const cacheKey = `${key}:${window}`;
-        if (symbolMap.has(key)) {
-            const data = symbolMap.get(key);
-            const row = buildCacheRow(data, null, ttl);
-            if (row) {
-                intervalCache.set(cacheKey, row);
-                idbHydratedIntervalKeys.delete(cacheKey);
-                sessionHydratedIntervalKeys.delete(cacheKey);
-            }
-            satisfied.add(key);
-            if (data && typeof data.changePct === 'number') {
-                results.set(key, data);
-            }
-        }
-    });
-
-    if (satisfied.size > 0) {
-        scheduleIntervalSave();
-    }
-
-    return { results, satisfied };
-}
-
-async function fetchPriceSnapshot(symbols, ttl) {
-    const meta = await fetchSnapshotMeta(PRICE_SNAPSHOT_META_URL, SNAPSHOT_META_TTL, isPriceSnapshotEnabled());
-    if (!meta) return null;
-
-    const chunkMode = resolveIntervalChunkMode(meta);
-    const version = meta?.generatedAt || meta?.version || 'snapshot';
-    const chunkKeys = new Set();
-    const symbolMap = new Map();
-
-    symbols.forEach((sym) => {
-        const key = resolveIntervalChunkKey(sym, chunkMode);
-        chunkKeys.add(key);
-    });
-
-    const chunkList = Array.from(chunkKeys);
-    const results = new Map();
-    const satisfied = new Set();
-
-    await runWithConcurrency(chunkList, PRICE_SNAPSHOT_CHUNK_CONCURRENCY, async (chunkKey) => {
-        const res = await fetch(`/api/nse/prices/chunks/${encodeURIComponent(chunkKey)}?v=${encodeURIComponent(version)}`, {
-            cache: 'force-cache'
-        });
-        if (!res.ok) return;
-        const chunk = await res.json();
-        if (!chunk || typeof chunk !== 'object') return;
-        Object.entries(chunk).forEach(([key, value]) => {
-            const sym = cleanSymbol(key);
-            if (!sym) return;
-            symbolMap.set(sym, value);
-        });
-    });
-
-    symbols.forEach((sym) => {
-        const key = cleanSymbol(sym);
-        if (!symbolMap.has(key)) return;
-        const data = symbolMap.get(key);
-        const row = buildCacheRow(data, null, ttl);
-        if (row) priceCache.set(key, row);
-        satisfied.add(key);
-        if (data) results.set(key, data);
-    });
-
-    if (satisfied.size > 0) schedulePriceSave();
-    return { results, satisfied };
-}
-
-async function fetchFundaSnapshot(symbols, ttl) {
-    const meta = await fetchSnapshotMeta(FUNDA_SNAPSHOT_META_URL, SNAPSHOT_META_TTL, isFundaSnapshotEnabled());
-    if (!meta) return null;
-
-    const chunkMode = resolveIntervalChunkMode(meta);
-    const version = meta?.generatedAt || meta?.version || 'snapshot';
-    const chunkKeys = new Set();
-    const symbolMap = new Map();
-
-    symbols.forEach((sym) => {
-        const key = resolveIntervalChunkKey(sym, chunkMode);
-        chunkKeys.add(key);
-    });
-
-    const chunkList = Array.from(chunkKeys);
-    const results = new Map();
-    const satisfied = new Set();
-
-    await runWithConcurrency(chunkList, FUNDA_SNAPSHOT_CHUNK_CONCURRENCY, async (chunkKey) => {
-        const res = await fetch(`/api/nse/fundamentals/chunks/${encodeURIComponent(chunkKey)}?v=${encodeURIComponent(version)}`, {
-            cache: 'force-cache'
-        });
-        if (!res.ok) return;
-        const chunk = await res.json();
-        if (!chunk || typeof chunk !== 'object') return;
-        Object.entries(chunk).forEach(([key, value]) => {
-            const sym = cleanSymbol(key);
-            if (!sym) return;
-            symbolMap.set(sym, value);
-        });
-    });
-
-    symbols.forEach((sym) => {
-        const key = cleanSymbol(sym);
-        if (!symbolMap.has(key)) return;
-        const data = symbolMap.get(key);
-        const row = buildCacheRow(data, null, ttl);
-        if (row) fundaCache.set(key, row);
-        satisfied.add(key);
-        if (data) results.set(key, data);
-    });
-
-    if (satisfied.size > 0) scheduleFundaSave();
-    return { results, satisfied };
-}
-
-async function fetchChartSnapshot(interval, symbols, window, ttl) {
-    const meta = await fetchSnapshotMeta(CHART_SNAPSHOT_META_URL, SNAPSHOT_META_TTL, isChartSnapshotEnabled());
-    if (!meta) return null;
-
-    const intervals = Array.isArray(meta?.intervals) ? meta.intervals : [];
-    if (!intervals.includes(interval)) return null;
-
-    const version = meta?.generatedAt || meta?.version || 'snapshot';
-    const results = new Map();
-    const satisfied = new Set();
-
-    await runWithConcurrency(symbols, CHART_SNAPSHOT_CONCURRENCY, async (sym) => {
-        const key = cleanSymbol(sym);
-        if (!key) return;
-        const res = await fetch(`/api/nse/charts/${encodeURIComponent(interval)}/symbols/${encodeURIComponent(key)}?v=${encodeURIComponent(version)}`, {
-            cache: 'force-cache'
-        });
-        if (!res.ok) return;
-        const series = await res.json();
-        if (!Array.isArray(series) || series.length === 0) {
-            const cacheKey = `${key}:${window}:full`;
-            const row = buildCacheRow(null, null, ttl);
-            if (row) comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
-            satisfied.add(key);
-            return;
-        }
-
-        const cacheKey = `${key}:${window}:full`;
-        const row = buildCacheRow(series, null, ttl);
-        if (row) {
-            comparisonCacheMap.set(cacheKey, { series: row.data, timestamp: row.timestamp, ttlMs: row.ttlMs });
-        } else {
-            comparisonCacheMap.set(cacheKey, { series, timestamp: Date.now(), ttlMs: ttl });
-        }
-        results.set(key, series);
-        satisfied.add(key);
-    });
-
-    if (satisfied.size > 0) await persistComparisonCacheNow();
-    return { results, satisfied };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -1450,6 +1225,66 @@ function deriveIntervalPerfFromSeries(series, interval) {
     return { changePct, close: lastPrice };
 }
 
+function getBaseSeriesIntervalForDerivedPerf(interval) {
+    if (interval === '5Y' || interval === 'MAX') return 'MAX';
+    return '1Y';
+}
+
+function getFreshLivePriceForSymbol(symbol) {
+    const cached = priceCache.get(symbol);
+    if (!isCacheRowFresh(cached, PRICE_CACHE_TTL)) return null;
+    const live = cached?.data?.price;
+    return typeof live === 'number' && live > 0 ? live : null;
+}
+
+function deriveIntervalPerfFromBaseSeries(series, interval, currentPriceOverride) {
+    if (!Array.isArray(series) || series.length < 2) return null;
+    const points = series
+        .map((point) => ({
+            time: Number(point?.time || 0),
+            close: Number(typeof point?.price === 'number' ? point.price : point?.close),
+        }))
+        .filter((point) => Number.isFinite(point.close) && point.close > 0 && Number.isFinite(point.time) && point.time > 0)
+        .sort((a, b) => a.time - b.time);
+
+    if (points.length < 2) return null;
+
+    const lastBaseClose = points[points.length - 1].close;
+    const currentPrice = Number.isFinite(currentPriceOverride) && currentPriceOverride > 0
+        ? currentPriceOverride
+        : lastBaseClose;
+
+    let anchor = null;
+    if (interval === 'YTD') {
+        const year = new Date(points[points.length - 1].time).getUTCFullYear();
+        const ytdPoint = points.find((point) => new Date(point.time).getUTCFullYear() === year);
+        anchor = ytdPoint?.close ?? points[0]?.close ?? null;
+    } else if (interval === 'MAX') {
+        anchor = points[0]?.close ?? null;
+    } else {
+        const lookbackBars = {
+            '1D': 1,
+            '5D': 5,
+            '1M': 21,
+            '3M': 63,
+            '6M': 126,
+            '1Y': 252,
+            '5Y': 1260,
+        }[interval];
+
+        if (!Number.isFinite(lookbackBars)) return null;
+        const anchorIndex = Math.max(0, points.length - 1 - lookbackBars);
+        anchor = points[anchorIndex]?.close ?? null;
+    }
+
+    if (!(anchor > 0) || !(currentPrice > 0)) return null;
+
+    return {
+        changePct: ((currentPrice - anchor) / anchor) * 100,
+        close: currentPrice,
+    };
+}
+
 // ─── Strike Fallback (NSE only) ────────────────────────────────────
 
 async function fetchFromStrike(symbol) {
@@ -1522,6 +1357,7 @@ async function fetchFromStrike(symbol) {
  * @returns {Map<string, priceData>}
  */
 export async function fetchLivePrices(symbols, options = {}) {
+    await ensurePriceCacheHydrated();
     const { skipStrike = false } = options;
     const keys = symbols.map(s => cleanSymbol(s));
     const results = new Map();
@@ -1541,22 +1377,6 @@ export async function fetchLivePrices(symbols, options = {}) {
 
     if (IS_DEV) {
         console.debug(`[PriceCache] PRICES — ✅ ${results.size} cache hits, ❌ ${uncached.length} cache misses`, uncached.length ? uncached.slice(0, 5).join(', ') + (uncached.length > 5 ? '...' : '') : '');
-    }
-
-    if (uncached.length === 0) return results;
-
-    if (uncached.length > 0) {
-        try {
-            const snapshot = await fetchPriceSnapshot(uncached, PRICE_CACHE_TTL);
-            if (snapshot?.results) {
-                snapshot.results.forEach((data, sym) => results.set(sym, data));
-            }
-            if (snapshot?.satisfied?.size) {
-                uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
-            }
-        } catch {
-            // Snapshot optional; ignore errors.
-        }
     }
 
     if (uncached.length === 0) return results;
@@ -1633,6 +1453,8 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
     const window = INTERVAL_WINDOWS[interval] || 3;
     const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
     const cacheKeyBase = `${interval}:${window}`;
+    const deriveFromBaseSeries = DERIVE_INTERVALS_FROM_BASE_SERIES && interval !== '1D';
+    const allowDirectIntervalNetwork = options?.allowDirectIntervalNetwork === true || !deriveFromBaseSeries;
     const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
     const emitProgress = (payload) => {
         if (!onProgress) return;
@@ -1677,8 +1499,15 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
             }
             if (cached.data !== null) results.set(sym, cached.data);
         } else {
-            const chartSeries = getCachedComparisonSeries(sym, interval, { silent: true });
-            const derived = deriveIntervalPerfFromSeries(chartSeries, interval);
+            const derived = (() => {
+                if (deriveFromBaseSeries) {
+                    const baseInterval = getBaseSeriesIntervalForDerivedPerf(interval);
+                    const baseSeries = getCachedComparisonSeries(sym, baseInterval, { silent: true });
+                    return deriveIntervalPerfFromBaseSeries(baseSeries, interval, getFreshLivePriceForSymbol(sym));
+                }
+                const chartSeries = getCachedComparisonSeries(sym, interval, { silent: true });
+                return deriveIntervalPerfFromSeries(chartSeries, interval);
+            })();
             if (derived && typeof derived.changePct === 'number') {
                 callMemoryHits += 1;
                 const row = buildCacheRow(derived, null, ttl);
@@ -1704,18 +1533,41 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
         misses: callMisses
     });
 
-    if (uncached.length > 0) {
+    if (deriveFromBaseSeries && uncached.length > 0) {
         try {
-            const snapshot = await fetchIntervalSnapshot(interval, uncached, window, ttl);
-            if (snapshot?.results) {
-                snapshot.results.forEach((data, sym) => results.set(sym, data));
-            }
-            if (snapshot?.satisfied?.size) {
-                uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
-            }
+            const baseInterval = getBaseSeriesIntervalForDerivedPerf(interval);
+            const baseCharts = await fetchComparisonCharts(uncached, baseInterval);
+            uncached.forEach((sym) => {
+                const baseSeries = baseCharts.get(sym) || getCachedComparisonSeries(sym, baseInterval, { silent: true });
+                const derived = deriveIntervalPerfFromBaseSeries(baseSeries, interval, getFreshLivePriceForSymbol(sym));
+                if (!derived || typeof derived.changePct !== 'number') return;
+                const cacheKey = `${sym}:${window}`;
+                const row = buildCacheRow(derived, null, ttl);
+                if (row) {
+                    intervalCache.set(cacheKey, row);
+                    idbHydratedIntervalKeys.delete(cacheKey);
+                    sessionHydratedIntervalKeys.delete(cacheKey);
+                }
+                results.set(sym, derived);
+            });
+            uncached = uncached.filter((sym) => !results.has(sym));
         } catch {
-            // Snapshot optional; ignore errors and continue to Google.
+            // Base-series derive is best-effort.
         }
+    }
+
+    if (!allowDirectIntervalNetwork && uncached.length > 0) {
+        uncached.forEach((sym) => {
+            const cacheKey = `${sym}:${window}`;
+            const row = buildCacheRow(null, null, Math.min(ttl, 60_000));
+            if (row) {
+                intervalCache.set(cacheKey, row);
+                idbHydratedIntervalKeys.delete(cacheKey);
+                sessionHydratedIntervalKeys.delete(cacheKey);
+            }
+        });
+        scheduleIntervalSave();
+        return results;
     }
 
     if (uncached.length === 0) {
@@ -1906,6 +1758,164 @@ export async function fetchBatchIntervalPerformance(symbols, interval = '1M', op
         });
         return results;
     });
+}
+
+/**
+ * Fetch multiple intervals for the same symbol set with shared base-chart work.
+ * 1D remains direct; non-1D intervals derive from base chart series by default.
+ */
+export async function fetchBatchIntervalPerformanceBulk(symbols, intervals = [], options = {}) {
+    const keys = [...new Set((symbols || []).map((sym) => cleanSymbol(sym)).filter(Boolean))];
+    const requestedIntervals = [...new Set((intervals || []).filter(Boolean))];
+    const resultsByInterval = new Map();
+
+    if (keys.length === 0 || requestedIntervals.length === 0) {
+        return resultsByInterval;
+    }
+
+    const directIntervals = [];
+    const derivedIntervals = [];
+
+    requestedIntervals.forEach((interval) => {
+        const deriveFromBaseSeries = DERIVE_INTERVALS_FROM_BASE_SERIES && interval !== '1D';
+        if (deriveFromBaseSeries) {
+            derivedIntervals.push(interval);
+        } else {
+            directIntervals.push(interval);
+        }
+    });
+
+    if (directIntervals.length > 0) {
+        await Promise.all(directIntervals.map(async (interval) => {
+            const map = await fetchBatchIntervalPerformance(keys, interval, options);
+            resultsByInterval.set(interval, map);
+        }));
+    }
+
+    if (derivedIntervals.length === 0) {
+        return resultsByInterval;
+    }
+
+    await ensureIntervalCacheHydrated();
+    await ensureComparisonCacheHydrated();
+
+    const fallbackRequests = [];
+    const unresolvedByInterval = new Map();
+    const unresolvedByBaseInterval = new Map();
+
+    derivedIntervals.forEach((interval) => {
+        const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
+        const window = INTERVAL_WINDOWS[interval] || 3;
+        const baseInterval = getBaseSeriesIntervalForDerivedPerf(interval);
+        const intervalResults = new Map();
+        const unresolved = [];
+
+        keys.forEach((sym) => {
+            const cacheKey = `${sym}:${window}`;
+            const cached = intervalCache.get(cacheKey);
+
+            if (isCacheRowFresh(cached, ttl)) {
+                markLocalCacheHit();
+                if (cached?.data) {
+                    intervalResults.set(sym, cached.data);
+                }
+                return;
+            }
+
+            unresolved.push(sym);
+        });
+
+        resultsByInterval.set(interval, intervalResults);
+        unresolvedByInterval.set(interval, { unresolved, ttl, window, baseInterval });
+
+        if (unresolved.length > 0) {
+            const existing = unresolvedByBaseInterval.get(baseInterval) || new Set();
+            unresolved.forEach((sym) => existing.add(sym));
+            unresolvedByBaseInterval.set(baseInterval, existing);
+        }
+    });
+
+    const baseChartsByInterval = new Map();
+    await Promise.all(Array.from(unresolvedByBaseInterval.entries()).map(async ([baseInterval, unresolvedSet]) => {
+        if (unresolvedSet.size === 0) {
+            baseChartsByInterval.set(baseInterval, new Map());
+            return;
+        }
+        try {
+            const baseCharts = await fetchComparisonCharts(Array.from(unresolvedSet), baseInterval);
+            baseChartsByInterval.set(baseInterval, baseCharts);
+        } catch {
+            baseChartsByInterval.set(baseInterval, new Map());
+        }
+    }));
+
+    derivedIntervals.forEach((interval) => {
+        const info = unresolvedByInterval.get(interval);
+        if (!info) return;
+        const { unresolved, ttl, window, baseInterval } = info;
+        const intervalResults = resultsByInterval.get(interval) || new Map();
+        const baseCharts = baseChartsByInterval.get(baseInterval) || new Map();
+        const missing = [];
+
+        unresolved.forEach((sym) => {
+            const baseSeries = baseCharts.get(sym) || getCachedComparisonSeries(sym, baseInterval, { silent: true });
+            const derived = deriveIntervalPerfFromBaseSeries(baseSeries, interval, getFreshLivePriceForSymbol(sym));
+            if (derived && typeof derived.changePct === 'number') {
+                const cacheKey = `${sym}:${window}`;
+                const row = buildCacheRow(derived, null, ttl);
+                if (row) {
+                    intervalCache.set(cacheKey, row);
+                    idbHydratedIntervalKeys.delete(cacheKey);
+                    sessionHydratedIntervalKeys.delete(cacheKey);
+                }
+                intervalResults.set(sym, derived);
+                return;
+            }
+            missing.push(sym);
+        });
+
+        resultsByInterval.set(interval, intervalResults);
+        if (missing.length > 0) {
+            fallbackRequests.push({ interval, symbols: missing });
+        }
+
+        if (IS_DEV) {
+            console.debug('[PriceService][IntervalBulk]', {
+                interval,
+                totalSymbols: keys.length,
+                resolvedSymbols: keys.length - missing.length,
+                withData: intervalResults.size,
+                missing: missing.length,
+                neededBaseFetch: unresolved.length,
+            });
+        }
+    });
+
+    if (options?.allowDirectIntervalNetwork === true && fallbackRequests.length > 0) {
+        await Promise.all(fallbackRequests.map(async ({ interval, symbols: missing }) => {
+            const fallback = await fetchBatchIntervalPerformance(missing, interval, { ...options, allowDirectIntervalNetwork: true });
+            const existing = resultsByInterval.get(interval) || new Map();
+            fallback.forEach((value, sym) => existing.set(sym, value));
+            resultsByInterval.set(interval, existing);
+        }));
+    } else if (fallbackRequests.length > 0) {
+        // Negative-cache unresolved symbols to avoid repeated cold-miss fanout on reloads.
+        fallbackRequests.forEach(({ interval, symbols: missing }) => {
+            const ttl = INTERVAL_CACHE_TTL[interval] || 300_000;
+            const window = INTERVAL_WINDOWS[interval] || 3;
+            missing.forEach((sym) => {
+                const cacheKey = `${sym}:${window}`;
+                const row = buildCacheRow(null, null, Math.min(ttl, 300_000));
+                if (!row) return;
+                intervalCache.set(cacheKey, row);
+                idbHydratedIntervalKeys.delete(cacheKey);
+                sessionHydratedIntervalKeys.delete(cacheKey);
+            });
+        });
+    }
+
+    scheduleIntervalSave();
+    return resultsByInterval;
 }
 
 /**
@@ -2132,6 +2142,7 @@ function extractFundaFromFrame(payload) {
  * Since fundamentals are heavy, we only fetch on demand.
  */
 export async function fetchFundamentals(symbols) {
+    await ensureFundaCacheHydrated();
     const keys = symbols.map(s => cleanSymbol(s));
     const results = new Map();
     let uncached = [];
@@ -2144,22 +2155,6 @@ export async function fetchFundamentals(symbols) {
         } else {
             markLocalCacheMiss(cacheLookupMissReason(cached, key), key);
             uncached.push(key);
-        }
-    }
-
-    if (uncached.length === 0) return results;
-
-    if (uncached.length > 0) {
-        try {
-            const snapshot = await fetchFundaSnapshot(uncached, FUNDA_CACHE_TTL);
-            if (snapshot?.results) {
-                snapshot.results.forEach((data, sym) => results.set(sym, data));
-            }
-            if (snapshot?.satisfied?.size) {
-                uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
-            }
-        } catch {
-            // Snapshot optional; ignore errors.
         }
     }
 
@@ -2235,22 +2230,6 @@ export async function fetchComparisonCharts(symbols, interval = '1D') {
 
         if (uncached.length === 0) return results;
 
-        if (uncached.length > 0) {
-            try {
-                const snapshot = await fetchChartSnapshot(interval, uncached, window, COMPARISON_CACHE_TTL);
-                if (snapshot?.results) {
-                    snapshot.results.forEach((data, sym) => results.set(sym, data));
-                }
-                if (snapshot?.satisfied?.size) {
-                    uncached = uncached.filter((sym) => !snapshot.satisfied.has(sym));
-                }
-            } catch {
-                // Snapshot optional; ignore errors.
-            }
-        }
-
-        if (uncached.length === 0) return results;
-
         // Use dispatcher for Comparison Charts
         const requests = uncached.map(sym => {
             const ex = getExchange(sym);
@@ -2317,11 +2296,22 @@ export function clearPriceCache() {
     idbHydratedIntervalKeys.clear();
     sessionHydratedIntervalKeys.clear();
     flushIntervalSourceLog(true);
-    sessionStorage.removeItem(PRICE_CACHE_KEY);
-    sessionStorage.removeItem(INTERVAL_CACHE_KEY);
-    sessionStorage.removeItem(FUNDA_CACHE_KEY);
-    sessionStorage.removeItem(COMPARISON_CACHE_KEY);
+    const sessionStore = getStorage();
+    sessionStore?.removeItem(PRICE_CACHE_KEY);
+    sessionStore?.removeItem(INTERVAL_CACHE_KEY);
+    sessionStore?.removeItem(FUNDA_CACHE_KEY);
+    sessionStore?.removeItem(COMPARISON_CACHE_KEY);
+    priceCacheHydrated = false;
+    priceCacheHydrationPromise = null;
+    intervalCacheHydrated = false;
+    intervalCacheHydrationPromise = null;
+    fundaCacheHydrated = false;
+    fundaCacheHydrationPromise = null;
+    comparisonCacheHydrated = false;
+    comparisonCacheHydrationPromise = null;
+    void clearPriceCacheFromIndexedDb();
     void clearIntervalCacheFromIndexedDb();
+    void clearFundaCacheFromIndexedDb();
     void clearComparisonCacheFromIndexedDb();
 }
 
@@ -2386,6 +2376,7 @@ export function getCachedIntervalEntry(symbol, interval, options = {}) {
  * Read cached fundamentals synchronously (no fetch).
  */
 export function getCachedFundamentals(symbol, options = {}) {
+    if (!fundaCacheHydrated) void ensureFundaCacheHydrated();
     const key = cleanSymbol(symbol);
     const cached = fundaCache.get(key);
     if (isCacheRowFresh(cached, FUNDA_CACHE_TTL)) {
@@ -2400,6 +2391,7 @@ export function getCachedFundamentals(symbol, options = {}) {
  * Read cached price data synchronously (no fetch).
  */
 export function getCachedPrice(symbol) {
+    if (!priceCacheHydrated) void ensurePriceCacheHydrated();
     const key = cleanSymbol(symbol);
     const cached = priceCache.get(key);
     if (isCacheRowFresh(cached, PRICE_CACHE_TTL)) {

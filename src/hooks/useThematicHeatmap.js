@@ -127,11 +127,15 @@ export function useThematicHeatmap(thematicMap, hierarchy, options = {}) {
         () => Array.from(new Set(activeSymbols.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
         [activeSymbols]
     );
+    const allNormalizedSymbols = useMemo(
+        () => Array.from(new Set(allSymbols.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
+        [allSymbols]
+    );
 
     useEffect(() => {
-        if (!normalizedSymbols.length) return;
-        return subscribeIntervalSymbols(HEATMAP_INTERVALS, normalizedSymbols);
-    }, [normalizedSymbols, subscribeIntervalSymbols]);
+        if (!allNormalizedSymbols.length) return;
+        return subscribeIntervalSymbols(HEATMAP_INTERVALS, allNormalizedSymbols);
+    }, [allNormalizedSymbols, subscribeIntervalSymbols]);
 
     const { heatmapData, stockPerfMap, intervalProgress, pendingIntervals } = useMemo(() => {
         const intervalResults = new Map();

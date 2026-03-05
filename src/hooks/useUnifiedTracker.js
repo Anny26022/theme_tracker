@@ -7,7 +7,6 @@ import { useChartVersion, useIntervalVersion, useMarketDataRegistry } from '../c
 
 export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', options = {}) {
     const includeBreadth = options?.includeBreadth !== false;
-    const activeItems = Array.isArray(options?.activeItems) ? options.activeItems : [];
     const { subscribeIntervalSymbols, subscribeChartSymbols, refreshIntervals, refreshCharts } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
     const chartVersion = useChartVersion();
@@ -103,20 +102,9 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
     }, [items, hierarchy, type]);
 
     const symbolsArray = useMemo(() => collectUniqueSymbols(itemToSymbols), [itemToSymbols]);
-    const activeSymbolsArray = useMemo(() => {
-        if (!activeItems.length) return symbolsArray;
-        const activeSymbols = new Set();
-        activeItems.forEach((name) => {
-            const companies = itemToSymbols.get(name) || [];
-            companies.forEach((company) => {
-                if (company?.symbol) activeSymbols.add(company.symbol);
-            });
-        });
-        return [...activeSymbols];
-    }, [activeItems, itemToSymbols, symbolsArray]);
-    const activeSymbolsNormalized = useMemo(
-        () => Array.from(new Set(activeSymbolsArray.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
-        [activeSymbolsArray]
+    const allSymbolsNormalized = useMemo(
+        () => Array.from(new Set(symbolsArray.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
+        [symbolsArray]
     );
 
     const fetchFunc = useCallback(async () => {
@@ -125,35 +113,35 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
         // Performance mode can reuse interval cache and skip 1Y chart fetches.
         const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval, { includeBreadth, cacheOnly: true });
 
-        const missingActive = activeSymbolsNormalized.filter((symbol) => !rawResults.has(symbol));
-        if (missingActive.length > 0) {
-            const refreshKey = missingActive.join(',');
+        const missingSymbols = allSymbolsNormalized.filter((symbol) => !rawResults.has(symbol));
+        if (missingSymbols.length > 0) {
+            const refreshKey = missingSymbols.join(',');
             if (refreshKey !== lastRefreshKeyRef.current) {
                 lastRefreshKeyRef.current = refreshKey;
-                void refreshIntervals([interval], missingActive);
+                void refreshIntervals([interval], missingSymbols);
                 if (includeBreadth) {
-                    void refreshCharts('1Y', missingActive);
+                    void refreshCharts('1Y', missingSymbols);
                 }
             }
         }
 
         return computeTrackerUpdates(items, itemToSymbols, rawResults);
-    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth, refreshIntervals, refreshCharts, activeSymbolsNormalized]);
+    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth, refreshIntervals, refreshCharts, allSymbolsNormalized]);
 
     useEffect(() => {
-        if (activeSymbolsNormalized.length === 0) return;
-        const intervalUnsub = subscribeIntervalSymbols([interval], activeSymbolsNormalized);
-        const chartUnsub = includeBreadth ? subscribeChartSymbols('1Y', activeSymbolsNormalized) : () => { };
+        if (allSymbolsNormalized.length === 0) return;
+        const intervalUnsub = subscribeIntervalSymbols([interval], allSymbolsNormalized);
+        const chartUnsub = includeBreadth ? subscribeChartSymbols('1Y', allSymbolsNormalized) : () => { };
         return () => {
             intervalUnsub?.();
             chartUnsub?.();
         };
-    }, [activeSymbolsNormalized, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
+    }, [allSymbolsNormalized, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
 
     const refreshSignal = includeBreadth ? chartVersion : 0;
     const { data: trackerMap, loading, execute } = useAsync(
         fetchFunc,
-        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal, activeSymbolsNormalized]
+        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal, allSymbolsNormalized]
     );
 
     const resolvedMap = trackerMap || {};

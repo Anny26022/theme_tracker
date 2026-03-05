@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { cleanSymbol, fetchBatchIntervalPerformance, fetchComparisonCharts, fetchFundamentals, fetchLivePrices, getCachedComparisonSeries } from '../services/priceService';
+import { cleanSymbol, fetchBatchIntervalPerformance, fetchBatchIntervalPerformanceBulk, fetchComparisonCharts, fetchFundamentals, fetchLivePrices, getCachedComparisonSeries, getCachedIntervalEntry } from '../services/priceService';
 
 const MarketDataContext = createContext({
     subscribeIntervalSymbols: () => () => { },
@@ -42,11 +42,15 @@ function getIntervalRefreshMs(interval) {
 
 function addSymbols(map, interval, symbols) {
     const existing = map.get(interval) || new Map();
+    const newlyAdded = [];
     symbols.forEach((symbol) => {
-        const next = (existing.get(symbol) || 0) + 1;
+        const prev = existing.get(symbol) || 0;
+        const next = prev + 1;
         existing.set(symbol, next);
+        if (prev === 0) newlyAdded.push(symbol);
     });
     map.set(interval, existing);
+    return newlyAdded;
 }
 
 function removeSymbols(map, interval, symbols) {
@@ -67,6 +71,16 @@ function extractSymbols(map, interval) {
     const entries = map.get(interval);
     if (!entries || entries.size === 0) return [];
     return Array.from(entries.keys());
+}
+
+function normalizeSymbolList(symbols) {
+    return Array.from(new Set((symbols || []).map((symbol) => cleanSymbol(symbol)).filter(Boolean)));
+}
+
+function buildSymbolSetKey(symbols) {
+    if (!Array.isArray(symbols) || symbols.length === 0) return '0::';
+    const sorted = [...symbols].sort();
+    return `${sorted.length}:${sorted.join(',')}`;
 }
 
 export function MarketDataProvider({ children }) {
@@ -237,9 +251,39 @@ export function MarketDataProvider({ children }) {
     }, [notifyFundamentals]);
 
     const refreshIntervals = useCallback(async (intervals, symbols) => {
-        if (!intervals?.length) return;
-        await Promise.all(intervals.map((interval) => refreshInterval(interval, symbols)));
-    }, [refreshInterval]);
+        const normalizedIntervals = Array.from(new Set((intervals || []).filter(Boolean)));
+        if (normalizedIntervals.length === 0) return;
+
+        const normalizedSymbols = normalizeSymbolList(symbols);
+        const hasExplicitSymbols = normalizedSymbols.length > 0;
+        const canBulkFetch = hasExplicitSymbols && normalizedIntervals.length > 1;
+
+        if (canBulkFetch) {
+            const inFlightKey = `interval-bulk:${buildSymbolSetKey(normalizedSymbols)}:${normalizedIntervals.slice().sort().join('|')}`;
+            if (inFlightRef.current.has(inFlightKey)) return;
+
+            inFlightRef.current.add(inFlightKey);
+            try {
+                await fetchBatchIntervalPerformanceBulk(normalizedSymbols, normalizedIntervals);
+                const now = Date.now();
+                normalizedIntervals.forEach((interval) => {
+                    lastIntervalRefreshRef.current.set(interval, now);
+                });
+                notifyInterval();
+            } finally {
+                inFlightRef.current.delete(inFlightKey);
+            }
+            return;
+        }
+
+        await Promise.all(normalizedIntervals.map((interval) => refreshInterval(interval, hasExplicitSymbols ? normalizedSymbols : undefined)));
+        if (hasExplicitSymbols) {
+            const now = Date.now();
+            normalizedIntervals.forEach((interval) => {
+                lastIntervalRefreshRef.current.set(interval, now);
+            });
+        }
+    }, [notifyInterval, refreshInterval]);
 
     const refreshChartsBatch = useCallback(async (interval, symbols) => {
         await refreshCharts(interval, symbols);
@@ -250,13 +294,24 @@ export function MarketDataProvider({ children }) {
         loopTimerRef.current = setInterval(() => {
             if (!isVisibleRef.current) return;
             const now = Date.now();
-            const intervalPromises = [];
+            const dueIntervalGroups = new Map();
             intervalSymbolsRef.current.forEach((_symbols, interval) => {
                 const last = lastIntervalRefreshRef.current.get(interval) || 0;
                 if (now - last >= getIntervalRefreshMs(interval)) {
-                    intervalPromises.push(refreshInterval(interval));
+                    const symbols = extractSymbols(intervalSymbolsRef.current, interval);
+                    if (symbols.length === 0) return;
+                    const key = buildSymbolSetKey(symbols);
+                    const existing = dueIntervalGroups.get(key);
+                    if (existing) {
+                        existing.intervals.push(interval);
+                        return;
+                    }
+                    dueIntervalGroups.set(key, { intervals: [interval], symbols });
                 }
             });
+            const intervalPromises = Array.from(dueIntervalGroups.values()).map(({ intervals, symbols }) => (
+                refreshIntervals(intervals, symbols)
+            ));
             const chartPromises = [];
             chartSymbolsRef.current.forEach((_symbols, interval) => {
                 const last = lastChartRefreshRef.current.get(interval) || 0;
@@ -276,7 +331,7 @@ export function MarketDataProvider({ children }) {
                 void Promise.all([...intervalPromises, ...chartPromises, ...livePromises, ...fundaPromises]);
             }
         }, REFRESH_TICK_MS);
-    }, [refreshCharts, refreshFundamentals, refreshInterval, refreshLive]);
+    }, [refreshCharts, refreshFundamentals, refreshIntervals, refreshLive]);
 
     const maybeStopLoop = useCallback(() => {
         const hasIntervals = intervalSymbolsRef.current.size > 0;
@@ -305,11 +360,24 @@ export function MarketDataProvider({ children }) {
             }
             if (!wasVisible && isVisible) {
                 maybeStartLoop();
-                const intervals = Array.from(intervalSymbolsRef.current.keys());
+                const intervalGroups = new Map();
+                intervalSymbolsRef.current.forEach((_symbols, interval) => {
+                    const symbols = extractSymbols(intervalSymbolsRef.current, interval);
+                    if (symbols.length === 0) return;
+                    const key = buildSymbolSetKey(symbols);
+                    const existing = intervalGroups.get(key);
+                    if (existing) {
+                        existing.intervals.push(interval);
+                        return;
+                    }
+                    intervalGroups.set(key, { intervals: [interval], symbols });
+                });
                 const charts = Array.from(chartSymbolsRef.current.keys());
                 const liveSymbols = Array.from(liveSymbolsRef.current.keys());
                 const fundaSymbols = Array.from(fundaSymbolsRef.current.keys());
-                void refreshIntervals(intervals);
+                void Promise.all(Array.from(intervalGroups.values()).map(({ intervals, symbols }) => (
+                    refreshIntervals(intervals, symbols)
+                )));
                 void Promise.all(charts.map((interval) => refreshCharts(interval)));
                 void refreshLive();
                 void refreshFundamentals(fundaSymbols);
@@ -331,12 +399,36 @@ export function MarketDataProvider({ children }) {
     }, [maybeStartLoop, refreshCharts, refreshFundamentals, refreshIntervals, refreshLive]);
 
     const subscribeIntervalSymbols = useCallback((intervals, symbols) => {
-        const normalized = (symbols || []).map((symbol) => cleanSymbol(symbol)).filter(Boolean);
+        const normalized = normalizeSymbolList(symbols);
         if (!intervals?.length || normalized.length === 0) return () => { };
 
-        intervals.forEach((interval) => addSymbols(intervalSymbolsRef.current, interval, normalized));
+        const freshByInterval = [];
+        intervals.forEach((interval) => {
+            const newlyAdded = addSymbols(intervalSymbolsRef.current, interval, normalized);
+            if (newlyAdded.length > 0) {
+                const uncached = newlyAdded.filter((symbol) => {
+                    const entry = getCachedIntervalEntry(symbol, interval, { silent: true });
+                    return !entry?.hasEntry;
+                });
+                if (uncached.length > 0) {
+                    freshByInterval.push({ interval, symbols: uncached });
+                }
+            }
+        });
         maybeStartLoop();
-        void refreshIntervals(intervals, normalized);
+        if (freshByInterval.length > 0) {
+            const grouped = new Map();
+            freshByInterval.forEach(({ interval, symbols: added }) => {
+                const key = buildSymbolSetKey(added);
+                if (!grouped.has(key)) {
+                    grouped.set(key, { intervals: [], symbols: added });
+                }
+                grouped.get(key).intervals.push(interval);
+            });
+            void Promise.all(Array.from(grouped.values()).map(({ intervals: intervalBatch, symbols: symbolBatch }) => (
+                refreshIntervals(intervalBatch, symbolBatch)
+            )));
+        }
 
         return () => {
             intervals.forEach((interval) => removeSymbols(intervalSymbolsRef.current, interval, normalized));
@@ -348,9 +440,11 @@ export function MarketDataProvider({ children }) {
         const normalized = (symbols || []).map((symbol) => cleanSymbol(symbol)).filter(Boolean);
         if (!interval || normalized.length === 0) return () => { };
 
-        addSymbols(chartSymbolsRef.current, interval, normalized);
+        const newlyAdded = addSymbols(chartSymbolsRef.current, interval, normalized);
         maybeStartLoop();
-        void refreshCharts(interval, normalized);
+        if (newlyAdded.length > 0) {
+            void refreshCharts(interval, newlyAdded);
+        }
 
         return () => {
             removeSymbols(chartSymbolsRef.current, interval, normalized);
@@ -363,9 +457,12 @@ export function MarketDataProvider({ children }) {
         const normalized = (symbols || []).map((symbol) => cleanSymbol(symbol)).filter(Boolean);
         if (normalized.length === 0) return () => { };
 
+        const newlyAdded = [];
         normalized.forEach((symbol) => {
-            const next = (liveSymbolsRef.current.get(symbol) || 0) + 1;
+            const prev = liveSymbolsRef.current.get(symbol) || 0;
+            const next = prev + 1;
             liveSymbolsRef.current.set(symbol, next);
+            if (prev === 0) newlyAdded.push(symbol);
         });
         if (!skipStrike) {
             normalized.forEach((symbol) => {
@@ -374,7 +471,9 @@ export function MarketDataProvider({ children }) {
             });
         }
         maybeStartLoop();
-        void refreshLive(normalized, { skipStrike });
+        if (newlyAdded.length > 0) {
+            void refreshLive(newlyAdded, { skipStrike });
+        }
 
         return () => {
             normalized.forEach((symbol) => {
@@ -403,12 +502,17 @@ export function MarketDataProvider({ children }) {
         const normalized = (symbols || []).map((symbol) => cleanSymbol(symbol)).filter(Boolean);
         if (normalized.length === 0) return () => { };
 
+        const newlyAdded = [];
         normalized.forEach((symbol) => {
-            const next = (fundaSymbolsRef.current.get(symbol) || 0) + 1;
+            const prev = fundaSymbolsRef.current.get(symbol) || 0;
+            const next = prev + 1;
             fundaSymbolsRef.current.set(symbol, next);
+            if (prev === 0) newlyAdded.push(symbol);
         });
         maybeStartLoop();
-        void refreshFundamentals(normalized);
+        if (newlyAdded.length > 0) {
+            void refreshFundamentals(newlyAdded);
+        }
 
         return () => {
             normalized.forEach((symbol) => {

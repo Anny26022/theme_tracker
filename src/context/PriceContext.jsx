@@ -15,8 +15,8 @@ export function PriceProvider({ children }) {
  */
 export function useLivePrice(symbol, options = {}) {
     const { subscribeLiveSymbols, subscribeLiveVersion, getLiveVersion } = useMarketDataRegistry();
-    const { allowStrike = false } = options;
-    const canSubscribe = Boolean(symbol);
+    const { allowStrike = false, enableFetch = true } = options;
+    const canSubscribe = Boolean(symbol) && enableFetch;
     const liveVersion = useSyncExternalStore(
         canSubscribe ? subscribeLiveVersion : NOOP_SUBSCRIBE,
         canSubscribe ? getLiveVersion : ZERO_SNAPSHOT,
@@ -26,9 +26,9 @@ export function useLivePrice(symbol, options = {}) {
     const hasCache = !!getCachedPrice(symbol) || !!getCachedInterval(symbol, '1D', { silent: true })?.close;
 
     useEffect(() => {
-        if (!symbol || hasCache) return;
+        if (!symbol || !enableFetch || hasCache) return;
         return subscribeLiveSymbols([symbol], { skipStrike: !allowStrike });
-    }, [symbol, hasCache, allowStrike, subscribeLiveSymbols]);
+    }, [symbol, hasCache, allowStrike, enableFetch, subscribeLiveSymbols]);
 
     const data = useMemo(() => {
         const cacheVersion = liveVersion;
@@ -53,6 +53,6 @@ export function useLivePrice(symbol, options = {}) {
         changePct: data?.changePct ?? null,
         prevClose: data?.prevClose ?? null,
         source: data?.source ?? null,
-        loading: !data && !!symbol,
+        loading: enableFetch && !data && !!symbol,
     };
 }

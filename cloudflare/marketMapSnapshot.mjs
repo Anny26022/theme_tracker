@@ -1,15 +1,17 @@
 import rawMarketData from '../public/data.json' with { type: 'json' };
 import { buildHierarchyFromRawData } from '../packages/core/src/market/hierarchy.ts';
+import { calculateEMA } from '../packages/core/src/math/indicators.ts';
 import { THEMATIC_MAP } from '../src/data/thematicMap.js';
 import { RPC_CHART, RPC_PRICE } from '../src/lib/stealth.js';
 
-const SNAPSHOT_VERSION = 1;
-const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
+const SNAPSHOT_VERSION = 4;
+const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD', '5Y', 'MAX'];
 const SNAPSHOT_KEY_PREFIX = 'market-map/snapshots';
 const PRICE_BATCH_SIZE = 500;
 const CHART_BATCH_SIZE = 250;
 const CHART_CONCURRENCY = 3;
-const CHART_WINDOW = 6; // 1Y base series
+const ONE_YEAR_CHART_WINDOW = 6;
+const MAX_CHART_WINDOW = 8;
 const SNAPSHOT_CACHE_CONTROL = 'public, max-age=60, s-maxage=300, stale-while-revalidate=900';
 const GOOGLE_HEADERS = {
     'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
@@ -192,6 +194,7 @@ function deriveIntervalPerfFromBaseSeries(series, interval, currentPriceOverride
             '3M': 63,
             '6M': 126,
             '1Y': 252,
+            '5Y': 1260,
         }[interval];
 
         if (!Number.isFinite(lookbackBars)) return null;
@@ -242,48 +245,54 @@ function buildIndustryMap(sourceHierarchy) {
     return industryMap;
 }
 
-function buildThemeToSymbols(sourceHierarchy, { includeBse = true } = {}) {
+function buildThemeToCompanies(sourceHierarchy, { includeBse = true } = {}) {
     const industryMap = buildIndustryMap(sourceHierarchy);
-    const themeToSymbols = new Map();
+    const themeToCompanies = new Map();
     const assigned = new Set();
-    const allSymbolsSet = new Set();
+    const allCompanies = new Map();
 
-    const registerSymbol = (themeName, rawSymbol) => {
+    const registerCompany = (themeName, rawSymbol, rawName = null) => {
         const symbol = cleanSymbol(rawSymbol);
         if (!symbol) return;
         if (!includeBse && isBseSymbol(symbol)) return;
         if (assigned.has(symbol)) return;
         assigned.add(symbol);
-        if (!themeToSymbols.has(themeName)) themeToSymbols.set(themeName, new Set());
-        themeToSymbols.get(themeName).add(symbol);
-        allSymbolsSet.add(symbol);
+        if (!themeToCompanies.has(themeName)) themeToCompanies.set(themeName, []);
+        const company = { symbol, name: rawName || symbol };
+        themeToCompanies.get(themeName).push(company);
+        allCompanies.set(symbol, company);
     };
 
     THEMATIC_MAP.forEach((block) => {
         block.themes.forEach((theme) => {
-            if (!themeToSymbols.has(theme.name)) themeToSymbols.set(theme.name, new Set());
-            (theme.symbols || []).forEach((symbol) => registerSymbol(theme.name, symbol));
+            if (!themeToCompanies.has(theme.name)) themeToCompanies.set(theme.name, []);
+            (theme.symbols || []).forEach((symbol) => registerCompany(theme.name, symbol));
         });
     });
 
     THEMATIC_MAP.forEach((block) => {
         block.themes.forEach((theme) => {
-            if (!themeToSymbols.has(theme.name)) themeToSymbols.set(theme.name, new Set());
+            if (!themeToCompanies.has(theme.name)) themeToCompanies.set(theme.name, []);
             (theme.industries || []).forEach((industryName) => {
                 const companies = industryMap[industryName] || [];
-                companies.forEach((company) => registerSymbol(theme.name, company?.symbol));
+                companies.forEach((company) => registerCompany(theme.name, company?.symbol, company?.name));
             });
         });
     });
 
-    const finalizedThemeToSymbols = new Map();
-    themeToSymbols.forEach((symbols, themeName) => {
-        finalizedThemeToSymbols.set(themeName, Array.from(symbols));
+    const finalizedThemeToCompanies = new Map();
+    themeToCompanies.forEach((companies, themeName) => {
+        finalizedThemeToCompanies.set(
+            themeName,
+            companies
+                .slice()
+                .sort((a, b) => String(a.name || a.symbol).localeCompare(String(b.name || b.symbol)))
+        );
     });
 
     return {
-        themeToSymbols: finalizedThemeToSymbols,
-        allSymbols: Array.from(allSymbolsSet),
+        themeToCompanies: finalizedThemeToCompanies,
+        allSymbols: Array.from(allCompanies.keys()),
     };
 }
 
@@ -340,7 +349,7 @@ async function fetchBaseChartSeriesMap(symbols) {
         try {
             const entries = chunk.map((symbol) => [
                 RPC_CHART,
-                JSON.stringify([[[null, [symbol, getExchange(symbol)]]], CHART_WINDOW, null, null, null, null, null, 0]),
+                JSON.stringify([[[null, [symbol, getExchange(symbol)]]], ONE_YEAR_CHART_WINDOW, null, null, null, null, null, 0]),
                 null,
                 'generic'
             ]);
@@ -361,10 +370,38 @@ async function fetchBaseChartSeriesMap(symbols) {
     return results;
 }
 
-function aggregateHeatmap(themeToSymbols, perfByInterval) {
+async function fetchMaxChartSeriesMap(symbols) {
+    const results = new Map();
+
+    await runInChunks(symbols, CHART_BATCH_SIZE, async (chunk) => {
+        try {
+            const entries = chunk.map((symbol) => [
+                RPC_CHART,
+                JSON.stringify([[[null, [symbol, getExchange(symbol)]]], MAX_CHART_WINDOW, null, null, null, null, null, 0]),
+                null,
+                'generic'
+            ]);
+
+            const text = await executeGoogleBatch(entries);
+            parseAllFrames(text)
+                .filter((frame) => frame.rpcId === RPC_CHART)
+                .forEach((frame) => {
+                    const extracted = extractCloseSeriesFromFrame(frame.payload);
+                    if (extracted) results.set(extracted.symbol, extracted.series);
+                });
+        } catch {
+            // Keep snapshot generation best-effort; missing chunks reduce coverage but should
+            // not prevent serving the rest of the map.
+        }
+    }, CHART_CONCURRENCY);
+
+    return results;
+}
+
+function aggregateHeatmap(themeToCompanies, perfByInterval) {
     const heatmapData = {};
 
-    themeToSymbols.forEach((symbols, themeName) => {
+    themeToCompanies.forEach((companies, themeName) => {
         const intervalMap = {};
 
         SNAPSHOT_INTERVALS.forEach((interval) => {
@@ -372,7 +409,8 @@ function aggregateHeatmap(themeToSymbols, perfByInterval) {
             let sum = 0;
             let validCount = 0;
 
-            symbols.forEach((symbol) => {
+            companies.forEach((company) => {
+                const symbol = company?.symbol;
                 const data = perfMap.get(symbol);
                 if (!data || typeof data.changePct !== 'number' || !Number.isFinite(data.changePct)) return;
                 sum += data.changePct;
@@ -388,19 +426,23 @@ function aggregateHeatmap(themeToSymbols, perfByInterval) {
     return heatmapData;
 }
 
-function buildScopeCoverage(themeToSymbols, perfByInterval, livePrices, baseCharts) {
+function buildScopeCoverage(themeToCompanies, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals) {
     const scopeSymbols = new Set();
-    themeToSymbols.forEach((symbols) => {
-        symbols.forEach((symbol) => scopeSymbols.add(symbol));
+    themeToCompanies.forEach((companies) => {
+        companies.forEach((company) => scopeSymbols.add(company.symbol));
     });
 
     let coveredSymbols = 0;
     let livePriceSymbols = 0;
-    let baseChartSymbols = 0;
+    let oneYearBaseChartSymbols = 0;
+    let maxBaseChartSymbols = 0;
+    let technicalSymbols = 0;
 
     scopeSymbols.forEach((symbol) => {
         if (livePrices.has(symbol)) livePriceSymbols += 1;
-        if (baseCharts.has(symbol)) baseChartSymbols += 1;
+        if (oneYearBaseCharts.has(symbol)) oneYearBaseChartSymbols += 1;
+        if (maxBaseCharts.has(symbol)) maxBaseChartSymbols += 1;
+        if (symbolTechnicals[symbol]) technicalSymbols += 1;
         const hasCoverage = SNAPSHOT_INTERVALS.some((interval) => perfByInterval.get(interval)?.has(symbol));
         if (hasCoverage) coveredSymbols += 1;
     });
@@ -410,58 +452,179 @@ function buildScopeCoverage(themeToSymbols, perfByInterval, livePrices, baseChar
         coverage: {
             coveredSymbols,
             livePriceSymbols,
-            baseChartSymbols,
+            oneYearBaseChartSymbols,
+            maxBaseChartSymbols,
+            technicalSymbols,
         }
     };
 }
 
-function buildScopeSnapshot(scope, themeToSymbols, perfByInterval, generatedAt, metrics) {
+function buildScopeSymbolPerf(themeToCompanies, perfByInterval) {
+    const scopeSymbols = new Set();
+    themeToCompanies.forEach((companies) => {
+        companies.forEach((company) => scopeSymbols.add(company.symbol));
+    });
+
+    const symbolPerf = {};
+    scopeSymbols.forEach((symbol) => {
+        const intervalMap = {};
+        SNAPSHOT_INTERVALS.forEach((interval) => {
+            const data = perfByInterval.get(interval)?.get(symbol);
+            intervalMap[interval] = typeof data?.changePct === 'number' && Number.isFinite(data.changePct)
+                ? data.changePct
+                : null;
+        });
+        symbolPerf[symbol] = intervalMap;
+    });
+
+    return symbolPerf;
+}
+
+function buildScopeSymbolQuotes(themeToCompanies, livePrices, perfByInterval) {
+    const scopeSymbols = new Set();
+    themeToCompanies.forEach((companies) => {
+        companies.forEach((company) => scopeSymbols.add(company.symbol));
+    });
+
+    const symbolQuotes = {};
+    scopeSymbols.forEach((symbol) => {
+        const live = livePrices.get(symbol);
+        const perf1D = perfByInterval.get('1D')?.get(symbol);
+        const price = Number.isFinite(live?.price) ? live.price : (Number.isFinite(perf1D?.close) ? perf1D.close : null);
+        const changePct = Number.isFinite(live?.changePct) ? live.changePct : (Number.isFinite(perf1D?.changePct) ? perf1D.changePct : null);
+        const change = Number.isFinite(live?.change) ? live.change : null;
+        const prevClose = Number.isFinite(live?.prevClose) ? live.prevClose : null;
+
+        symbolQuotes[symbol] = {
+            price: Number.isFinite(price) ? price : null,
+            change: Number.isFinite(change) ? change : null,
+            changePct: Number.isFinite(changePct) ? changePct : null,
+            prevClose: Number.isFinite(prevClose) ? prevClose : null,
+        };
+    });
+
+    return symbolQuotes;
+}
+
+function buildScopeSymbolTechnicals(themeToCompanies, symbolTechnicals) {
+    const scopeSymbols = new Set();
+    themeToCompanies.forEach((companies) => {
+        companies.forEach((company) => scopeSymbols.add(company.symbol));
+    });
+
+    const scopedTechnicals = {};
+    scopeSymbols.forEach((symbol) => {
+        if (symbolTechnicals[symbol]) scopedTechnicals[symbol] = symbolTechnicals[symbol];
+    });
+
+    return scopedTechnicals;
+}
+
+function buildSymbolTechnicals(oneYearBaseCharts, livePrices) {
+    const symbolTechnicals = {};
+
+    oneYearBaseCharts.forEach((series, symbol) => {
+        const prices = series
+            .map((point) => Number(point?.close))
+            .filter((value) => Number.isFinite(value) && value > 0);
+
+        if (prices.length < 5) return;
+
+        const lastBaseClose = prices[prices.length - 1];
+        const livePrice = Number(livePrices.get(symbol)?.price);
+        const currentPrice = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : lastBaseClose;
+        if (!(currentPrice > 0)) return;
+
+        const ema10 = calculateEMA(prices, 10);
+        const ema21 = calculateEMA(prices, 21);
+        const ema50 = calculateEMA(prices, 50);
+        const ema150 = calculateEMA(prices, 150);
+        const ema200 = calculateEMA(prices, 200);
+
+        symbolTechnicals[symbol] = {
+            above10EMA: ema10 !== null ? currentPrice > ema10 : null,
+            above21EMA: ema21 !== null ? currentPrice > ema21 : null,
+            above50EMA: ema50 !== null ? currentPrice > ema50 : null,
+            above150EMA: ema150 !== null ? currentPrice > ema150 : null,
+            above200EMA: ema200 !== null ? currentPrice > ema200 : null,
+        };
+    });
+
+    return symbolTechnicals;
+}
+
+function buildThemeConstituents(themeToCompanies) {
+    const themeConstituents = {};
+
+    themeToCompanies.forEach((companies, themeName) => {
+        themeConstituents[themeName] = companies.map((company) => ({
+            symbol: company.symbol,
+            name: company.name || company.symbol,
+        }));
+    });
+
+    return themeConstituents;
+}
+
+function buildScopeSnapshot(scope, themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, metrics) {
     return {
         version: SNAPSHOT_VERSION,
         generatedAt,
         scope,
         intervals: SNAPSHOT_INTERVALS,
         symbolCount: metrics.symbolCount,
-        themeCount: themeToSymbols.size,
+        themeCount: themeToCompanies.size,
         coverage: metrics.coverage,
-        heatmapData: aggregateHeatmap(themeToSymbols, perfByInterval),
+        heatmapData: aggregateHeatmap(themeToCompanies, perfByInterval),
+        themeConstituents: buildThemeConstituents(themeToCompanies),
+        symbolPerf: buildScopeSymbolPerf(themeToCompanies, perfByInterval),
+        symbolQuotes: buildScopeSymbolQuotes(themeToCompanies, livePrices, perfByInterval),
+        symbolTechnicals: buildScopeSymbolTechnicals(themeToCompanies, symbolTechnicals),
     };
 }
 
 export async function buildMarketMapSnapshots() {
     const generatedAt = new Date().toISOString();
     const hierarchyData = buildHierarchyFromRawData(rawMarketData);
-    const allMapping = buildThemeToSymbols(hierarchyData, { includeBse: true });
-    const nseMapping = buildThemeToSymbols(hierarchyData, { includeBse: false });
+    const allMapping = buildThemeToCompanies(hierarchyData, { includeBse: true });
+    const nseMapping = buildThemeToCompanies(hierarchyData, { includeBse: false });
     const allSymbols = [...new Set(allMapping.allSymbols.map((symbol) => cleanSymbol(symbol)).filter(Boolean))].sort();
 
-    const [livePrices, baseCharts] = await Promise.all([
+    const [livePrices, oneYearBaseCharts, maxBaseCharts] = await Promise.all([
         fetchLivePriceMap(allSymbols),
         fetchBaseChartSeriesMap(allSymbols),
+        fetchMaxChartSeriesMap(allSymbols),
     ]);
 
     const perfByInterval = new Map(SNAPSHOT_INTERVALS.map((interval) => [interval, new Map()]));
+    const symbolTechnicals = buildSymbolTechnicals(oneYearBaseCharts, livePrices);
 
     allSymbols.forEach((symbol) => {
         const liveData = livePrices.get(symbol) || null;
-        const baseSeries = baseCharts.get(symbol) || null;
+        const oneYearSeries = oneYearBaseCharts.get(symbol) || null;
+        const maxSeries = maxBaseCharts.get(symbol) || null;
 
-        const oneDay = deriveOneDayPerf(liveData, baseSeries);
+        const oneDay = deriveOneDayPerf(liveData, oneYearSeries || maxSeries);
         if (oneDay) perfByInterval.get('1D').set(symbol, oneDay);
 
         ['5D', '1M', '3M', '6M', '1Y', 'YTD'].forEach((interval) => {
-            const derived = deriveIntervalPerfFromBaseSeries(baseSeries, interval, liveData?.price);
+            const derived = deriveIntervalPerfFromBaseSeries(oneYearSeries, interval, liveData?.price);
+            if (derived) perfByInterval.get(interval).set(symbol, derived);
+        });
+
+        ['5Y', 'MAX'].forEach((interval) => {
+            const derived = deriveIntervalPerfFromBaseSeries(maxSeries, interval, liveData?.price);
             if (derived) perfByInterval.get(interval).set(symbol, derived);
         });
 
     });
 
-    const allMetrics = buildScopeCoverage(allMapping.themeToSymbols, perfByInterval, livePrices, baseCharts);
-    const nseMetrics = buildScopeCoverage(nseMapping.themeToSymbols, perfByInterval, livePrices, baseCharts);
+    const allMetrics = buildScopeCoverage(allMapping.themeToCompanies, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals);
+    const nseMetrics = buildScopeCoverage(nseMapping.themeToCompanies, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals);
 
     return {
-        all: buildScopeSnapshot('all', allMapping.themeToSymbols, perfByInterval, generatedAt, allMetrics),
-        nse: buildScopeSnapshot('nse', nseMapping.themeToSymbols, perfByInterval, generatedAt, nseMetrics),
+        all: buildScopeSnapshot('all', allMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, allMetrics),
+        nse: buildScopeSnapshot('nse', nseMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, nseMetrics),
     };
 }
 

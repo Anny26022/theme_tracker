@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useCallback, useState, useEffect, useSyncExtern
 import { cleanSymbol, getCachedComparisonSeries, getCachedInterval } from '../services/priceService';
 import { useMarketDataRegistry, useChartVersion } from '../context/MarketDataContext';
 import { useLivePrice } from '../context/PriceContext';
+import { useMarketMapSnapshotSymbol } from '../hooks/useMarketMapSnapshot';
 import { ZoomIn, ZoomOut, Maximize2, ExternalLink } from 'lucide-react';
 
 const buildSmaSeries = (values, period) => {
@@ -68,6 +69,7 @@ const areFinvizChartPropsEqual = (prevProps, nextProps) => {
     if (prevProps.disabled !== nextProps.disabled) return false;
     if (prevProps.useExternalSeries !== nextProps.useExternalSeries) return false;
     if (prevProps.enableLivePrice !== nextProps.enableLivePrice) return false;
+    if (prevProps.preferMaxHistory !== nextProps.preferMaxHistory) return false;
     return true;
 };
 
@@ -88,6 +90,7 @@ function FinvizChartBase({
     allowStrike: allowStrikeProp = null,
     useExternalSeries = false,
     enableLivePrice = false,
+    preferMaxHistory = false,
     chartVersion = 0,
     subscribeChartSymbols = null
 }) {
@@ -173,25 +176,26 @@ function FinvizChartBase({
     const effectiveChartVersion = useExternalSeries ? 0 : chartVersion;
 
     const apiInterval = useMemo(() => {
+        if (!preferMaxHistory) return '1Y';
         if (timeframe === '1D') return '1Y';
         return 'MAX';
-    }, [timeframe]);
+    }, [preferMaxHistory, timeframe]);
 
     useEffect(() => {
         if (useExternalSeries || !subscribeChartSymbols || !symbol) return;
-        // Fetch the appropriate high-res window + MAX for deep history/SMA
+        // Default chart surfaces stay on 1Y. Pro charts opt into MAX history.
         const unsubs = [subscribeChartSymbols(apiInterval, [symbol])];
-        if (apiInterval === '1Y') {
+        if (preferMaxHistory && apiInterval === '1Y') {
             unsubs.push(subscribeChartSymbols('MAX', [symbol]));
         }
         return () => unsubs.forEach(u => u?.());
-    }, [symbol, apiInterval, subscribeChartSymbols, useExternalSeries]);
+    }, [symbol, apiInterval, preferMaxHistory, subscribeChartSymbols, useExternalSeries]);
 
     const activeSeries = useMemo(() => {
         if (useExternalSeries) return Array.isArray(series) ? series : [];
         if (!symbol) return series || [];
         const cachedTarget = getCachedComparisonSeries(cleaned, apiInterval, { silent: true });
-        const cachedMax = (apiInterval === '1Y') ? getCachedComparisonSeries(cleaned, 'MAX', { silent: true }) : null;
+        const cachedMax = (preferMaxHistory && apiInterval === '1Y') ? getCachedComparisonSeries(cleaned, 'MAX', { silent: true }) : null;
 
         // REOLUTION STITCHER: If we want 1D (daily), merge 1Y daily data onto MAX weekly history
         if (apiInterval === '1Y' && Array.isArray(cachedTarget) && cachedTarget.length > 0) {
@@ -204,7 +208,7 @@ function FinvizChartBase({
         }
 
         return (cachedTarget && cachedTarget.length > 0) ? cachedTarget : (series || []);
-    }, [cleaned, apiInterval, effectiveChartVersion, series, symbol, useExternalSeries]);
+    }, [cleaned, apiInterval, effectiveChartVersion, preferMaxHistory, series, symbol, useExternalSeries]);
     const hasSeriesData = (activeSeries?.length || 0) > 1;
 
     const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
@@ -782,16 +786,23 @@ function FinvizChartBase({
         );
     }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned, isProMode, paintBars]);
 
-    const allowStrike = allowStrikeProp ?? (isProMode ? isActive : false);
+    const allowStrike = allowStrikeProp ?? false;
     const liveData = useLivePrice(shouldLive ? cleaned : '', { allowStrike });
+    const snapshotSymbol = useMarketMapSnapshotSymbol(cleaned);
 
     // Map chart timeframe → interval key for actual period performance
     const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
     const intervalKey = TIMEFRAME_TO_INTERVAL[timeframe] || '1D';
     const cachedPerf = getCachedInterval(cleaned, intervalKey, { silent: true });
+    const snapshotPerfPct = snapshotSymbol?.perf?.[intervalKey];
+    const snapshotQuote = snapshotSymbol?.quote;
 
-    let changePct = cachedPerf?.changePct ?? 0;
-    let change = cachedPerf?.close ? cachedPerf.close - cachedPerf.close / (1 + changePct / 100) : 0;
+    let changePct = cachedPerf?.changePct ?? (Number.isFinite(snapshotPerfPct) ? snapshotPerfPct : 0);
+    let change = cachedPerf?.close
+        ? cachedPerf.close - cachedPerf.close / (1 + changePct / 100)
+        : (Number.isFinite(snapshotQuote?.price) && Number.isFinite(changePct)
+            ? snapshotQuote.price - snapshotQuote.price / (1 + changePct / 100)
+            : 0);
 
     // When rendered inside a mobile gallery or pure display mode, disable interaction hooks
     // to allow native browser swiping (overflow-x-auto) to work properly.
@@ -895,6 +906,9 @@ function FinvizChartBase({
     if (timeframe === '1D' && liveData.changePct !== null) {
         change = liveData.change ?? 0;
         changePct = liveData.changePct;
+    } else if (timeframe === '1D' && snapshotQuote && Number.isFinite(snapshotQuote.changePct)) {
+        change = Number.isFinite(snapshotQuote.change) ? snapshotQuote.change : change;
+        changePct = snapshotQuote.changePct;
     }
 
     return (

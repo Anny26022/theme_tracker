@@ -8,6 +8,7 @@ import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
+import { useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
 
 const DomainGridComponents = {
     List: React.forwardRef(({ style, children, ...props }, ref) => (
@@ -34,6 +35,7 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
     const [showResults, setShowResults] = useState(false);
     const [syncCopied, setSyncCopied] = useState(false);
     const inputRef = useRef(null);
+    useMarketMapSnapshot('all');
 
     // Flatten all industries across all sectors (deduplicated by name)
     const { allIndustries, companiesIndex } = useMemo(() => {

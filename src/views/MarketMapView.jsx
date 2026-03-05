@@ -131,7 +131,7 @@ const buildNseThemeCompaniesMap = (allThemeCompaniesMap) => {
     return next;
 };
 
-function useCompositionPerfMap(companies, fallbackPerfMapRef, fallbackPerfMap) {
+function useCompositionPerfMap(companies, snapshotSymbolPerf, fallbackPerfMapRef, fallbackPerfMap, allowNetworkFetch = true) {
     const { subscribeIntervalSymbols } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
 
@@ -140,10 +140,17 @@ function useCompositionPerfMap(companies, fallbackPerfMapRef, fallbackPerfMap) {
         [companies]
     );
 
+    const missingSymbols = useMemo(() => {
+        if (!allowNetworkFetch) return EMPTY_ARRAY;
+        return normalizedSymbols.filter((symbol) =>
+            COMPOSITION_INTERVAL_KEYS.some((interval) => !Number.isFinite(snapshotSymbolPerf?.[symbol]?.[interval]))
+        );
+    }, [allowNetworkFetch, normalizedSymbols, snapshotSymbolPerf]);
+
     useEffect(() => {
-        if (!normalizedSymbols.length) return;
-        return subscribeIntervalSymbols(COMPOSITION_INTERVAL_KEYS, normalizedSymbols);
-    }, [normalizedSymbols, subscribeIntervalSymbols]);
+        if (!missingSymbols.length) return;
+        return subscribeIntervalSymbols(COMPOSITION_INTERVAL_KEYS, missingSymbols);
+    }, [missingSymbols, subscribeIntervalSymbols]);
 
     return useMemo(() => {
         const merged = new Map();
@@ -151,6 +158,14 @@ function useCompositionPerfMap(companies, fallbackPerfMapRef, fallbackPerfMap) {
 
         COMPOSITION_INTERVAL_KEYS.forEach((interval) => {
             const intervalMap = new Map();
+
+            normalizedSymbols.forEach((symbol) => {
+                const snapshotValue = snapshotSymbolPerf?.[symbol]?.[interval];
+                if (Number.isFinite(snapshotValue)) {
+                    intervalMap.set(symbol, { changePct: snapshotValue });
+                }
+            });
+
             const baseIntervalMap = basePerfMap?.get(interval);
             if (baseIntervalMap instanceof Map) {
                 baseIntervalMap.forEach((value, symbol) => {
@@ -169,7 +184,7 @@ function useCompositionPerfMap(companies, fallbackPerfMapRef, fallbackPerfMap) {
         });
 
         return merged;
-    }, [fallbackPerfMap, fallbackPerfMapRef, intervalVersion, normalizedSymbols]);
+    }, [fallbackPerfMap, fallbackPerfMapRef, intervalVersion, normalizedSymbols, snapshotSymbolPerf]);
 }
 
 const buildSyncData = (mapSource, themeCompaniesMap) => {
@@ -210,9 +225,9 @@ const getHeatmapColor = (value) => {
     return 'bg-[var(--ui-muted)]/10 border border-[var(--ui-divider)]/20 text-[var(--text-muted)]';
 };
 
-const CompositionCard = ({ theme, companies, stockPerfMap, stockPerfMapRef, onClose, isMobile }) => {
+const CompositionCard = ({ theme, companies, snapshotSymbolPerf, stockPerfMap, stockPerfMapRef, onClose, isMobile, allowNetworkFetch }) => {
     const count = companies.length;
-    const perfMap = useCompositionPerfMap(companies, stockPerfMapRef, stockPerfMap);
+    const perfMap = useCompositionPerfMap(companies, snapshotSymbolPerf, stockPerfMapRef, stockPerfMap, allowNetworkFetch);
     const hasAnyMissingData = useMemo(() => {
         if (!perfMap || perfMap.size === 0) return false;
         return companies.some(stock => {
@@ -335,7 +350,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, stockPerfMapRef, onCl
     );
 };
 
-const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMapRef, isHighlighted, isMobile, alignPopover = 'right', onSelect }) => {
+const ThemeRow = React.memo(({ theme, companies, themePerf, loading, snapshotSymbolPerf, stockPerfMapRef, isHighlighted, isMobile, alignPopover = 'right', onSelect, allowCompositionNetworkFetch }) => {
     const [isHovered, setIsHovered] = useState(false);
     const count = companies.length;
 
@@ -382,7 +397,9 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                                 <CompositionCard
                                     theme={theme}
                                     companies={companies}
+                                    snapshotSymbolPerf={snapshotSymbolPerf}
                                     stockPerfMapRef={stockPerfMapRef}
+                                    allowNetworkFetch={allowCompositionNetworkFetch}
                                     onClose={() => setIsHovered(false)}
                                     isMobile={true}
                                 />
@@ -401,7 +418,9 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
                             <CompositionCard
                                 theme={theme}
                                 companies={companies}
+                                snapshotSymbolPerf={snapshotSymbolPerf}
                                 stockPerfMapRef={stockPerfMapRef}
+                                allowNetworkFetch={allowCompositionNetworkFetch}
                                 isMobile={false}
                             />
                         </div>
@@ -430,15 +449,17 @@ const ThemeRow = React.memo(({ theme, companies, themePerf, loading, stockPerfMa
     if (prevProps.loading !== nextProps.loading) return false;
     if (prevProps.theme !== nextProps.theme) return false;
     if (prevProps.companies !== nextProps.companies) return false;
+    if (prevProps.snapshotSymbolPerf !== nextProps.snapshotSymbolPerf) return false;
     if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
     if (prevProps.isHighlighted !== nextProps.isHighlighted) return false;
     if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (prevProps.alignPopover !== nextProps.alignPopover) return false;
+    if (prevProps.allowCompositionNetworkFetch !== nextProps.allowCompositionNetworkFetch) return false;
 
     return COLUMNS.every(({ key }) => prevProps.themePerf[key] === nextProps.themePerf[key]);
 });
 
-const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, alignPopover, onSelect }) => {
+const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading, snapshotSymbolPerf, stockPerfMapRef, highlightedTheme, isMobile, alignPopover, onSelect, allowCompositionNetworkFetch }) => {
     return (
         <div className="flex flex-col h-full group/block transition-all duration-700">
             <div className="px-2 py-3 border-b border-[var(--ui-divider)]/40 bg-transparent flex items-center justify-between mb-2 group/header relative">
@@ -482,11 +503,13 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
                                 companies={themeCompaniesMap[theme.name] || EMPTY_ARRAY}
                                 themePerf={heatmapData[theme.name] || EMPTY_THEME_PERF}
                                 loading={loading}
+                                snapshotSymbolPerf={snapshotSymbolPerf}
                                 stockPerfMapRef={stockPerfMapRef}
                                 isHighlighted={highlightedTheme === theme.name}
                                 isMobile={isMobile}
                                 alignPopover={alignPopover}
                                 onSelect={onSelect}
+                                allowCompositionNetworkFetch={allowCompositionNetworkFetch}
                             />
                         ))}
                     </tbody>
@@ -556,10 +579,12 @@ const DeferredThemeBlock = React.memo(({
     themeCompaniesMap,
     heatmapData,
     loading,
+    snapshotSymbolPerf,
     stockPerfMapRef,
     highlightedTheme,
     isMobile,
-    onSelect
+    onSelect,
+    allowCompositionNetworkFetch
 }) => {
     return (
         <div id={blockId} ref={attachRef} data-block-id={blockId} className="scroll-mt-32 min-h-[220px]">
@@ -569,11 +594,13 @@ const DeferredThemeBlock = React.memo(({
                     themeCompaniesMap={themeCompaniesMap}
                     heatmapData={heatmapData}
                     loading={loading}
+                    snapshotSymbolPerf={snapshotSymbolPerf}
                     stockPerfMapRef={stockPerfMapRef}
                     highlightedTheme={highlightedTheme}
                     isMobile={isMobile}
                     alignPopover={alignPopover}
                     onSelect={onSelect}
+                    allowCompositionNetworkFetch={allowCompositionNetworkFetch}
                 />
             ) : (
                 <ThemeBlockSkeleton themeCount={block?.themes?.length || 1} />
@@ -588,14 +615,16 @@ const DeferredThemeBlock = React.memo(({
     if (prevProps.alignPopover !== nextProps.alignPopover) return false;
     if (!prevProps.isVisible && !nextProps.isVisible) return true;
     if (prevProps.loading !== nextProps.loading) return false;
+    if (prevProps.snapshotSymbolPerf !== nextProps.snapshotSymbolPerf) return false;
     if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
     if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (prevProps.onSelect !== nextProps.onSelect) return false;
+    if (prevProps.allowCompositionNetworkFetch !== nextProps.allowCompositionNetworkFetch) return false;
     return !doesBlockNeedUpdate(prevProps, nextProps);
 });
 DeferredThemeBlock.displayName = 'DeferredThemeBlock';
 
-const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, onSelect }) => {
+const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompaniesMap, heatmapData, loading, snapshotSymbolPerf, stockPerfMapRef, highlightedTheme, onSelect, allowCompositionNetworkFetch }) => {
     const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
@@ -687,10 +716,12 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompani
                         themeCompaniesMap={themeCompaniesMap}
                         heatmapData={heatmapData}
                         loading={loading}
+                        snapshotSymbolPerf={snapshotSymbolPerf}
                         stockPerfMapRef={stockPerfMapRef}
                         highlightedTheme={highlightedTheme}
                         isMobile={isMobile}
                         onSelect={onSelect}
+                        allowCompositionNetworkFetch={allowCompositionNetworkFetch}
                     />
                 );
             })}
@@ -699,7 +730,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompani
 });
 ThemeGrid.displayName = 'ThemeGrid';
 
-const ThematicGridPane = React.memo(({ isActive, isMounted, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme }) => {
+const ThematicGridPane = React.memo(({ isActive, isMounted, themeCompaniesMap, heatmapData, loading, snapshotSymbolPerf, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme, allowCompositionNetworkFetch }) => {
     if (!isMounted) return null;
 
     return (
@@ -711,9 +742,11 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, themeCompaniesMap, h
                 themeCompaniesMap={themeCompaniesMap}
                 heatmapData={heatmapData}
                 loading={loading}
+                snapshotSymbolPerf={snapshotSymbolPerf}
                 stockPerfMapRef={stockPerfMapRef}
                 highlightedTheme={highlightedTheme}
                 onSelect={onSelectTheme}
+                allowCompositionNetworkFetch={allowCompositionNetworkFetch}
             />
         </div>
     );
@@ -723,8 +756,10 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, themeCompaniesMap, h
     if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (!prevProps.isActive && !nextProps.isActive) return true;
     if (prevProps.loading !== nextProps.loading) return false;
+    if (prevProps.snapshotSymbolPerf !== nextProps.snapshotSymbolPerf) return false;
     if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
     if (prevProps.onSelectTheme !== nextProps.onSelectTheme) return false;
+    if (prevProps.allowCompositionNetworkFetch !== nextProps.allowCompositionNetworkFetch) return false;
     return !doesBlockNeedUpdate(
         { block: { themes: THEMATIC_MAP.flatMap((mapBlock) => mapBlock.themes) }, themeCompaniesMap: prevProps.themeCompaniesMap, heatmapData: prevProps.heatmapData, highlightedTheme: prevProps.highlightedTheme },
         { block: { themes: THEMATIC_MAP.flatMap((mapBlock) => mapBlock.themes) }, themeCompaniesMap: nextProps.themeCompaniesMap, heatmapData: nextProps.heatmapData, highlightedTheme: nextProps.highlightedTheme }
@@ -732,7 +767,7 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, themeCompaniesMap, h
 });
 ThematicGridPane.displayName = 'ThematicGridPane';
 
-const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme }) => {
+const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, themeCompaniesMap, heatmapData, loading, snapshotSymbolPerf, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme, allowCompositionNetworkFetch }) => {
     if (!isMounted) return null;
 
     return (
@@ -744,9 +779,11 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, themeCompanie
                 themeCompaniesMap={themeCompaniesMap}
                 heatmapData={heatmapData}
                 loading={loading}
+                snapshotSymbolPerf={snapshotSymbolPerf}
                 stockPerfMapRef={stockPerfMapRef}
                 highlightedTheme={highlightedTheme}
                 onSelect={onSelectTheme}
+                allowCompositionNetworkFetch={allowCompositionNetworkFetch}
             />
         </div>
     );
@@ -757,8 +794,10 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, themeCompanie
     if (prevProps.macroMap !== nextProps.macroMap) return false;
     if (!prevProps.isActive && !nextProps.isActive) return true;
     if (prevProps.loading !== nextProps.loading) return false;
+    if (prevProps.snapshotSymbolPerf !== nextProps.snapshotSymbolPerf) return false;
     if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
     if (prevProps.onSelectTheme !== nextProps.onSelectTheme) return false;
+    if (prevProps.allowCompositionNetworkFetch !== nextProps.allowCompositionNetworkFetch) return false;
     return !doesBlockNeedUpdate(
         { block: { themes: prevProps.macroMap.flatMap((mapBlock) => mapBlock.themes || EMPTY_ARRAY) }, themeCompaniesMap: prevProps.themeCompaniesMap, heatmapData: prevProps.heatmapData, highlightedTheme: prevProps.highlightedTheme },
         { block: { themes: nextProps.macroMap.flatMap((mapBlock) => mapBlock.themes || EMPTY_ARRAY) }, themeCompaniesMap: nextProps.themeCompaniesMap, heatmapData: nextProps.heatmapData, highlightedTheme: nextProps.highlightedTheme }
@@ -766,7 +805,7 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, themeCompanie
 });
 MacroGridPane.displayName = 'MacroGridPane';
 
-const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme }) => {
+const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, snapshotSymbolPerf, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme, allowCompositionNetworkFetch }) => {
     const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
 
     useEffect(() => {
@@ -783,10 +822,12 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
                 themeCompaniesMap={themeCompaniesMap}
                 heatmapData={heatmapData}
                 loading={loading}
+                snapshotSymbolPerf={snapshotSymbolPerf}
                 stockPerfMapRef={stockPerfMapRef}
                 highlightedTheme={highlightedTheme}
                 isMobile={isMobile}
                 onSelectTheme={onSelectTheme}
+                allowCompositionNetworkFetch={allowCompositionNetworkFetch}
             />
             <MacroGridPane
                 isActive={viewMode === 'MACRO'}
@@ -795,10 +836,12 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
                 themeCompaniesMap={themeCompaniesMap}
                 heatmapData={heatmapData}
                 loading={loading}
+                snapshotSymbolPerf={snapshotSymbolPerf}
                 stockPerfMapRef={stockPerfMapRef}
                 highlightedTheme={highlightedTheme}
                 isMobile={isMobile}
                 onSelectTheme={onSelectTheme}
+                allowCompositionNetworkFetch={allowCompositionNetworkFetch}
             />
         </>
     );
@@ -990,6 +1033,8 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const snapshotScope = hideBSE ? 'nse' : 'all';
     const {
         snapshotHeatmapData,
+        snapshotThemeConstituents,
+        snapshotSymbolPerf,
         hasSnapshot,
         snapshotAgeMs,
         snapshotIsComplete,
@@ -1031,6 +1076,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const isBackgroundRefreshing = hasSnapshot && pendingIntervals.length > 0;
     const isPrimaryStageOnly = !secondaryPhaseActive && pendingIntervals.length > 0;
     const showInitialLoader = !hasHeatmapData && (snapshotLoading || loading);
+    const allowCompositionNetworkFetch = !hasSnapshot || snapshotSource !== 'server';
 
     const activeSyncData = useMemo(() => {
         if (deferredViewMode === 'MACRO') {
@@ -1236,10 +1282,12 @@ const MarketMapViewComponent = ({ hierarchy }) => {
                             themeCompaniesMap={deferredThemeCompaniesMap}
                             heatmapData={deferredHeatmapData}
                             loading={loading}
+                            snapshotSymbolPerf={snapshotSymbolPerf}
                             stockPerfMapRef={stockPerfMapRef}
                             highlightedTheme={highlightedTheme}
                             isMobile={isMobile}
                             onSelectTheme={onEnterCharts}
+                            allowCompositionNetworkFetch={allowCompositionNetworkFetch}
                         />
                     </>
                 ) : (

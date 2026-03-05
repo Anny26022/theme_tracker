@@ -7,6 +7,7 @@ import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
 import { useMarketDataRegistry } from '../context/MarketDataContext';
+import { useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
 
 const IndustryGridComponents = {
     List: React.forwardRef(({ style, children, ...props }, ref) => (
@@ -31,8 +32,20 @@ IndustryGridComponents.List.displayName = 'IndustryGridList';
 export const IndustryView = ({ sector, industry, companies, sectors, hierarchy, onBack, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
     const { subscribeLiveSymbols } = useMarketDataRegistry();
+    const { snapshotSymbolQuotes, hasSnapshot, snapshotSource } = useMarketMapSnapshot('all');
     const allSymbols = useMemo(() => companies.map(c => c.symbol), [companies]);
-    useEffect(() => subscribeLiveSymbols(allSymbols, { skipStrike: true }), [allSymbols, subscribeLiveSymbols]);
+    const allowLiveFallback = !hasSnapshot || snapshotSource !== 'server';
+    const missingLiveSymbols = useMemo(
+        () => allSymbols.filter((symbol) => {
+            const quote = snapshotSymbolQuotes?.[symbol];
+            return !Number.isFinite(quote?.price) || !Number.isFinite(quote?.changePct);
+        }),
+        [allSymbols, snapshotSymbolQuotes]
+    );
+    useEffect(() => {
+        if (!allowLiveFallback || missingLiveSymbols.length === 0) return;
+        return subscribeLiveSymbols(missingLiveSymbols, { skipStrike: true });
+    }, [allowLiveFallback, missingLiveSymbols, subscribeLiveSymbols]);
 
     const allIndustries = useMemo(() => [
         { name: industry, sector: sector }
@@ -116,6 +129,8 @@ export const IndustryView = ({ sector, industry, companies, sectors, hierarchy, 
                         <CompanyCardLite
                             item={company}
                             index={i}
+                            snapshotQuote={snapshotSymbolQuotes?.[company.symbol] || null}
+                            allowLiveFetch={allowLiveFallback}
                             onClick={() => onOpenInsights(company)}
                         />
                     )}

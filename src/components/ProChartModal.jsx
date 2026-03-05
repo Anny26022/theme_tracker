@@ -7,6 +7,7 @@ import FinvizChart from './FinvizChart';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cleanSymbol, getCachedComparisonSeries, getCachedInterval } from '../services/priceService';
 import { useLivePrice } from '../context/PriceContext';
+import { useMarketMapSnapshotQuote } from '../hooks/useMarketMapSnapshot';
 import ProWatchlist from './ProWatchlist';
 import { ListIcon } from 'lucide-react';
 
@@ -171,6 +172,7 @@ const ChartCell = memo(function ChartCell({
                     forcedTimeframe={chart.timeframe}
                     isProMode={true}
                     isActive={isActive}
+                    preferMaxHistory={true}
                     chartStyle={resolvedChartStyle}
                     maConfig={resolvedMaConfig}
                 />
@@ -585,12 +587,23 @@ const ProChartModal = ({
 
     const activeSymbol = useMemo(() => cleanSymbol(currentChart.symbol), [currentChart.symbol]);
     const liveHeaderSymbol = layoutId === '1' ? activeSymbol : '';
-    const liveData = useLivePrice(liveHeaderSymbol, { allowStrike: true });
+    const liveData = useLivePrice(liveHeaderSymbol, { allowStrike: false });
+    const snapshotQuote = useMarketMapSnapshotQuote(activeSymbol);
     const TF_MAP = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
     const perf = getCachedInterval(activeSymbol, TF_MAP[currentChart.timeframe] || '1D', { silent: true });
-    let changePct = perf?.changePct ?? 0;
-    let change = perf?.close ? perf.close - perf.close / (1 + changePct / 100) : 0;
-    if (currentChart.timeframe === '1D' && liveData.changePct !== null) { change = liveData.change ?? 0; changePct = liveData.changePct; }
+    let changePct = perf?.changePct ?? snapshotQuote?.changePct ?? 0;
+    let change = perf?.close
+        ? perf.close - perf.close / (1 + changePct / 100)
+        : (Number.isFinite(snapshotQuote?.change) ? snapshotQuote.change : 0);
+    if (currentChart.timeframe === '1D') {
+        if (liveData.changePct !== null) {
+            change = liveData.change ?? 0;
+            changePct = liveData.changePct;
+        } else if (snapshotQuote && Number.isFinite(snapshotQuote.changePct)) {
+            change = Number.isFinite(snapshotQuote.change) ? snapshotQuote.change : change;
+            changePct = snapshotQuote.changePct;
+        }
+    }
 
     useEffect(() => {
         setIsHeaderLogoVisible(true);

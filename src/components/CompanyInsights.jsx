@@ -4,6 +4,7 @@ import { X, TrendingUp, Award, Landmark, BarChart3, PieChart, Activity, FileText
 import { useFundamentals } from '../hooks/useFundamentals';
 import { useFilings } from '../hooks/useFilings';
 import { useLivePrice } from '../context/PriceContext';
+import { useMarketMapSnapshotQuote } from '../hooks/useMarketMapSnapshot';
 import { getIsin } from '../services/isinService';
 import { AnimatedPrice, AnimatedChange } from './AnimatedPrice';
 import { formatIndianNumber, formatPercent, formatFilingDate } from '../lib/intlUtils';
@@ -16,18 +17,21 @@ const FILINGS_SKELETON_KEYS = ['filings-1', 'filings-2', 'filings-3', 'filings-4
  */
 const PriceSection = React.memo(({ symbol }) => {
     const { price, changePct } = useLivePrice(symbol);
+    const snapshotQuote = useMarketMapSnapshotQuote(symbol);
+    const displayPrice = price ?? snapshotQuote?.price ?? null;
+    const displayChangePct = changePct ?? snapshotQuote?.changePct ?? null;
     return (
         <div className="glass-card p-6 flex items-center justify-between border-dashed">
             <div className="space-y-1">
                 <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)]">Current Market Price</span>
                 <div className="flex items-baseline gap-2">
-                    <AnimatedPrice value={price} className="text-2xl font-light tracking-tight text-[var(--text-main)]" />
+                    <AnimatedPrice value={displayPrice} className="text-2xl font-light tracking-tight text-[var(--text-main)]" />
                     <span className="text-[10px] text-[var(--text-muted)]">INR</span>
                 </div>
             </div>
             <div className="text-right space-y-1">
                 <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)]">Session Change</span>
-                <AnimatedChange value={changePct} className="text-sm font-bold block" />
+                <AnimatedChange value={displayChangePct} className="text-sm font-bold block" />
             </div>
         </div>
     );

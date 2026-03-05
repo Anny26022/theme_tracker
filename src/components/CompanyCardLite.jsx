@@ -3,9 +3,12 @@ import { ArrowUpRight } from 'lucide-react';
 import { useLivePrice } from '../context/PriceContext';
 import { AnimatedPrice, AnimatedChange } from './AnimatedPrice';
 
-export const CompanyCardLite = ({ item, index, onClick }) => {
+export const CompanyCardLite = ({ item, index, onClick, snapshotQuote = null, allowLiveFetch = true }) => {
     const [imgError, setImgError] = React.useState(false);
-    const { price, change, changePct, loading, source } = useLivePrice(item.symbol);
+    const { price, change, changePct, loading } = useLivePrice(item.symbol, { enableFetch: allowLiveFetch });
+    const displayPrice = price ?? snapshotQuote?.price ?? null;
+    const displayChangePct = changePct ?? snapshotQuote?.changePct ?? null;
+    const isLoading = loading && !displayPrice;
 
     return (
         <div
@@ -40,19 +43,19 @@ export const CompanyCardLite = ({ item, index, onClick }) => {
             <div className="flex items-center gap-4">
                 {/* Live CMP */}
                 <div className="text-right min-w-[80px]">
-                    {loading && !price ? (
+                    {isLoading ? (
                         <div className="flex flex-col items-end gap-0.5">
                             <div className="h-3 w-12 bg-[var(--ui-divider)] rounded animate-pulse" />
                             <div className="h-2 w-8 bg-[var(--ui-divider)] rounded animate-pulse mt-1" />
                         </div>
-                    ) : price ? (
+                    ) : displayPrice ? (
                         <div className="flex flex-col items-end gap-1">
                             <AnimatedPrice
-                                value={price}
+                                value={displayPrice}
                                 className="text-[13px] font-bold tracking-wide text-[var(--text-main)]"
                             />
                             <AnimatedChange
-                                value={changePct}
+                                value={displayChangePct}
                                 className="text-[10px] font-bold tracking-wider"
                             />
                         </div>

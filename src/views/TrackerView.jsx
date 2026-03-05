@@ -8,6 +8,7 @@ import { Virtuoso } from 'react-virtuoso';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { UniverseLoader } from '../components/UniverseLoader';
 import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
+import { useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
 
 const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 
@@ -46,6 +47,8 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     const rightRangeRef = useRef(null);
     const leftRangeTimerRef = useRef(null);
     const rightRangeTimerRef = useRef(null);
+    const { snapshotSymbolPerf, snapshotSymbolTechnicals, hasSnapshot, snapshotSource } = useMarketMapSnapshot('all');
+    const useSnapshotOnly = hasSnapshot && snapshotSource === 'server';
 
     const activeEMAKey = RANGE_TO_EMA[timeframe] || 'above200EMA';
     const activeEMALabel = RANGE_LABEL[timeframe] || '200 EMA';
@@ -114,14 +117,14 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
         hierarchy,
         timeframe,
         trackingType === 'INDUSTRY' ? 'sector' : 'thematic',
-        { includeBreadth: viewMode === 'breadth', activeItems: visibleLeftItems }
+        { includeBreadth: viewMode === 'breadth', activeItems: visibleLeftItems, snapshotSymbolPerf, snapshotSymbolTechnicals, useSnapshotOnly }
     );
     const { trackerMap: rightData, loading: rightLoading } = useUnifiedTracker(
         rightItems,
         hierarchy,
         timeframe,
         trackingType === 'INDUSTRY' ? 'industry' : 'thematic',
-        { includeBreadth: viewMode === 'breadth', activeItems: visibleRightItems }
+        { includeBreadth: viewMode === 'breadth', activeItems: visibleRightItems, snapshotSymbolPerf, snapshotSymbolTechnicals, useSnapshotOnly }
     );
 
     // Sorting Logic

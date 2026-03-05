@@ -5,8 +5,13 @@ import { buildItemToCompanies, collectUniqueSymbols, computeTrackerUpdates } fro
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useIntervalVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
+const SNAPSHOT_SUPPORTED_INTERVALS = new Set(['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX']);
+
 export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', options = {}) {
     const includeBreadth = options?.includeBreadth !== false;
+    const snapshotSymbolPerf = options?.snapshotSymbolPerf || null;
+    const snapshotSymbolTechnicals = options?.snapshotSymbolTechnicals || null;
+    const useSnapshotOnly = options?.useSnapshotOnly === true;
     const { subscribeIntervalSymbols, subscribeChartSymbols, refreshIntervals, refreshCharts } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
     const chartVersion = useChartVersion();
@@ -106,9 +111,27 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
         () => Array.from(new Set(symbolsArray.map((symbol) => cleanSymbol(symbol)).filter(Boolean))),
         [symbolsArray]
     );
+    const canUseSnapshotPerf = !includeBreadth && useSnapshotOnly && SNAPSHOT_SUPPORTED_INTERVALS.has(interval);
+    const canUseSnapshotBreadth = includeBreadth && useSnapshotOnly && SNAPSHOT_SUPPORTED_INTERVALS.has(interval) && snapshotSymbolTechnicals;
+    const canUseSnapshotTracker = canUseSnapshotPerf || canUseSnapshotBreadth;
 
     const fetchFunc = useCallback(async () => {
         if (symbolsArray.length === 0) return {};
+
+        if (canUseSnapshotTracker) {
+            const rawResults = new Map();
+            allSymbolsNormalized.forEach((symbol) => {
+                const changePct = snapshotSymbolPerf?.[symbol]?.[interval];
+                if (typeof changePct !== 'number') return;
+                if (canUseSnapshotBreadth && !snapshotSymbolTechnicals?.[symbol]) return;
+                rawResults.set(symbol, {
+                    perf: { changePct, close: null },
+                    breadth: canUseSnapshotBreadth ? snapshotSymbolTechnicals[symbol] : {},
+                    hasBreadth: canUseSnapshotBreadth,
+                });
+            });
+            return computeTrackerUpdates(items, itemToSymbols, rawResults);
+        }
 
         // Performance mode can reuse interval cache and skip 1Y chart fetches.
         const rawResults = await fetchUnifiedTrackerData(symbolsArray, interval, { includeBreadth, cacheOnly: true });
@@ -126,9 +149,10 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
         }
 
         return computeTrackerUpdates(items, itemToSymbols, rawResults);
-    }, [symbolsArray, itemToSymbols, interval, items, includeBreadth, refreshIntervals, refreshCharts, allSymbolsNormalized]);
+    }, [symbolsArray, canUseSnapshotTracker, canUseSnapshotBreadth, allSymbolsNormalized, snapshotSymbolPerf, snapshotSymbolTechnicals, interval, items, itemToSymbols, includeBreadth, refreshIntervals, refreshCharts]);
 
     useEffect(() => {
+        if (canUseSnapshotTracker) return;
         if (allSymbolsNormalized.length === 0) return;
         const intervalUnsub = subscribeIntervalSymbols([interval], allSymbolsNormalized);
         const chartUnsub = includeBreadth ? subscribeChartSymbols('1Y', allSymbolsNormalized) : () => { };
@@ -136,12 +160,12 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
             intervalUnsub?.();
             chartUnsub?.();
         };
-    }, [allSymbolsNormalized, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
+    }, [canUseSnapshotTracker, allSymbolsNormalized, interval, includeBreadth, subscribeIntervalSymbols, subscribeChartSymbols]);
 
     const refreshSignal = includeBreadth ? chartVersion : 0;
     const { data: trackerMap, loading, execute } = useAsync(
         fetchFunc,
-        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal, allSymbolsNormalized]
+        [symbolsArray, itemToSymbols, interval, includeBreadth, intervalVersion, refreshSignal, allSymbolsNormalized, canUseSnapshotTracker, canUseSnapshotBreadth, snapshotSymbolPerf, snapshotSymbolTechnicals]
     );
 
     const resolvedMap = trackerMap || {};
@@ -152,7 +176,7 @@ export function useUnifiedTracker(items, hierarchy, interval, type = 'sector', o
 
     return {
         trackerMap: resolvedMap,
-        loading: loading || (symbolsArray.length > 0 && !hasAnyData),
+        loading: canUseSnapshotTracker ? loading : (loading || (symbolsArray.length > 0 && !hasAnyData)),
         refresh: execute
     };
 }

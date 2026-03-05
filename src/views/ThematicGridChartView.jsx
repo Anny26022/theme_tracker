@@ -214,13 +214,13 @@ const ThematicGridChartView = ({
 
     useEffect(() => {
         if (!normalizedSymbols.length) return;
-        return subscribeChartSymbols('MAX', normalizedSymbols);
+        return subscribeChartSymbols('1Y', normalizedSymbols);
     }, [normalizedSymbols, subscribeChartSymbols]);
 
     const seriesBySymbol = useMemo(() => {
         const map = new Map();
         normalizedSymbols.forEach((symbol) => {
-            const series = getCachedComparisonSeries(symbol, 'MAX', { silent: true });
+            const series = getCachedComparisonSeries(symbol, '1Y', { silent: true });
             if (series) map.set(symbol, series);
         });
         return map;

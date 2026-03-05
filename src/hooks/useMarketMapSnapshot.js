@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { buildWorkerApiUrl } from '../lib/workerApi';
 
-const SNAPSHOT_SCHEMA_VERSION = 1;
-const SNAPSHOT_STORAGE_KEY = 'tt_market_map_snapshot_v1';
+const SNAPSHOT_SCHEMA_VERSION = 4;
+const SNAPSHOT_STORAGE_KEY = 'tt_market_map_snapshot_v4';
 const SNAPSHOT_TTL_MS = 45 * 60 * 1000;
-const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
+const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD', '5Y', 'MAX'];
+const snapshotRequestCache = new Map();
 
 function hasFiniteValue(value) {
     return Number.isFinite(value);
@@ -76,6 +78,45 @@ function writeScopeSnapshot(scope, snapshot) {
     writeSnapshotStore(nextStore);
 }
 
+function fetchRemoteSnapshot(scope) {
+    if (!scope) return Promise.resolve(null);
+
+    const cachedRequest = snapshotRequestCache.get(scope);
+    if (cachedRequest) return cachedRequest;
+
+    const request = fetch(buildWorkerApiUrl(`/api/market-map/snapshot?scope=${encodeURIComponent(scope)}`), {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+    })
+        .then(async (response) => {
+            if (!response.ok) {
+                throw new Error(`Snapshot request failed: ${response.status}`);
+            }
+
+            const payload = await response.json();
+            const snapshot = payload?.snapshot;
+            if (
+                !snapshot ||
+                typeof snapshot !== 'object' ||
+                typeof snapshot.heatmapData !== 'object' ||
+                typeof snapshot.themeConstituents !== 'object' ||
+                typeof snapshot.symbolPerf !== 'object' ||
+                typeof snapshot.symbolQuotes !== 'object' ||
+                typeof snapshot.symbolTechnicals !== 'object'
+            ) {
+                throw new Error('Snapshot payload invalid');
+            }
+
+            return snapshot;
+        })
+        .finally(() => {
+            snapshotRequestCache.delete(scope);
+        });
+
+    snapshotRequestCache.set(scope, request);
+    return request;
+}
+
 export function mergeMarketMapHeatmapData(snapshotHeatmapData, liveHeatmapData) {
     if (!snapshotHeatmapData) return liveHeatmapData || {};
     if (!liveHeatmapData) return snapshotHeatmapData;
@@ -117,6 +158,10 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
 
     const snapshotState = useMemo(() => readScopeSnapshot(scope), [scope, revision]);
     const snapshotHeatmapData = snapshotState?.heatmapData || null;
+    const snapshotThemeConstituents = snapshotState?.themeConstituents || null;
+    const snapshotSymbolPerf = snapshotState?.symbolPerf || null;
+    const snapshotSymbolQuotes = snapshotState?.symbolQuotes || null;
+    const snapshotSymbolTechnicals = snapshotState?.symbolTechnicals || null;
     const hasSnapshot = hasAnyHeatmapValues(snapshotHeatmapData);
     const snapshotAgeMs = snapshotState?.generatedAtMs ? Math.max(0, Date.now() - snapshotState.generatedAtMs) : null;
     const snapshotIsComplete = snapshotState?.complete !== false;
@@ -128,44 +173,37 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
             return undefined;
         }
 
-        const controller = new AbortController();
+        let cancelled = false;
         setNetworkState({ loading: !hasSnapshot, resolved: false, error: null });
 
         const loadRemoteSnapshot = async () => {
             try {
-                const response = await fetch(`/api/market-map/snapshot?scope=${encodeURIComponent(scope)}`, {
-                    method: 'GET',
-                    headers: { Accept: 'application/json' },
-                    signal: controller.signal,
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Snapshot request failed: ${response.status}`);
-                }
-
-                const payload = await response.json();
-                const snapshot = payload?.snapshot;
-                if (!snapshot || typeof snapshot !== 'object' || typeof snapshot.heatmapData !== 'object') {
-                    throw new Error('Snapshot payload invalid');
-                }
+                const snapshot = await fetchRemoteSnapshot(scope);
+                if (cancelled || !snapshot) return;
 
                 writeScopeSnapshot(scope, {
                     generatedAtMs: Date.parse(snapshot.generatedAt) || Date.now(),
                     complete: true,
                     heatmapData: snapshot.heatmapData,
+                    themeConstituents: snapshot.themeConstituents,
+                    symbolPerf: snapshot.symbolPerf,
+                    symbolQuotes: snapshot.symbolQuotes,
+                    symbolTechnicals: snapshot.symbolTechnicals,
                     source: 'server'
                 });
                 setRevision((value) => value + 1);
                 setNetworkState({ loading: false, resolved: true, error: null });
             } catch (error) {
-                if (controller.signal.aborted) return;
+                if (cancelled) return;
                 setNetworkState({ loading: false, resolved: true, error });
             }
         };
 
         loadRemoteSnapshot();
 
-        return () => controller.abort();
+        return () => {
+            cancelled = true;
+        };
     }, [scope, hasSnapshot]);
 
     useEffect(() => {
@@ -182,6 +220,10 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
             generatedAtMs: Date.now(),
             complete: nextComplete,
             heatmapData: liveHeatmapData,
+            themeConstituents: currentSnapshot?.themeConstituents || {},
+            symbolPerf: currentSnapshot?.symbolPerf || {},
+            symbolQuotes: currentSnapshot?.symbolQuotes || {},
+            symbolTechnicals: currentSnapshot?.symbolTechnicals || {},
             source: 'client'
         });
         setRevision((value) => value + 1);
@@ -189,6 +231,10 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
 
     return {
         snapshotHeatmapData,
+        snapshotThemeConstituents,
+        snapshotSymbolPerf,
+        snapshotSymbolQuotes,
+        snapshotSymbolTechnicals,
         hasSnapshot,
         snapshotAgeMs,
         snapshotIsComplete,
@@ -197,4 +243,26 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
         snapshotResolved: networkState.resolved,
         snapshotError: networkState.error
     };
+}
+
+export function useMarketMapSnapshotQuote(symbol, scope = 'all') {
+    const { snapshotSymbolQuotes } = useMarketMapSnapshot(scope);
+
+    return useMemo(() => {
+        if (!symbol) return null;
+        return snapshotSymbolQuotes?.[symbol] || null;
+    }, [snapshotSymbolQuotes, symbol]);
+}
+
+export function useMarketMapSnapshotSymbol(symbol, scope = 'all') {
+    const { snapshotSymbolQuotes, snapshotSymbolPerf, snapshotSymbolTechnicals } = useMarketMapSnapshot(scope);
+
+    return useMemo(() => {
+        if (!symbol) return null;
+        return {
+            quote: snapshotSymbolQuotes?.[symbol] || null,
+            perf: snapshotSymbolPerf?.[symbol] || null,
+            technicals: snapshotSymbolTechnicals?.[symbol] || null,
+        };
+    }, [snapshotSymbolPerf, snapshotSymbolQuotes, snapshotSymbolTechnicals, symbol]);
 }

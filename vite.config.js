@@ -7,6 +7,10 @@ const BUILD_ID =
     process.env.CI_COMMIT_SHA ||
     process.env.npm_package_version ||
     'dev';
+const WORKER_DEV_PROXY_TARGET =
+    process.env.VITE_CF_WORKER_ORIGIN ||
+    process.env.CF_WORKER_ORIGIN ||
+    'https://nexus.themetracker.workers.dev';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -286,6 +290,11 @@ export default defineConfig({
                         if (req.method !== 'GET' && !proxyReq.writableEnded) proxyReq.end();
                     });
                 }
+            },
+            '/api/worker': {
+                target: WORKER_DEV_PROXY_TARGET,
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/api\/worker/, '/api'),
             }
         }
     }

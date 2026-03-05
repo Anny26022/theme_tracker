@@ -1,8 +1,11 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { cleanSymbol, getCachedIntervalEntry } from '../services/priceService';
 import { useIntervalVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
 const HEATMAP_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD'];
+const PRIMARY_INTERVALS = ['1D'];
+const SECONDARY_INTERVALS = ['5D', '1M', '3M', '6M', '1Y', 'YTD'];
+const SECONDARY_FETCH_DELAY_MS = 350;
 
 function buildHeatmap(themeToSymbols, intervalResults) {
     const heatmap = {};
@@ -44,6 +47,7 @@ function hasAnyHeatmapValues(heatmap) {
 export function useThematicHeatmap(thematicMap, hierarchy) {
     const { subscribeIntervalSymbols } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
+    const [secondaryPhaseActive, setSecondaryPhaseActive] = useState(false);
 
     const themeMappings = useMemo(() => {
         if (!thematicMap || !hierarchy) return { themeToSymbols: new Map(), allSymbols: [] };
@@ -111,18 +115,56 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
     );
 
     useEffect(() => {
+        setSecondaryPhaseActive(false);
+    }, [normalizedSymbols]);
+
+    useEffect(() => {
         if (!normalizedSymbols.length) return;
-        return subscribeIntervalSymbols(HEATMAP_INTERVALS, normalizedSymbols);
+        return subscribeIntervalSymbols(PRIMARY_INTERVALS, normalizedSymbols);
     }, [normalizedSymbols, subscribeIntervalSymbols]);
 
-    const { heatmapData, stockPerfMap, intervalProgress, pendingIntervals } = useMemo(() => {
+    useEffect(() => {
+        if (!normalizedSymbols.length) return undefined;
+
+        let cancelled = false;
+        let timeoutId = null;
+        let idleId = null;
+        const activateSecondaryPhase = () => {
+            if (!cancelled) setSecondaryPhaseActive(true);
+        };
+
+        if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+            idleId = window.requestIdleCallback(activateSecondaryPhase, { timeout: SECONDARY_FETCH_DELAY_MS });
+        } else {
+            timeoutId = window.setTimeout(activateSecondaryPhase, SECONDARY_FETCH_DELAY_MS);
+        }
+
+        return () => {
+            cancelled = true;
+            if (idleId != null && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+                window.cancelIdleCallback(idleId);
+            }
+            if (timeoutId != null && typeof window !== 'undefined') {
+                window.clearTimeout(timeoutId);
+            }
+        };
+    }, [normalizedSymbols]);
+
+    useEffect(() => {
+        if (!normalizedSymbols.length || !secondaryPhaseActive) return;
+        return subscribeIntervalSymbols(SECONDARY_INTERVALS, normalizedSymbols);
+    }, [normalizedSymbols, secondaryPhaseActive, subscribeIntervalSymbols]);
+
+    const { heatmapData, stockPerfMap, intervalProgress, pendingIntervals, primaryHasValues } = useMemo(() => {
         const intervalResults = new Map();
+        const primaryIntervalResults = new Map();
         const progress = {};
         const pending = [];
 
         HEATMAP_INTERVALS.forEach((interval) => {
             const perfMap = new Map();
             let completedSymbols = 0;
+            const isQueued = !secondaryPhaseActive && SECONDARY_INTERVALS.includes(interval);
 
             normalizedSymbols.forEach((symbol) => {
                 const entry = getCachedIntervalEntry(symbol, interval, { silent: true });
@@ -133,36 +175,46 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             });
 
             if (perfMap.size > 0) intervalResults.set(interval, perfMap);
+            if (PRIMARY_INTERVALS.includes(interval) && perfMap.size > 0) primaryIntervalResults.set(interval, perfMap);
 
             const totalSymbols = normalizedSymbols.length;
-            const done = totalSymbols === 0 ? true : completedSymbols >= totalSymbols;
+            const done = isQueued
+                ? false
+                : totalSymbols === 0
+                    ? true
+                    : completedSymbols >= totalSymbols;
             progress[interval] = {
                 interval,
                 totalGroups: 0,
                 completedGroups: 0,
                 totalSymbols,
                 completedSymbols,
-                done
+                done,
+                queued: isQueued
             };
             if (!done) pending.push(interval);
         });
 
         const heatmap = buildHeatmap(themeToSymbols, intervalResults);
+        const primaryHeatmap = buildHeatmap(themeToSymbols, primaryIntervalResults);
         return {
             heatmapData: heatmap,
             stockPerfMap: intervalResults,
             intervalProgress: progress,
-            pendingIntervals: pending
+            pendingIntervals: pending,
+            primaryHasValues: hasAnyHeatmapValues(primaryHeatmap)
         };
-    }, [normalizedSymbols, themeToSymbols, intervalVersion]);
+    }, [normalizedSymbols, themeToSymbols, intervalVersion, secondaryPhaseActive]);
 
-    const loading = normalizedSymbols.length > 0 && !hasAnyHeatmapValues(heatmapData);
+    const primaryStillLoading = PRIMARY_INTERVALS.some((interval) => !intervalProgress?.[interval]?.done);
+    const loading = normalizedSymbols.length > 0 && primaryStillLoading && !primaryHasValues;
 
     return {
         heatmapData: heatmapData || {},
         stockPerfMap,
         loading,
         pendingIntervals,
-        intervalProgress
+        intervalProgress,
+        secondaryPhaseActive
     };
 }

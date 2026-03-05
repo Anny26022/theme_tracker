@@ -14,8 +14,9 @@ export const THEMATIC_MAP = [
             { name: "Ratings & Analytics", industries: ["Ratings Companies"] },
             { name: "Investment & Holding", industries: ["Holding Company Companies", "Investment Company Companies"] },
             { name: "Housing Finance", industries: ["Housing Finance Company Companies"] },
+            { name: "Personal & Gold Loans", symbols: ["MUTHOOTFIN", "MANAPPURAM"] },
             { name: "Small Finance Bank", industries: ["Other Bank Companies"], symbols: ["AUFIL", "EQUITASBNK", "UJJIVANSFB"] },
-            { name: "Capital Market Intern.", industries: ["Other Capital Market related Services Companies", "Stockbroking & Allied Companies"] },
+            { name: "Capital Market Intern.", industries: ["Other Capital Market related Services Companies", "Stockbroking & Allied Companies", "Data Processing Services Companies"] },
             { name: "Depositories & Clearing", industries: ["Depositories, Clearing Houses and Other Intermediaries Companies"], symbols: ["CDSL", "544467"] },
             { name: "Market Infrastructure", symbols: ["CAMS", "KFINTECH"] },
             { name: "Fintech", industries: ["Financial Technology (Fintech) Companies"], symbols: ["PAYTM", "PBSTECH", "INFIBEAM"] },
@@ -27,7 +28,7 @@ export const THEMATIC_MAP = [
         title: "AUTOMOTIVE (STOCKS)",
         themes: [
             { name: "Commercial Vehicles", industries: ["Commercial Vehicles Companies"] },
-            { name: "2/3 Wheelers", industries: ["2/3 Wheelers Companies"] },
+            { name: "2/3 Wheelers", industries: ["2/3 Wheelers Companies", "Cycles Companies"] },
             { name: "Tractors & Agri", industries: ["Tractors Companies"] },
             { name: "Auto Dealers & Retail", industries: ["Auto Dealer Companies", "Dealers-Commercial Vehicles, Tractors, Construction Vehicles Companies"] },
             { name: "Passenger Cars", industries: ["Passenger Cars & Utility Vehicles Companies"] }
@@ -38,10 +39,10 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "Electronics & Systems", symbols: ["UNOMINDA", "MINDACORP", "SUBROS", "PRICOL", "BOSCHLTD"] },
             { name: "Drivetrain & Axles", symbols: ["SONACOMS", "ZFCVINDIA", "GNA"] },
-            { name: "Chassis & Metal Parts", symbols: ["CIEINDIA", "TIINDIA", "CRAFTSMAN"] },
+            { name: "Chassis & Metal Parts", industries: ["Auto Components & Equipments Companies", "Castings & Forgings Companies", "Trading - Auto components Companies"], symbols: ["BHARATFORG", "CIEINDIA", "TIINDIA", "CRAFTSMAN", "RKFORGE", "SANSERA"] },
             { name: "Suspension & Safety", symbols: ["GABRIEL", "ENDURANCE", "LUMAXIND"] },
             { name: "Interior & Plastics", symbols: ["MOTHERSON", "LUMAXTECH", "VARROC"] },
-            { name: "Engines & Cooling/Seal", symbols: ["SRENGINE", "SHRIRAMPIS", "TALBROS", "IOLSYS"] },
+            { name: "Engines & Cooling/Seal", industries: ["Compressors, Pumps & Diesel Engines Companies"], symbols: ["SRENGINE", "SHRIRAMPIS", "TALBROS", "IOLSYS", "SHRIPISTON"] },
             { name: "Wiring & Cables", symbols: ["MSUMI"] },
             { name: "Tyres & Wheels", industries: ["Tyres & Rubber Products Companies"], symbols: ["GOODYEAR", "ITTL", "MRF", "APOLLOTYRE", "CEATTD", "JKTYRE", "BALKRISIND", "TVS-SRICHAK", "GOODYEAR", "VIAZTYRES", "TOLINS"] },
             { name: "Batteries & EV", symbols: ["EXIDEIND", "AMARAJABAT"] }
@@ -51,7 +52,7 @@ export const THEMATIC_MAP = [
         title: "INDUSTRIAL COMPONENTRY",
         themes: [
             { name: "Bearings & Precision", industries: ["Abrasives & Bearings Companies"] },
-            { name: "Castings & Forgings", industries: ["Castings & Forgings Companies"] },
+            { name: "Castings & Forgings", industries: ["Castings & Forgings Companies", "Pig Iron Companies"] },
             { name: "Industrial Products", industries: ["Industrial Products Companies", "Other Industrial Products Companies"] },
             { name: "Industrial Rubber", industries: ["Rubber Companies"] }
         ]
@@ -61,11 +62,17 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "IT Services (Consulting)", industries: ["Computers - Software & Consulting Companies"] },
             { name: "IT Enabled Services (BPM)", industries: ["IT Enabled Services Companies"] },
-            { name: "ER&D / Product Software", symbols: ["LTTS", "TATAELXSI", "CYIENT", "KPITTECH"] },
-            { name: "Enterprise Platforms", industries: ["Software Products Companies"] },
+            { name: "ER&D / Product Software", symbols: ["LTTS", "TATAELXSI", "CYIENT", "KPITTECH", "MOSCHIP"] },
+            { name: "Enterprise Platforms", industries: ["Software Products Companies", "Computers Hardware & Equipments Companies"] },
             { name: "Telecom Operators", industries: ["Telecom - Cellular & Fixed line services Companies"], symbols: ["BHARTIARTL", "IDEA", "BHARTIHEXA"] },
-            { name: "Telecom & Network Infra", industries: ["Telecom - Infrastructure Companies", "Telecom - Equipment & Accessories Companies"], symbols: ["INDUSTOWER", "RAILTEL", "HFCL", "STLTECH", "TEJASNET"] },
-            { name: "New Age Platforms", symbols: ["ZOMATO", "NYKAA", "DELHIVERY", "MAPMYINDIA", "INDMART"] },
+            { name: "Telecom & Network Infra", industries: ["Telecom - Infrastructure Companies", "Telecom - Equipment & Accessories Companies", "Telecom -  Equipment & Accessories Companies", "Other Telecom Services Companies"], symbols: ["INDUSTOWER", "RAILTEL", "HFCL", "STLTECH", "TEJASNET", "DLINKINDIA"] },
+            { name: "FoodTech & Q-Commerce", symbols: ["ETERNAL", "SWIGGY"] },
+            { name: "Consumer E-Retail", industries: ["E-Retail/ E-Commerce Companies"], symbols: ["NYKAA", "MEESHO", "FIRSTCRY", "URBANCO", "WOMANCART"] },
+            { name: "Logistics Tech", symbols: ["DELHIVERY"] },
+            { name: "Recruitment & Classifieds", industries: ["Internet & Catalogue Retail Companies"], symbols: ["NAUKRI", "JUSTDIAL", "MATRIMONY"] },
+            { name: "B2B Marketplaces", symbols: ["INDIAMART", "INDMART"] },
+            { name: "AI Infra & GPU Cloud", symbols: ["NETWEB", "E2E"] },
+            { name: "Vertical & Geospatial SaaS", symbols: ["RATEGAIN", "CEINFO", "MAPMYINDIA"] },
             { name: "E-Learning / EdTech", industries: ["E-Learning Companies"] },
             { name: "Digital Services & BPO", industries: ["Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO) Companies"] },
             { name: "Web Content & Connectivity", industries: ["Web based media and service Companies"] }
@@ -74,7 +81,7 @@ export const THEMATIC_MAP = [
     {
         title: "CHEMICALS & POLYMERS",
         themes: [
-            { name: "Speciality Chemicals", industries: ["Specialty Chemicals Companies"] },
+            { name: "Speciality Chemicals", industries: ["Specialty Chemicals Companies", "Biotechnology Companies"] },
             { name: "Alkali Chemicals", industries: ["Commodity Chemicals Companies"], symbols: ["TATACHEM", "GHCL", "GUJALKALI", "DCW", "DCMSHRIRAM"] },
             { name: "Dyes & Pigments", industries: ["Dyes And Pigments Companies"], symbols: ["BODALCHEM", "KIRIINDUS", "SUDARSCHEM"] },
             { name: "Polymers", industries: ["Petrochemicals Companies"], symbols: ["RELIANCE", "GAIL", "SUPREMEIND", "FINPIPE", "ASTRAL"] },
@@ -89,6 +96,7 @@ export const THEMATIC_MAP = [
             { name: "Compressors & Pumps", industries: ["Compressors, Pumps & Diesel Engines Companies"] },
             { name: "Refractories", industries: ["Electrodes & Refractories Companies"], symbols: ["RHIM", "ORIENTREF", "IFGL"] },
             { name: "Welding & Cryogenics", industries: ["Industrial Gases Companies"], symbols: ["ESABINDIA", "ADORWELD"] },
+            { name: "Material Handling & Storage", industries: ["Food Storage Facilities Companies"], symbols: ["ACTIONCONST", "ELGI EQUIP"] },
             { name: "Construction & Earthmoving", industries: ["Construction Vehicles Companies"] }
         ]
     },
@@ -98,18 +106,16 @@ export const THEMATIC_MAP = [
             { name: "Cables & Electricals", industries: ["Cables - Electricals Companies"], symbols: ["POLYCAB", "KEI", "FINPIPE"] },
             { name: "Smart Metering & Inst.", symbols: ["HPL", "GENUSPOWER", "RISHABH", "SALZERELEC", "BBL", "RAMRAT", "SHILCTECH", "DIACABS", "515008", "544310", "APARINDS", "RELTD", "517467", "517035"] },
             { name: "Transformers & Switchgears", symbols: ["ABB", "CGPOWER", "GVT&D", "POWERINDIA", "SIEMENS", "SCHNEIDER", "INDOTECH", "VOLTAMP", "QPOWER", "TRITURBINE", "GEPIL"] },
-            { name: "EPC - Power & Grid", industries: ["Engineering Services Companies"], symbols: ["KPTL", "TECHNOE"] }
+            { name: "EPC - Power & Grid", industries: ["Engineering Services Companies", "Multi Utilities Companies", "Other Construction Materials Companies"], symbols: ["KPTL", "TECHNOE", "544291"] }
         ]
     },
     {
         title: "DEFENSE & AEROSPACE SYSTEMS",
         themes: [
-            { name: "Aerospace & Defense OEM", symbols: ["HAL", "BEL", "BDL", "MIDHANI", "IDEAFORGE", "UNIMECH", "AEQUS", "MTARTECH", "543920", "522229", "523606", "JAYKAY"] },
-            { name: "Ship Building (Defense)", industries: ["Ship Building & Allied Services Companies"], symbols: ["MAZDOCK", "COCHINSHIP", "GRSE"] },
-            { name: "Defense Electronics & Systems", symbols: ["BEL", "DATAPATTNS", "ASTRAMICRO", "AVANTEL", "ZENTEC", "PARAS", "DCXINDIA", "APOLLO", "ROSSTECH", "C2C", "AXISCADES", "KRISHNADEF", "NIBE"] },
-            { name: "Ammunition & Explosives", industries: ["Explosives Companies"], symbols: ["SOLARINDS"] },
-            { name: "Defense Misc / Land Systems", industries: ["Other Construction Materials Companies"], symbols: ["BEML"] },
+            { name: "Aerospace & Defense OEM", industries: ["Aerospace & Defense Companies"], symbols: ["HAL", "BEL", "BDL", "MIDHANI", "IDEAFORGE", "UNIMECH", "AEQUS", "MTARTECH", "543920", "522229", "523606", "JAYKAY"] },
             { name: "Railways", industries: ["Railway Wagons Companies"], symbols: ["TITAGARH", "TEXRAIL", "JWL", "BEML", "IRFC", "RVNL", "IRCON"] },
+            { name: "Ship Building & Marine", industries: ["Ship Building & Allied Services Companies"], symbols: ["MAZDOCK", "COCHINSHIP", "GRSE", "DREDGECORP", "KMEW"] },
+            { name: "Ammunition & Explosives", industries: ["Explosives Companies"], symbols: ["SOLARINDS", "PREMEXPLN", "GOCLCORP"] },
             { name: "EMS - Electronics", symbols: ["KAYNES", "SYRMA", "AVALON"] }
         ]
     },
@@ -117,7 +123,8 @@ export const THEMATIC_MAP = [
         title: "METALS & MINING",
         themes: [
             { name: "Diversified Metals (VEDL)", industries: ["Diversified Metals Companies"], symbols: ["VEDL"] },
-            { name: "Non-Ferrous Metals", industries: ["Aluminium Companies", "Copper Companies", "Zinc Companies", "Aluminium, Copper & Zinc Products Companies", "Precious Metals Companies"], symbols: ["HINDALCO", "HINDZINC", "NATIONALUM"] },
+            { name: "Aluminium & Base Metals", industries: ["Aluminium Companies", "Zinc Companies"], symbols: ["HINDALCO", "HINDZINC", "NATIONALUM"] },
+            { name: "Copper & Specialty Metallurgy", industries: ["Copper Companies", "Aluminium, Copper & Zinc Products Companies", "Precious Metals Companies"], symbols: ["HINDCOPPER", "PRECISION", "RAMRAT"] },
             { name: "Iron & Steel Core", industries: ["Iron & Steel Companies"], symbols: ["TATASTEEL", "JSWSTEEL", "SAIL", "JINDALSTEL"] },
             { name: "Iron & Steel Products", industries: ["Iron & Steel Products Companies"], symbols: ["APLAPOLLO", "RATNAMANI"] },
             { name: "Coal & Mining", industries: ["Coal Companies", "Trading - Coal Companies"], symbols: ["COALINDIA", "NMDC"] },
@@ -136,6 +143,7 @@ export const THEMATIC_MAP = [
             { name: "Oil Refiners", industries: ["Refineries & Marketing Companies"], symbols: ["BPCL", "HPCL", "IOC", "MRPL", "CHENNPETRO"] },
             { name: "Energy Conglomerate", symbols: ["RELIANCE", "ADANIENT"] },
             { name: "Solar & Renewables", industries: ["Other Utilities Companies"], symbols: ["BORORENEW", "KPIGREEN", "SWSOLAR", "IREDA", "SUZLON", "ADANIGREEN", "JSWENERGY", "WAAREEENER", "PREMIERENE", "ALPEXSOLAR", "VIKRAMSOLR", "WEBELSOLAR", "SAATVIKGL", "EMMVEE", "UTLSOLAR", "ORIANA", "SERVOTECH", "WAAREERTL"] },
+            { name: "Smart Energy Storage", symbols: ["EXIDEIND", "AMARAJABAT", "ARE&M"] },
             { name: "Oil Equip & Offshore", industries: ["Oil Equipment & Services Companies", "Offshore Support Solution Drilling Companies", "Oil Storage & Transportation Companies"] },
             { name: "Lubricants & Specialty Oils", industries: ["Lubricants Companies"], symbols: ["GULFOILLUB", "CASTROLIND", "TIDEWATER"] },
             { name: "Power Trading", industries: ["Power Trading Companies", "Trading - Electricity Companies"], symbols: ["IEX"] }
@@ -146,21 +154,25 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "Innerwear Manufacturers", symbols: ["PAGEIND", "LUXIND", "RUPA", "DOLLAR"] },
             { name: "Jewellery", industries: ["Gems, Jewellery And Watches Companies"], symbols: ["TITAN", "KALYANKJIL", "RAJESHEXPO"] },
-            { name: "Textiles", industries: ["Garments & Apparels Companies", "Trading - Textile Products Companies", "Other Textile Products Companies"] },
-            { name: "Footwear", industries: ["Footwear Companies"], symbols: ["RELAXO", "BATAINDIA", "CAMPUS", "METROBRAND"] },
-            { name: "Retail Chains", industries: ["Speciality Retail Companies", "Pharmacy Retail Companies", "Diversified Retail Companies"], symbols: ["TRENT", "DMART", "ABFRL", "V2RETAIL"] },
-            { name: "Yarn", symbols: ["VARDHACRL", "KPRMILL", "VTL", "NITINSPIN", "SANGAMIND", "FILATEX", "SPORTKING", "AYMSYNTEX"] }
+            { name: "Premium & Branded Apparel", industries: ["Garments & Apparels Companies"], symbols: ["ABFRL", "RAYMOND"] },
+            { name: "Home Textiles & Furnish", industries: ["Other Textile Products Companies", "Jute & Jute Products Companies"], symbols: ["WELSPUNLIV", "TRIDENT"] },
+            { name: "Spinning & Yarn Processing", symbols: ["VARDHACRL", "KPRMILL", "VTL", "NITINSPIN", "SANGAMIND", "FILATEX", "SPORTKING", "AYMSYNTEX"] },
+            { name: "Footwear & Leather", industries: ["Footwear Companies", "Leather And Leather Products Companies"], symbols: ["RELAXO", "BATAINDIA", "CAMPUS", "METROBRAND", "MIRZAINT", "MAYURUNIQ"] },
+            { name: "Apparel Retail Chains", industries: ["Speciality Retail Companies", "Trading - Textile Products Companies"], symbols: ["ABFRL", "V2RETAIL", "GOKEX", "TCNSBRANDS", "ETHOSLTD"] },
+            { name: "Hypermarkets & Dept. Stores", industries: ["Diversified Retail Companies"], symbols: ["TRENT", "DMART", "WESTLIFE"] },
+            { name: "Heath & Pharma Retail", industries: ["Pharmacy Retail Companies"], symbols: ["MEDPLUS"] },
+            { name: "E-Retail & Digital Direct", industries: ["E-Retail/ E-Commerce Companies"], symbols: ["NYKAA", "MEESHO", "FIRSTCRY", "URBANCO", "WOMANCART"] }
         ]
     },
     {
         title: "Consumer Durables",
         themes: [
-            { name: "Consumer Electronics", industries: ["Consumer Electronics Companies"] },
+            { name: "Consumer Electronics", industries: ["Consumer Electronics Companies"], symbols: ["543597"] },
             { name: "Household White Goods", industries: ["Household Appliances Companies"] },
             { name: "HVAC & Cooling", symbols: ["VOLTAS", "JOHNSONCNTL", "AMBER"] },
             { name: "Furniture & Decor", industries: ["Furniture, Home Furnishing Companies"] },
             { name: "Cons. Plastic Products", industries: ["Plastic Products - Consumer Companies"] },
-            { name: "Houseware & Glass", industries: ["Houseware Companies", "Glass - Consumer Companies"] }
+            { name: "Houseware & Glass", industries: ["Houseware Companies", "Glass - Consumer Companies", "Glass - Industrial Companies"], symbols: ["YASHOPTICS", "523558"] }
         ]
     },
     {
@@ -169,10 +181,11 @@ export const THEMATIC_MAP = [
             { name: "Media & Entertainment", industries: ["Media & Entertainment Companies", "Electronic Media Companies"] },
             { name: "Advertising & Agencies", industries: ["Advertising & Media Agencies Companies"] },
             { name: "Amusement Parks", symbols: ["WONDERLA", "IMAGICAA", "DELTACORP", "526721", "526477", "526628", "538731"] },
-            { name: "Broadcast & Print", industries: ["TV Broadcasting & Software Production Companies", "Print Media Companies", "Film Production, Distribution & Exhibition Companies"] },
+            { name: "Electronic Media & News", industries: ["TV Broadcasting & Software Production Companies", "Electronic Media Companies"], symbols: ["SUNTV", "ZEEL", "NDTV"] },
+            { name: "Print & Publication", industries: ["Print Media Companies", "Printing & Publication Companies"], symbols: ["DBCORP", "JAGRAN"] },
+            { name: "Film Production & Exhibition", industries: ["Film Production, Distribution & Exhibition Companies"], symbols: ["PVRINOX"] },
             { name: "Events & Weddings", industries: ["Other Consumer Services Companies"] },
-            { name: "Digital Entertainment", industries: ["Digital Entertainment Companies"] },
-            { name: "Print & Publication", industries: ["Printing & Publication Companies"] }
+            { name: "Digital Entertainment", industries: ["Digital Entertainment Companies"] }
         ]
     },
     {
@@ -180,14 +193,16 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "Education & EdTech", industries: ["Education Companies"] },
             { name: "Stationery & Paper", industries: ["Paper & Paper Products Companies", "Stationary Companies"] },
-            { name: "Business Services", industries: ["Diversified Commercial Services Companies", "Consulting Services Companies"], symbols: ["QUESS", "TEAMLEASE", "CMSINFO", "UDS", "KRYSTAL", "KAPSTON", "SANGHVIMOV", "BLSE"] }
+            { name: "HR, Staffing & Training", industries: ["Consulting Services Companies"], symbols: ["QUESS", "TEAMLEASE", "KAPSTON", "ADITIFG", "KRYSTAL"] },
+            { name: "BPO & Specialized Services", industries: ["Diversified Commercial Services Companies"], symbols: ["BLSE", "CMSINFO", "UDS", "SANGHVIMOV"] }
         ]
     },
     {
         title: "FMCG CLUSTERS",
         themes: [
-            { name: "FMCG", industries: ["Diversified FMCG Companies", "Personal Care Companies"], symbols: ["HINDUNILVR", "ITC", "NESTLEIND", "BRITANNIA", "GODREJCP", "DABUR"] },
-            { name: "Packaging and Containers", industries: ["Packaging Companies"], symbols: ["HUHTAMAKI", "ESSELPRO", "POLYPLEX"] },
+            { name: "Household & Personal Care", industries: ["Personal Care Companies", "Household Products Companies", "Wellness Companies"], symbols: ["HINDUNILVR", "GODREJCP", "DABUR", "JYOTHYLAB", "KAYA"] },
+            { name: "Packaged Diversified FMCG", industries: ["Diversified FMCG Companies"], symbols: ["ITC", "NESTLEIND", "BRITANNIA", "TATACONSUM"] },
+            { name: "Packaging and Containers", industries: ["Packaging Companies", "Printing Inks Companies"], symbols: ["HUHTAMAKI", "ESSELPRO", "POLYPLEX"] },
             { name: "Packaging Films", symbols: ["COSMOFIRST", "JINDALPOLY", "GARFIBRES"] },
             { name: "Cigarettes & Tobacco", industries: ["Cigarettes & Tobacco Products Companies"], symbols: ["ITC", "VSTIND", "GODFRYPHLP"] }
         ]
@@ -229,20 +244,20 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "Hospitals", industries: ["Hospital Companies", "Healthcare Service Provider Companies"], symbols: ["APOLLOHOSP", "MAXHEALTH", "FORTIS", "NARAYANA", "MEDANTA"] },
             { name: "Pharma", industries: ["Pharmaceuticals Companies"], symbols: ["SUNPHARMA", "CIPLA", "DRREDDY", "DIVISLAB", "MANKIND"] },
-            { name: "Pharma - API & CRAMS", symbols: ["DIVISLAB", "LAURUSLABS", "SYNGENE", "SOLARA", "NEULANDLAB"] },
+            { name: "Pharma - API & CRAMS", industries: ["Healthcare Research, Analytics & Technology Companies"], symbols: ["DIVISLAB", "LAURUSLABS", "SYNGENE", "SOLARA", "NEULANDLAB", "INDGN", "VIMTALABS"] },
             { name: "Pharma - Small Cap", symbols: ["MARKSANS", "LINCOLN", "AARTIDRUGS", "GRANULES"] },
-            { name: "Diagnostic Chains", symbols: ["METROPOLIS", "LALPATHLAB"] },
-            { name: "Equipment & Retail", industries: ["Medical Equipment & Supplies Companies"], symbols: ["POLYMED"] }
+            { name: "Diagnostic & Lab Services", symbols: ["METROPOLIS", "LALPATHLAB", "VIJAYA", "THYROCARE", "KRSNAA"] },
+            { name: "Specialized Equipment & Retail", industries: ["Medical Equipment & Supplies Companies"], symbols: ["POLYMED", "MEDPLUS"] }
         ]
     },
     {
         title: "Const. & Materials",
         themes: [
             { name: "Cement", industries: ["Cement & Cement Products Companies"], symbols: ["ULTRACEMCO", "SHREECEM", "AMBUJACEM", "ACC", "DALBHARAT"] },
-            { name: "Tiles", industries: ["Ceramics Companies"], symbols: ["KAJARIACER", "SOMANYCERA"] },
-            { name: "Wood & Plywood", industries: ["Plywood Boards/ Laminates Companies"], symbols: ["CENTURYPLY", "GREENPLY", "GREENPANEL"] },
+            { name: "Tiles", industries: ["Ceramics Companies", "Granites & Marbles Companies", "Sanitary Ware Companies"], symbols: ["KAJARIACER", "SOMANYCERA", "CERA", "HINDWAREAP", "AROGRANITE", "POKARNA"] },
+            { name: "Wood & Plywood", industries: ["Plywood Boards/ Laminates Companies", "Forest Products Companies"], symbols: ["CENTURYPLY", "GREENPLY", "GREENPANEL"] },
             { name: "Paint Manufacturers", industries: ["Paints Companies"], symbols: ["ASIANPAINT", "BERGEPAINT", "KANSAINER", "INDIGOPNTS"] },
-            { name: "Plastic Pipes", symbols: ["ASTRAL", "SUPREMEIND", "PRINCEPIPE", "FINPIPE"] },
+            { name: "Plastic Pipes", industries: ["Plastic Products - Industrial Companies"], symbols: ["ASTRAL", "SUPREMEIND", "PRINCEPIPE", "FINPIPE", "APOLLOPIPE", "TIMETECHNO"] },
             { name: "Metal Pipes", symbols: ["APLAPOLLO", "RATNAMANI", "JINDALSAW"] }
         ]
     },
@@ -260,7 +275,7 @@ export const THEMATIC_MAP = [
         title: "Logistics & Trans",
         themes: [
             { name: "Shipping", industries: ["Shipping Companies"] },
-            { name: "Logistics Infra (Ports/Air)", industries: ["Port & Port services Companies", "Airport & Airport services Companies"] },
+            { name: "Logistics Infra (Ports/Air)", industries: ["Port & Port services Companies", "Airport & Airport services Companies", "Dredging Companies"] },
             { name: "Logistics", industries: ["Logistics Solution Provider Companies", "Transport Related Services Companies"] },
             { name: "Road Assets (Tolls/HAM)", industries: ["Road AssetsToll, Annuity, Hybrid-Annuity Companies"] },
             { name: "Surface Transport", industries: ["Road Transport Companies", "Transport Related Services Companies"] }

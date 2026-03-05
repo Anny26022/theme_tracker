@@ -4,6 +4,7 @@ import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cn } from '../lib/utils';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
+import { mergeMarketMapHeatmapData, useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
 import { Search, X, BarChart3, LayoutGrid } from 'lucide-react';
 import { UniverseLoader } from '../components/UniverseLoader';
 import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
@@ -24,6 +25,13 @@ const EMPTY_ARRAY = Object.freeze([]);
 const BLOCK_PREFETCH_ROOT_MARGIN = '160px 0px';
 const INITIAL_VISIBLE_BLOCKS = 1;
 const makeBlockId = (title) => `block-${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+const formatSnapshotAge = (ageMs) => {
+    if (!Number.isFinite(ageMs)) return null;
+    const minutes = Math.max(1, Math.round(ageMs / 60000));
+    if (minutes < 60) return `${minutes}m old`;
+    const hours = Math.round(minutes / 60);
+    return `${hours}h old`;
+};
 
 const isBSESymbol = (symbol) => {
     if (!symbol) return false;
@@ -775,7 +783,10 @@ const Legend = React.memo(() => (
 ));
 
 const MarketMapViewComponent = ({ hierarchy }) => {
-    const [hideBSE, _setHideBSE] = useState(() => localStorage.getItem('tt_map_hideBSE') === 'true');
+    const [hideBSE, _setHideBSE] = useState(() => {
+        const stored = localStorage.getItem('tt_map_hideBSE');
+        return stored == null ? true : stored === 'true';
+    });
     const setHideBSE = useCallback(v => _setHideBSE(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_map_hideBSE', String(next)); return next; }), []);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -933,20 +944,32 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         }
     };
 
-    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress } = useThematicHeatmap(
+    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress, secondaryPhaseActive } = useThematicHeatmap(
         THEMATIC_MAP,
         deferredFilteredHierarchy
     );
-    const deferredHeatmapData = useDeferredValue(heatmapData);
+    const snapshotScope = hideBSE ? 'nse' : 'all';
+    const {
+        snapshotHeatmapData,
+        hasSnapshot,
+        snapshotAgeMs,
+        snapshotIsComplete
+    } = useMarketMapSnapshot(snapshotScope, heatmapData, pendingIntervals);
+    const effectiveHeatmapData = useMemo(
+        () => mergeMarketMapHeatmapData(snapshotHeatmapData, heatmapData),
+        [snapshotHeatmapData, heatmapData]
+    );
+    const deferredHeatmapData = useDeferredValue(effectiveHeatmapData);
     const stockPerfMapRef = useRef(stockPerfMap);
     useEffect(() => {
         stockPerfMapRef.current = stockPerfMap;
     }, [stockPerfMap]);
-    const hasHeatmapData = Object.keys(heatmapData || {}).length > 0;
+    const hasHeatmapData = Object.keys(effectiveHeatmapData || {}).length > 0;
     const pendingLabel = pendingIntervals
         .map((interval) => {
             const status = intervalProgress?.[interval];
             if (!status) return interval;
+            if (status.queued) return `${interval} queued`;
             if (Number.isFinite(status.totalGroups) && status.totalGroups > 0) {
                 return `${interval} ${status.completedGroups || 0}/${status.totalGroups}`;
             }
@@ -956,6 +979,9 @@ const MarketMapViewComponent = ({ hierarchy }) => {
             return interval;
         })
         .join(' | ');
+    const snapshotAgeLabel = formatSnapshotAge(snapshotAgeMs);
+    const isBackgroundRefreshing = hasSnapshot && pendingIntervals.length > 0;
+    const isPrimaryStageOnly = !secondaryPhaseActive && pendingIntervals.length > 0;
 
     const activeSyncData = useMemo(() => {
         if (deferredViewMode === 'MACRO') {
@@ -977,6 +1003,21 @@ const MarketMapViewComponent = ({ hierarchy }) => {
                     <p className="text-[8.5px] md:text-[11.5px] font-black leading-relaxed tracking-[0.2em] md:tracking-[0.4em] text-[var(--accent-primary)] uppercase opacity-60">
                         {hideBSE ? 'Deep Thematic Mapping (NSE Only)' : 'Deep Thematic Mapping (Full Universe)'}
                     </p>
+                    {hasSnapshot && (
+                        <p className="text-[6px] md:text-[8px] font-black uppercase tracking-[0.2em] text-[var(--text-muted)] opacity-65 mt-2">
+                            Cached Snapshot {snapshotAgeLabel ? `· ${snapshotAgeLabel}` : ''}{snapshotIsComplete ? '' : ' · partial'}
+                        </p>
+                    )}
+                    {isBackgroundRefreshing && (
+                        <p className="text-[6px] md:text-[8px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]/75 mt-1">
+                            Rendering cached aggregates while live intervals refresh
+                        </p>
+                    )}
+                    {!hasSnapshot && isPrimaryStageOnly && (
+                        <p className="text-[6px] md:text-[8px] font-black uppercase tracking-[0.2em] text-[var(--accent-primary)]/75 mt-1">
+                            Loading 1D first, extended intervals hydrate in background
+                        </p>
+                    )}
                     {pendingIntervals?.length > 0 && (
                         <p className="text-[6px] md:text-[8px] font-black uppercase tracking-[0.2em] text-[var(--text-muted)] opacity-70 mt-2">
                             Loading Intervals: {pendingLabel}

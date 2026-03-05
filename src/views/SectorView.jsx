@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { ArrowLeft, Search } from 'lucide-react';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { IndustryNode } from '../components/IndustryNode';
@@ -43,14 +43,24 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
         });
     }, [industries, filter, sector, hierarchy]);
 
-    const handleCopyIndustry = (industryName) => {
+    const handleCopyIndustry = useCallback((industryName) => {
         const text = formatTVWatchlist([{
             label: industryName,
             companies: hierarchy[sector]?.[industryName] || []
         }]);
         if (text) navigator.clipboard.writeText(text);
         return !!text;
-    };
+    }, [hierarchy, sector]);
+
+    const industryCards = useMemo(() => (
+        filteredIndustries.map((industryName, index) => ({
+            industryName,
+            count: hierarchy[sector][industryName].length,
+            index,
+            onClick: () => onIndustryClick(industryName),
+            onCopy: () => handleCopyIndustry(industryName)
+        }))
+    ), [filteredIndustries, hierarchy, sector, onIndustryClick, handleCopyIndustry]);
 
     return (
         <ViewWrapper id="sector">
@@ -87,17 +97,17 @@ export const SectorView = ({ sector, industries, hierarchy, onBack, onIndustryCl
             {filteredIndustries.length > 0 ? (
                 <VirtuosoGrid
                     useWindowScroll
-                    data={filteredIndustries}
+                    data={industryCards}
                     components={SectorGridComponents}
-                    computeItemKey={(_, ind) => ind}
+                    computeItemKey={(_, item) => item.industryName}
                     increaseViewportBy={{ top: 400, bottom: 800 }}
-                    itemContent={(i, ind) => (
+                    itemContent={(_, item) => (
                         <IndustryNode
-                            name={ind}
-                            count={hierarchy[sector][ind].length}
-                            onClick={() => onIndustryClick(ind)}
-                            onCopy={() => handleCopyIndustry(ind)}
-                            index={i}
+                            name={item.industryName}
+                            count={item.count}
+                            onClick={item.onClick}
+                            onCopy={item.onCopy}
+                            index={item.index}
                             disableEnterAnimation
                             disableContentVisibility
                         />

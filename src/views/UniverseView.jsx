@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { SectorNode } from '../components/SectorNode';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
@@ -25,16 +25,17 @@ const UniverseGridComponents = {
 
 UniverseGridComponents.List.displayName = 'UniverseGridList';
 
-export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, timeframe, setTimeframe, onOpenInsights }) => {
+const SECTOR_ACCENT_CLASSES = [
+    'border-blue-500/60 text-blue-500',
+    'border-amber-500/60 text-amber-500',
+    'border-emerald-500/60 text-emerald-500',
+    'border-purple-500/60 text-purple-500',
+    'border-rose-500/60 text-rose-500',
+    'border-cyan-500/60 text-cyan-500'
+];
+
+export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClick, onOpenInsights }) => {
     const [filter, setFilter] = useState('');
-    const colors = [
-        'border-blue-500/60 text-blue-500',
-        'border-amber-500/60 text-amber-500',
-        'border-emerald-500/60 text-emerald-500',
-        'border-purple-500/60 text-purple-500',
-        'border-rose-500/60 text-rose-500',
-        'border-cyan-500/60 text-cyan-500'
-    ];
 
     const sectorSearchIndex = useMemo(() => {
         const index = new Map();
@@ -62,7 +63,7 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
         return sectors.filter(s => sectorSearchIndex.get(s)?.includes(search));
     }, [sectors, filter, sectorSearchIndex]);
 
-    const handleCopyAll = () => {
+    const handleCopyAll = useCallback(() => {
         let allData = [];
         filteredSectors.forEach(s => {
             const sectorData = hierarchy[s] || {};
@@ -73,9 +74,9 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
         const text = formatTVWatchlist(allData);
         if (text) navigator.clipboard.writeText(text);
         return !!text;
-    };
+    }, [filteredSectors, hierarchy]);
 
-    const handleCopySector = (sectorName) => {
+    const handleCopySector = useCallback((sectorName) => {
         const sectorData = hierarchy[sectorName] || {};
         const grouped = Object.entries(sectorData).map(([industryName, companies]) => ({
             label: industryName,
@@ -84,7 +85,17 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
         const text = formatTVWatchlist(grouped);
         if (text) navigator.clipboard.writeText(text);
         return !!text;
-    };
+    }, [hierarchy]);
+
+    const sectorCards = useMemo(() => (
+        filteredSectors.map((sectorName, index) => ({
+            sectorName,
+            colorClass: SECTOR_ACCENT_CLASSES[index % SECTOR_ACCENT_CLASSES.length],
+            count: Object.keys(hierarchy[sectorName] || {}).length,
+            onClick: () => onSectorClick(sectorName),
+            onCopy: () => handleCopySector(sectorName)
+        }))
+    ), [filteredSectors, hierarchy, onSectorClick, handleCopySector]);
 
     return (
         <ViewWrapper id="universe">
@@ -118,23 +129,21 @@ export const UniverseView = ({ sectors, hierarchy, onSectorClick, onIndustryClic
                 {filteredSectors.length > 0 ? (
                     <VirtuosoGrid
                         useWindowScroll
-                        data={filteredSectors}
+                        data={sectorCards}
                         components={UniverseGridComponents}
-                        computeItemKey={(_, sectorName) => sectorName}
+                        computeItemKey={(_, item) => item.sectorName}
                         increaseViewportBy={{ top: 400, bottom: 800 }}
-                        itemContent={(i, sectorName) => {
-                            const colorClass = colors[i % colors.length];
-                            return (
-                                <SectorNode
-                                    name={sectorName}
-                                    count={Object.keys(hierarchy[sectorName]).length}
-                                    onClick={() => onSectorClick(sectorName)}
-                                    onCopy={() => handleCopySector(sectorName)}
-                                    index={i}
-                                    accentClass={colorClass}
-                                />
-                            );
-                        }}
+                        itemContent={(i, item) => (
+                            <SectorNode
+                                name={item.sectorName}
+                                count={item.count}
+                                onClick={item.onClick}
+                                onCopy={item.onCopy}
+                                index={i}
+                                accentClass={item.colorClass}
+                                disableEnterAnimation
+                            />
+                        )}
                     />
                 ) : (
                     <div className="py-12 text-center">

@@ -72,8 +72,10 @@ const RouterView = React.memo(({
     hierarchy,
     sector,
     industry,
-    timeframe,
-    setTimeframe,
+    trackerTimeframe,
+    setTrackerTimeframe,
+    comparisonTimeframe,
+    setComparisonTimeframe,
     currentIndustries,
     currentCompanies,
     onSectorClick,
@@ -96,8 +98,6 @@ const RouterView = React.memo(({
                     hierarchy={hierarchy}
                     onSectorClick={onSectorClick}
                     onIndustryClick={onIndustryClick}
-                    timeframe={timeframe}
-                    setTimeframe={setTimeframe}
                     onOpenInsights={onOpenInsights}
                 />
             );
@@ -139,8 +139,8 @@ const RouterView = React.memo(({
                     hierarchy={hierarchy}
                     onSectorClick={onTrackerSectorClick}
                     onIndustryClick={onTrackerIndustryClick}
-                    timeframe={timeframe}
-                    setTimeframe={setTimeframe}
+                    timeframe={trackerTimeframe}
+                    setTimeframe={setTrackerTimeframe}
                     onOpenInsights={onOpenInsights}
                 />
             );
@@ -148,8 +148,8 @@ const RouterView = React.memo(({
             return (
                 <ComparisonView
                     hierarchy={hierarchy}
-                    timeframe={timeframe}
-                    setTimeframe={setTimeframe}
+                    timeframe={comparisonTimeframe}
+                    setTimeframe={setComparisonTimeframe}
                     onOpenInsights={onOpenInsights}
                 />
             );
@@ -165,7 +165,17 @@ const RouterView = React.memo(({
 RouterView.displayName = 'RouterView';
 
 const App = () => {
-    const { view, sector, industry, timeframe, from, navigate, setTimeframe } = useUrlState();
+    const {
+        view,
+        sector,
+        industry,
+        trackerTimeframe,
+        comparisonTimeframe,
+        from,
+        navigate,
+        setTrackerTimeframe,
+        setComparisonTimeframe
+    } = useUrlState();
     const { hierarchy, rawData, loading, error } = useMarketData();
     const [insightsCompany, setInsightsCompany] = React.useState(null);
 
@@ -240,8 +250,10 @@ const App = () => {
                                         hierarchy={hierarchy}
                                         sector={sector}
                                         industry={industry}
-                                        timeframe={timeframe}
-                                        setTimeframe={setTimeframe}
+                                        trackerTimeframe={trackerTimeframe}
+                                        setTrackerTimeframe={setTrackerTimeframe}
+                                        comparisonTimeframe={comparisonTimeframe}
+                                        setComparisonTimeframe={setComparisonTimeframe}
                                         currentIndustries={currentIndustries}
                                         currentCompanies={currentCompanies}
                                         onSectorClick={handleSectorClick}

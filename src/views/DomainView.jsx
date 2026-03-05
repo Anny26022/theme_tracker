@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { Search, ArrowUpRight, Play, Check } from 'lucide-react';
 import { motion as m } from 'framer-motion';
 import clsx from 'clsx';
@@ -101,7 +101,7 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
         }
     };
 
-    const handleCopyAll = () => {
+    const handleCopyAll = useCallback(() => {
         const data = filteredIndustries.map(ind => ({
             label: ind.name,
             companies: hierarchy[ind.sector][ind.name] || []
@@ -109,18 +109,27 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
         const text = formatTVWatchlist(data);
         if (text) navigator.clipboard.writeText(text);
         return !!text;
-    };
+    }, [filteredIndustries, hierarchy]);
 
-    const handleCopyIndustry = (ind) => {
+    const handleCopyIndustry = useCallback((ind) => {
         const text = formatTVWatchlist([{
             label: ind.name,
             companies: hierarchy[ind.sector][ind.name] || []
         }]);
         if (text) navigator.clipboard.writeText(text);
         return !!text;
-    };
+    }, [hierarchy]);
 
     const handleSyncFlaggedList = () => { }; // Placeholder for old reference if any
+
+    const industryCards = useMemo(() => (
+        filteredIndustries.map((industry, index) => ({
+            ...industry,
+            index,
+            onClick: () => onIndustryClick(industry.sector, industry.name),
+            onCopy: () => handleCopyIndustry(industry)
+        }))
+    ), [filteredIndustries, onIndustryClick, handleCopyIndustry]);
 
     return (
         <ViewWrapper id="domain">
@@ -209,17 +218,17 @@ export const DomainView = ({ sectors, hierarchy, onIndustryClick, onOpenInsights
                 {filteredIndustries.length > 0 ? (
                     <VirtuosoGrid
                         useWindowScroll
-                        data={filteredIndustries}
+                        data={industryCards}
                         components={DomainGridComponents}
                         computeItemKey={(_, ind) => `${ind.sector}-${ind.name}`}
                         increaseViewportBy={{ top: 400, bottom: 800 }}
-                        itemContent={(i, ind) => (
+                        itemContent={(_, ind) => (
                             <IndustryNode
                                 name={ind.name}
                                 count={ind.count}
-                                onClick={() => onIndustryClick(ind.sector, ind.name)}
-                                onCopy={() => handleCopyIndustry(ind)}
-                                index={i}
+                                onClick={ind.onClick}
+                                onCopy={ind.onCopy}
+                                index={ind.index}
                                 disableEnterAnimation
                                 disableContentVisibility
                             />

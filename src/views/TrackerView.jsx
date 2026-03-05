@@ -90,11 +90,23 @@ export const TrackerView = ({ sectors, hierarchy, onSectorClick, onIndustryClick
     const [visibleRightItems, setVisibleRightItems] = useState(() => rightItems.slice(0, 30));
 
     useEffect(() => {
-        setVisibleLeftItems(leftItems.slice(0, 20));
+        setVisibleLeftItems((prev) => {
+            const next = leftItems.slice(0, 20);
+            if (prev.length === next.length && prev.every((item, index) => item === next[index])) {
+                return prev;
+            }
+            return next;
+        });
     }, [leftItems]);
 
     useEffect(() => {
-        setVisibleRightItems(rightItems.slice(0, 30));
+        setVisibleRightItems((prev) => {
+            const next = rightItems.slice(0, 30);
+            if (prev.length === next.length && prev.every((item, index) => item === next[index])) {
+                return prev;
+            }
+            return next;
+        });
     }, [rightItems]);
 
     const { trackerMap: leftData, loading: leftLoading } = useUnifiedTracker(

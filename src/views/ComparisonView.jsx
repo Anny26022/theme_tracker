@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue, startTransition } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { X, Search, Plus, TrendingUp, BarChart3, Activity, Info } from 'lucide-react';
 import { ComparisonChart, COLORS } from '../components/ComparisonChart';
@@ -11,6 +11,48 @@ const INTERVALS = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
 const MAX_CHART_SYMBOLS = 60;
 const COMPARISON_STORAGE_KEY = 'tt_comparison_symbols:v2';
 const LEGACY_COMPARISON_STORAGE_KEY = 'tt_comparison_symbols_v2';
+
+const ComparisonChartPane = React.memo(({
+    loading,
+    partial,
+    totalChartSymbols,
+    chartData,
+    chartSymbols,
+    symbolNames,
+    timeframe
+}) => (
+    <div className="glass-card p-4 md:p-10 relative">
+        {loading && (
+            <div className="absolute inset-0 bg-[var(--bg-main)]/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
+                <Activity className="w-6 h-6 text-[var(--accent-primary)] animate-pulse" />
+            </div>
+        )}
+        {partial && (
+            <div className="absolute top-3 left-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
+                Syncing remaining series
+            </div>
+        )}
+        {totalChartSymbols > MAX_CHART_SYMBOLS && (
+            <div className="absolute top-3 right-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
+                Showing {MAX_CHART_SYMBOLS} / {totalChartSymbols}
+            </div>
+        )}
+        <ComparisonChart
+            data={chartData}
+            symbols={chartSymbols}
+            labels={symbolNames}
+            interval={timeframe}
+        />
+    </div>
+), (prevProps, nextProps) => (
+    prevProps.loading === nextProps.loading &&
+    prevProps.partial === nextProps.partial &&
+    prevProps.totalChartSymbols === nextProps.totalChartSymbols &&
+    prevProps.chartData === nextProps.chartData &&
+    prevProps.chartSymbols === nextProps.chartSymbols &&
+    prevProps.symbolNames === nextProps.symbolNames &&
+    prevProps.timeframe === nextProps.timeframe
+));
 
 /**
  * Premium Symbol Comparison View
@@ -27,6 +69,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
     });
 
     const [searchQuery, setSearchQuery] = useState('');
+    const deferredSearchQuery = useDeferredValue(searchQuery);
     const [searchMode, setSearchMode] = useState('INDUSTRY');
     const [exchangePreference, _setExchangePreference] = useState(() => localStorage.getItem('tt_comp_exchange') || 'ALL');
     const setExchangePreference = React.useCallback(v => { _setExchangePreference(v); localStorage.setItem('tt_comp_exchange', v); }, []);
@@ -89,8 +132,8 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
 
     // Filtered search results (Stock + Industry/Cluster)
     const searchResults = useMemo(() => {
-        if (!searchQuery.trim()) return [];
-        const q = searchQuery.toLowerCase();
+        if (!deferredSearchQuery.trim()) return [];
+        const q = deferredSearchQuery.toLowerCase();
 
         const stockMatches = allCompanies
             .filter(c =>
@@ -145,7 +188,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
         }));
 
         return [...industryResults, ...stockMatches].slice(0, 10);
-    }, [allCompanies, allIndustries, allClusters, searchQuery, searchMode]);
+    }, [allCompanies, allIndustries, allClusters, deferredSearchQuery, searchMode]);
 
     const isNumeric = (s) => /^\d+$/.test(s);
 
@@ -172,7 +215,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
         };
     }, [selectedSymbols, allIndustries, allClusters, exchangePreference]);
 
-    const { data: chartData, loading } = useComparisonData(chartSymbols, timeframe);
+    const { data: chartData, loading, partial } = useComparisonData(chartSymbols, timeframe);
 
     const toggleSymbol = (item) => {
         const isSelected = selectedSymbols.find(s => s.id === item.symbol);
@@ -180,12 +223,14 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
             setSelectedSymbols(prev => prev.filter(s => s.id !== item.symbol));
         } else {
             if (selectedSymbols.length >= 7) return;
-            setSelectedSymbols(prev => [...prev, {
-                id: item.symbol,
-                type: item.type,
-                name: item.name
-            }]);
-            setSearchQuery('');
+            startTransition(() => {
+                setSelectedSymbols(prev => [...prev, {
+                    id: item.symbol,
+                    type: item.type,
+                    name: item.name
+                }]);
+                setSearchQuery('');
+            });
         }
     };
 
@@ -337,24 +382,15 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
             </div>
 
             {/* Chart Area */}
-            <div className="glass-card p-4 md:p-10 relative">
-                {loading && (
-                    <div className="absolute inset-0 bg-[var(--bg-main)]/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
-                        <Activity className="w-6 h-6 text-[var(--accent-primary)] animate-pulse" />
-                    </div>
-                )}
-                {totalChartSymbols > MAX_CHART_SYMBOLS && (
-                    <div className="absolute top-3 right-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
-                        Showing {MAX_CHART_SYMBOLS} / {totalChartSymbols}
-                    </div>
-                )}
-                <ComparisonChart
-                    data={chartData}
-                    symbols={chartSymbols}
-                    labels={symbolNames}
-                    interval={timeframe}
-                />
-            </div>
+            <ComparisonChartPane
+                loading={loading}
+                partial={partial}
+                totalChartSymbols={totalChartSymbols}
+                chartData={chartData}
+                chartSymbols={chartSymbols}
+                symbolNames={symbolNames}
+                timeframe={timeframe}
+            />
 
             {/* Footnote */}
             <div className="flex items-center justify-center gap-6 opacity-30 grayscale hover:grayscale-0 transition-all">

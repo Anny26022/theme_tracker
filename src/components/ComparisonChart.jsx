@@ -66,7 +66,7 @@ function findClosestIndex(points, targetX) {
  * Nexus High-Fidelity Comparison Chart - High Perf Edition
  * Optimizations: Binary Search, Path Memoization, RAF Batching
  */
-export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, height = 400 }) => {
+const ComparisonChartComponent = ({ data, symbols, labels = new Map(), interval, height = 400 }) => {
     const containerRef = useRef(null);
     const hoverIndexRef = useRef(null);
     const rafRef = useRef(null);
@@ -418,5 +418,13 @@ export const ComparisonChart = ({ data, symbols, labels = new Map(), interval, h
         </div>
     );
 };
+
+export const ComparisonChart = React.memo(ComparisonChartComponent, (prevProps, nextProps) => (
+    prevProps.data === nextProps.data &&
+    prevProps.symbols === nextProps.symbols &&
+    prevProps.labels === nextProps.labels &&
+    prevProps.interval === nextProps.interval &&
+    prevProps.height === nextProps.height
+));
 
 export { COLORS };

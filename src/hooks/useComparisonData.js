@@ -1,6 +1,6 @@
 import { getCachedComparisonSeries } from '../services/priceService';
 import { useCallback, useEffect, useMemo } from 'react';
-import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
+import { useChartRequestPending, useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 
 function normalizeSymbols(symbols) {
     return Array.from(new Set((symbols || []).filter(Boolean).map((s) => String(s).trim().toUpperCase()))).sort();
@@ -15,6 +15,7 @@ export function useComparisonData(symbols, interval) {
     const chartVersion = useChartVersion();
     const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
     const stableSymbolKey = useMemo(() => normalizedSymbols.join('|'), [normalizedSymbols]);
+    const pending = useChartRequestPending(interval, normalizedSymbols);
 
     useEffect(() => {
         if (!normalizedSymbols.length || !interval) return;
@@ -35,11 +36,13 @@ export function useComparisonData(symbols, interval) {
         return refreshCharts(interval, normalizedSymbols);
     }, [interval, normalizedSymbols, stableSymbolKey, refreshCharts]);
 
-    const loading = normalizedSymbols.length > 0 && dataMap.size < normalizedSymbols.length;
+    const loading = normalizedSymbols.length > 0 && pending && dataMap.size === 0;
+    const partial = normalizedSymbols.length > 0 && pending && dataMap.size > 0 && dataMap.size < normalizedSymbols.length;
 
     return {
         data: dataMap || new Map(),
         loading,
+        partial,
         error: null,
         refresh
     };

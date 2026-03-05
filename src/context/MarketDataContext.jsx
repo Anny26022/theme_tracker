@@ -12,10 +12,12 @@ const MarketDataContext = createContext({
     refreshFundamentals: async () => { },
     getIntervalVersion: () => 0,
     getChartVersion: () => 0,
+    getChartRequestPending: () => false,
     getLiveVersion: () => 0,
     getFundamentalsVersion: () => 0,
     subscribeIntervalVersion: () => () => { },
     subscribeChartVersion: () => () => { },
+    subscribeRequestVersion: () => () => { },
     subscribeLiveVersion: () => () => { },
     subscribeFundamentalsVersion: () => () => { },
 });
@@ -83,6 +85,12 @@ function buildSymbolSetKey(symbols) {
     return `${sorted.length}:${sorted.join(',')}`;
 }
 
+function buildChartRequestKey(interval, symbols) {
+    if (!interval) return 'chart:unknown';
+    if (!Array.isArray(symbols) || symbols.length === 0) return `chart:${interval}:*`;
+    return `chart:${interval}:${buildSymbolSetKey(symbols)}`;
+}
+
 export function MarketDataProvider({ children }) {
     const intervalSymbolsRef = useRef(new Map());
     const chartSymbolsRef = useRef(new Map());
@@ -98,11 +106,13 @@ export function MarketDataProvider({ children }) {
     const chartListenersRef = useRef(new Set());
     const liveListenersRef = useRef(new Set());
     const fundaListenersRef = useRef(new Set());
+    const requestListenersRef = useRef(new Set());
     const intervalVersionRef = useRef(0);
     const chartVersionRef = useRef(0);
     const chartNotifyRafRef = useRef(null);
     const liveVersionRef = useRef(0);
     const fundaVersionRef = useRef(0);
+    const requestVersionRef = useRef(0);
     const loopTimerRef = useRef(null);
     const isVisibleRef = useRef(typeof document !== 'undefined' ? document.visibilityState !== 'hidden' : true);
 
@@ -151,6 +161,11 @@ export function MarketDataProvider({ children }) {
         fundaListenersRef.current.forEach((listener) => listener());
     }, []);
 
+    const notifyRequests = useCallback(() => {
+        requestVersionRef.current += 1;
+        requestListenersRef.current.forEach((listener) => listener());
+    }, []);
+
     const refreshInterval = useCallback(async (interval, symbolsOverride) => {
         if (!symbolsOverride) {
             const key = `interval:${interval}`;
@@ -175,7 +190,7 @@ export function MarketDataProvider({ children }) {
 
     const refreshCharts = useCallback(async (interval, symbolsOverride) => {
         if (!symbolsOverride) {
-            const key = `chart:${interval}`;
+            const key = buildChartRequestKey(interval);
             if (inFlightRef.current.has(key)) return;
             const symbols = extractSymbols(chartSymbolsRef.current, interval);
             if (symbols.length === 0) return;
@@ -186,21 +201,32 @@ export function MarketDataProvider({ children }) {
             }
 
             inFlightRef.current.add(key);
+            notifyRequests();
             try {
                 await fetchComparisonCharts(missingSymbols, interval);
                 lastChartRefreshRef.current.set(interval, Date.now());
                 scheduleChartNotify();
             } finally {
                 inFlightRef.current.delete(key);
+                notifyRequests();
             }
         } else {
             const missingSymbols = getMissingChartSymbols(interval, symbolsOverride);
             if (missingSymbols.length === 0) return;
+            const key = buildChartRequestKey(interval, missingSymbols);
+            if (inFlightRef.current.has(key)) return;
+            inFlightRef.current.add(key);
+            notifyRequests();
             // Specific symbols - let the service handle deduplication
-            await fetchComparisonCharts(missingSymbols, interval);
-            scheduleChartNotify();
+            try {
+                await fetchComparisonCharts(missingSymbols, interval);
+                scheduleChartNotify();
+            } finally {
+                inFlightRef.current.delete(key);
+                notifyRequests();
+            }
         }
-    }, [getMissingChartSymbols, scheduleChartNotify]);
+    }, [getMissingChartSymbols, notifyRequests, scheduleChartNotify]);
 
     const refreshLive = useCallback(async (symbolsOverride, options = {}) => {
         if (!symbolsOverride) {
@@ -537,6 +563,11 @@ export function MarketDataProvider({ children }) {
         return () => chartListenersRef.current.delete(listener);
     }, []);
 
+    const subscribeRequestVersion = useCallback((listener) => {
+        requestListenersRef.current.add(listener);
+        return () => requestListenersRef.current.delete(listener);
+    }, []);
+
     const subscribeLiveVersion = useCallback((listener) => {
         liveListenersRef.current.add(listener);
         return () => liveListenersRef.current.delete(listener);
@@ -549,6 +580,13 @@ export function MarketDataProvider({ children }) {
 
     const getIntervalVersion = useCallback(() => intervalVersionRef.current, []);
     const getChartVersion = useCallback(() => chartVersionRef.current, []);
+    const getChartRequestPending = useCallback((interval, symbols) => {
+        if (!interval) return false;
+        const globalKey = buildChartRequestKey(interval);
+        if (inFlightRef.current.has(globalKey)) return true;
+        if (!Array.isArray(symbols) || symbols.length === 0) return false;
+        return inFlightRef.current.has(buildChartRequestKey(interval, normalizeSymbolList(symbols)));
+    }, []);
     const getLiveVersion = useCallback(() => liveVersionRef.current, []);
     const getFundamentalsVersion = useCallback(() => fundaVersionRef.current, []);
 
@@ -563,14 +601,17 @@ export function MarketDataProvider({ children }) {
         refreshFundamentals,
         getIntervalVersion,
         getChartVersion,
+        getChartRequestPending,
         getLiveVersion,
         getFundamentalsVersion,
         subscribeIntervalVersion,
         subscribeChartVersion,
+        subscribeRequestVersion,
         subscribeLiveVersion,
         subscribeFundamentalsVersion,
     }), [
         getChartVersion,
+        getChartRequestPending,
         getFundamentalsVersion,
         getIntervalVersion,
         getLiveVersion,
@@ -584,6 +625,7 @@ export function MarketDataProvider({ children }) {
         subscribeFundamentalsVersion,
         subscribeIntervalSymbols,
         subscribeIntervalVersion,
+        subscribeRequestVersion,
         subscribeLiveSymbols,
         subscribeLiveVersion,
     ]);
@@ -607,6 +649,16 @@ export function useIntervalVersion() {
 export function useChartVersion() {
     const { subscribeChartVersion, getChartVersion } = useContext(MarketDataContext);
     return useSyncExternalStore(subscribeChartVersion, getChartVersion, getChartVersion);
+}
+
+export function useChartRequestPending(interval, symbols) {
+    const { subscribeRequestVersion, getChartRequestPending } = useContext(MarketDataContext);
+    const normalizedSymbols = useMemo(() => normalizeSymbolList(symbols), [symbols]);
+    const getSnapshot = useCallback(
+        () => getChartRequestPending(interval, normalizedSymbols),
+        [getChartRequestPending, interval, normalizedSymbols]
+    );
+    return useSyncExternalStore(subscribeRequestVersion, getSnapshot, getSnapshot);
 }
 
 export function useLiveVersion() {

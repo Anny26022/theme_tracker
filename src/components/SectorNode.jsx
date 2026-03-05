@@ -4,7 +4,16 @@ import { cn } from '../lib/utils';
 import { WatchlistCopyButton } from './WatchlistCopyButton';
 import { BaseNode } from './BaseNode';
 
-export const SectorNode = ({ name, count, onClick, onCopy, index, accentClass }) => {
+export const SectorNode = React.memo(({
+    name,
+    count,
+    onClick,
+    onCopy,
+    index,
+    accentClass,
+    disableEnterAnimation = false,
+    disableContentVisibility = false
+}) => {
     return (
         <BaseNode
             label={`Node_0${index + 1}`}
@@ -13,6 +22,8 @@ export const SectorNode = ({ name, count, onClick, onCopy, index, accentClass })
             onClick={onClick}
             index={index}
             accentClass={accentClass}
+            disableEnterAnimation={disableEnterAnimation}
+            disableContentVisibility={disableContentVisibility}
         >
             <div className={cn(
                 "h-[1px] w-full transition-all duration-700 opacity-20 group-hover:opacity-60",
@@ -33,7 +44,14 @@ export const SectorNode = ({ name, count, onClick, onCopy, index, accentClass })
             </div>
         </BaseNode>
     );
-};
-
-
+}, (prevProps, nextProps) => (
+    prevProps.name === nextProps.name &&
+    prevProps.count === nextProps.count &&
+    prevProps.onClick === nextProps.onClick &&
+    prevProps.onCopy === nextProps.onCopy &&
+    prevProps.index === nextProps.index &&
+    prevProps.accentClass === nextProps.accentClass &&
+    prevProps.disableEnterAnimation === nextProps.disableEnterAnimation &&
+    prevProps.disableContentVisibility === nextProps.disableContentVisibility
+));
 

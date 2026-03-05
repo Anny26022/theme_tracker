@@ -6,7 +6,7 @@ import { useWatchlistSync } from '../hooks/useWatchlistSync';
 import { WatchlistCopyButton } from './WatchlistCopyButton';
 import { formatTVWatchlist } from '../lib/watchlistUtils';
 
-export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll, defaultExpanded }) => {
+export const WatchlistSyncCard = React.memo(({ sectors, hierarchy, allIndustries, onCopyAll, defaultExpanded }) => {
     const {
         isSyncing,
         setIsSyncing,
@@ -693,4 +693,10 @@ export const WatchlistSyncCard = ({ sectors, hierarchy, allIndustries, onCopyAll
             </AnimatePresence>
         </div>
     );
-};
+}, (prevProps, nextProps) => (
+    prevProps.sectors === nextProps.sectors &&
+    prevProps.hierarchy === nextProps.hierarchy &&
+    prevProps.allIndustries === nextProps.allIndustries &&
+    prevProps.onCopyAll === nextProps.onCopyAll &&
+    prevProps.defaultExpanded === nextProps.defaultExpanded
+));

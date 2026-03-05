@@ -6,7 +6,7 @@ import { cn } from '../lib/utils';
  * The core UI building block for all Intel Suite cards.
  * Enforces consistent glassmorphism, hover effects, and layout.
  */
-export const BaseNode = ({
+export const BaseNode = React.memo(({
     label,
     value,
     title,
@@ -60,4 +60,15 @@ export const BaseNode = ({
             {children}
         </m.div>
     );
-};
+}, (prevProps, nextProps) => (
+    prevProps.label === nextProps.label &&
+    prevProps.value === nextProps.value &&
+    prevProps.title === nextProps.title &&
+    prevProps.onClick === nextProps.onClick &&
+    prevProps.index === nextProps.index &&
+    prevProps.accentClass === nextProps.accentClass &&
+    prevProps.children === nextProps.children &&
+    prevProps.className === nextProps.className &&
+    prevProps.disableEnterAnimation === nextProps.disableEnterAnimation &&
+    prevProps.disableContentVisibility === nextProps.disableContentVisibility
+));

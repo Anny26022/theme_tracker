@@ -46,6 +46,7 @@ const FinvizChartCard = React.memo(({ company, series, height, onExpand, initial
         onExpand={onExpand}
         initialTimeframe={initialTimeframe}
         disabled={disabled}
+        useExternalSeries={true}
     />
 ), (prevProps, nextProps) => {
     if (prevProps.series !== nextProps.series) return false;

@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { getCachedPrice, getCachedInterval } from '../services/priceService';
-import { useLiveVersion, useMarketDataRegistry } from './MarketDataContext';
+import { useMarketDataRegistry } from './MarketDataContext';
+
+const NOOP_SUBSCRIBE = () => () => { };
+const ZERO_SNAPSHOT = () => 0;
 
 export function PriceProvider({ children }) {
     return <>{children}</>;
@@ -11,9 +14,14 @@ export function PriceProvider({ children }) {
  * Checks interval cache first so navigating from Tracker/Theme shows data instantly.
  */
 export function useLivePrice(symbol, options = {}) {
-    const { subscribeLiveSymbols } = useMarketDataRegistry();
-    const liveVersion = useLiveVersion();
+    const { subscribeLiveSymbols, subscribeLiveVersion, getLiveVersion } = useMarketDataRegistry();
     const { allowStrike = false } = options;
+    const canSubscribe = Boolean(symbol);
+    const liveVersion = useSyncExternalStore(
+        canSubscribe ? subscribeLiveVersion : NOOP_SUBSCRIBE,
+        canSubscribe ? getLiveVersion : ZERO_SNAPSHOT,
+        canSubscribe ? getLiveVersion : ZERO_SNAPSHOT
+    );
 
     const hasCache = !!getCachedPrice(symbol) || !!getCachedInterval(symbol, '1D', { silent: true })?.close;
 

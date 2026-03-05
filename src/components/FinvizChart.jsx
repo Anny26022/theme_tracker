@@ -57,7 +57,21 @@ let _cs = null;
 const cs = () => _cs || (_cs = JSON.parse(localStorage.getItem('tt_cs_v4') || '{}'));
 const setCs = (s, t, d) => { (cs()[s] ||= {})[t] = d; localStorage.setItem('tt_cs_v4', JSON.stringify(_cs)); };
 
-const FinvizChart = React.memo(function FinvizChart({
+const areFinvizChartPropsEqual = (prevProps, nextProps) => {
+    if (prevProps.height !== nextProps.height) return false;
+    if (prevProps.symbol !== nextProps.symbol) return false;
+    if (prevProps.name !== nextProps.name) return false;
+    if (prevProps.series !== nextProps.series) return false;
+    if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
+    if (prevProps.chartStyle !== nextProps.chartStyle) return false;
+    if (!isSameMaConfig(prevProps.maConfig, nextProps.maConfig)) return false;
+    if (prevProps.disabled !== nextProps.disabled) return false;
+    if (prevProps.useExternalSeries !== nextProps.useExternalSeries) return false;
+    if (prevProps.enableLivePrice !== nextProps.enableLivePrice) return false;
+    return true;
+};
+
+function FinvizChartBase({
     symbol,
     name,
     series,
@@ -71,7 +85,11 @@ const FinvizChart = React.memo(function FinvizChart({
     disabled = false,
     chartStyle: chartStyleProp = null,
     maConfig: maConfigProp = null,
-    allowStrike: allowStrikeProp = null
+    allowStrike: allowStrikeProp = null,
+    useExternalSeries = false,
+    enableLivePrice = false,
+    chartVersion = 0,
+    subscribeChartSymbols = null
 }) {
     const lsStyle = useSyncExternalStore(
         chartStyleProp == null ? subChartSettings : NOOP_SUBSCRIBE,
@@ -151,10 +169,8 @@ const FinvizChart = React.memo(function FinvizChart({
         }
     }, [cleaned, timeframe]);
 
-    const { subscribeChartSymbols } = useMarketDataRegistry();
-    const chartVersion = useChartVersion();
-    const shouldLive = !isProMode || isActive;
-    const effectiveChartVersion = chartVersion;
+    const shouldLive = enableLivePrice || (isProMode && isActive);
+    const effectiveChartVersion = useExternalSeries ? 0 : chartVersion;
 
     const apiInterval = useMemo(() => {
         if (timeframe === '1D') return '1Y';
@@ -162,16 +178,17 @@ const FinvizChart = React.memo(function FinvizChart({
     }, [timeframe]);
 
     useEffect(() => {
-        if (!symbol) return;
+        if (useExternalSeries || !subscribeChartSymbols || !symbol) return;
         // Fetch the appropriate high-res window + MAX for deep history/SMA
         const unsubs = [subscribeChartSymbols(apiInterval, [symbol])];
         if (apiInterval === '1Y') {
             unsubs.push(subscribeChartSymbols('MAX', [symbol]));
         }
         return () => unsubs.forEach(u => u?.());
-    }, [symbol, apiInterval, subscribeChartSymbols]);
+    }, [symbol, apiInterval, subscribeChartSymbols, useExternalSeries]);
 
     const activeSeries = useMemo(() => {
+        if (useExternalSeries) return Array.isArray(series) ? series : [];
         if (!symbol) return series || [];
         const cachedTarget = getCachedComparisonSeries(cleaned, apiInterval, { silent: true });
         const cachedMax = (apiInterval === '1Y') ? getCachedComparisonSeries(cleaned, 'MAX', { silent: true }) : null;
@@ -187,7 +204,7 @@ const FinvizChart = React.memo(function FinvizChart({
         }
 
         return (cachedTarget && cachedTarget.length > 0) ? cachedTarget : (series || []);
-    }, [cleaned, apiInterval, effectiveChartVersion, series]);
+    }, [cleaned, apiInterval, effectiveChartVersion, series, symbol, useExternalSeries]);
     const hasSeriesData = (activeSeries?.length || 0) > 1;
 
     const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
@@ -1047,17 +1064,35 @@ const FinvizChart = React.memo(function FinvizChart({
             )}
         </div>
     );
-},
-    (prevProps, nextProps) => {
-        if (prevProps.height !== nextProps.height) return false;
-        if (prevProps.symbol !== nextProps.symbol) return false;
-        if (prevProps.name !== nextProps.name) return false;
-        if (prevProps.series !== nextProps.series) return false;
-        if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
-        if (prevProps.chartStyle !== nextProps.chartStyle) return false;
-        if (!isSameMaConfig(prevProps.maConfig, nextProps.maConfig)) return false;
-        if (prevProps.disabled !== nextProps.disabled) return false;
-        return true;
-    });
+}
 
-export default FinvizChart;
+const ConnectedFinvizChart = React.memo(function ConnectedFinvizChart(props) {
+    const { subscribeChartSymbols } = useMarketDataRegistry();
+    const chartVersion = useChartVersion();
+
+    return (
+        <FinvizChartBase
+            {...props}
+            subscribeChartSymbols={subscribeChartSymbols}
+            chartVersion={chartVersion}
+        />
+    );
+}, areFinvizChartPropsEqual);
+
+const ExternalSeriesFinvizChart = React.memo(function ExternalSeriesFinvizChart(props) {
+    return (
+        <FinvizChartBase
+            {...props}
+            useExternalSeries={true}
+            enableLivePrice={false}
+        />
+    );
+}, areFinvizChartPropsEqual);
+
+export default function FinvizChart(props) {
+    if (props.useExternalSeries) {
+        return <ExternalSeriesFinvizChart {...props} />;
+    }
+
+    return <ConnectedFinvizChart {...props} />;
+}

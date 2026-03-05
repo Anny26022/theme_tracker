@@ -14,11 +14,13 @@ export const VIEWS = {
 export const useUrlState = () => {
     const getInitialState = () => {
         const params = new URLSearchParams(window.location.search);
+        const legacyTimeframe = params.get('timeframe') || '1M';
         return {
             view: params.get('view') || VIEWS.UNIVERSE,
             sector: params.get('sector'),
             industry: params.get('industry'),
-            timeframe: params.get('timeframe') || '1M',
+            trackerTimeframe: params.get('trackerTf') || legacyTimeframe,
+            comparisonTimeframe: params.get('compareTf') || legacyTimeframe,
             from: params.get('from') || null
         };
     };
@@ -38,7 +40,8 @@ export const useUrlState = () => {
     useEffect(() => {
         const params = new URLSearchParams();
         params.set('view', state.view);
-        params.set('timeframe', state.timeframe);
+        params.set('trackerTf', state.trackerTimeframe);
+        params.set('compareTf', state.comparisonTimeframe);
 
         if (state.view === VIEWS.SECTOR || state.view === VIEWS.INDUSTRY) {
             if (state.sector) params.set('sector', state.sector);
@@ -53,7 +56,14 @@ export const useUrlState = () => {
         const newSearch = `?${params.toString()}`;
 
         if (currentUrl !== newSearch) {
-            const isMinorChange = currentUrl.replace(/timeframe=[^&]*/, '') === newSearch.replace(/timeframe=[^&]*/, '');
+            const stripViewScopedTimeframes = (search) => {
+                const scopedParams = new URLSearchParams(search);
+                scopedParams.delete('trackerTf');
+                scopedParams.delete('compareTf');
+                scopedParams.delete('timeframe');
+                return scopedParams.toString();
+            };
+            const isMinorChange = stripViewScopedTimeframes(currentUrl) === stripViewScopedTimeframes(newSearch);
             if (isMinorChange) {
                 window.history.replaceState(null, '', newUrl);
             } else {
@@ -72,13 +82,18 @@ export const useUrlState = () => {
         }));
     }, []);
 
-    const setTimeframe = useCallback((timeframe) => {
-        setState(prev => ({ ...prev, timeframe }));
+    const setTrackerTimeframe = useCallback((trackerTimeframe) => {
+        setState(prev => ({ ...prev, trackerTimeframe }));
+    }, []);
+
+    const setComparisonTimeframe = useCallback((comparisonTimeframe) => {
+        setState(prev => ({ ...prev, comparisonTimeframe }));
     }, []);
 
     return {
         ...state,
         navigate,
-        setTimeframe
+        setTrackerTimeframe,
+        setComparisonTimeframe
     };
 };

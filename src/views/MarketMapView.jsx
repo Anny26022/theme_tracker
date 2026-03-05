@@ -1,4 +1,4 @@
-import React, { startTransition, useDeferredValue, useMemo, useState, useRef, useEffect, useContext, useCallback } from 'react';
+import React, { startTransition, useDeferredValue, useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
@@ -21,19 +21,8 @@ const COLUMNS = [
 const EMPTY_THEME_PERF = Object.freeze({});
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
-const BLOCK_PREFETCH_ROOT_MARGIN = '320px 0px';
-const INITIAL_VISIBLE_BLOCKS = 3;
-const EMPTY_STOCK_PERF_REF = { current: EMPTY_OBJECT };
-const EMPTY_GRID_CONTEXT = Object.freeze({
-    themeCompaniesMap: EMPTY_OBJECT,
-    heatmapData: EMPTY_OBJECT,
-    loading: false,
-    stockPerfMapRef: EMPTY_STOCK_PERF_REF,
-    highlightedTheme: null,
-    isMobile: false
-});
-const ThemeGridDataContext = React.createContext(EMPTY_GRID_CONTEXT);
-
+const BLOCK_PREFETCH_ROOT_MARGIN = '160px 0px';
+const INITIAL_VISIBLE_BLOCKS = 1;
 const makeBlockId = (title) => `block-${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
 const isBSESymbol = (symbol) => {
@@ -131,25 +120,21 @@ const buildNseThemeCompaniesMap = (allThemeCompaniesMap) => {
     return next;
 };
 
-const buildSearchIndex = (mapSource, themeCompaniesMap) => {
-    const index = [];
+const buildSyncData = (mapSource, themeCompaniesMap) => {
+    const sectors = mapSource.map((group) => group.title);
+    const hierarchy = {};
+    const allIndustries = [];
 
-    mapSource.forEach((block) => {
-        block.themes.forEach((theme) => {
+    mapSource.forEach((group) => {
+        hierarchy[group.title] = {};
+        (group.themes || []).forEach((theme) => {
             const companies = themeCompaniesMap[theme.name] || EMPTY_ARRAY;
-            companies.forEach((company) => {
-                index.push({
-                    ...company,
-                    type: 'STOCK',
-                    themeName: theme.name,
-                    groupTitle: block.title,
-                    blockId: makeBlockId(block.title)
-                });
-            });
+            hierarchy[group.title][theme.name] = companies;
+            allIndustries.push({ name: theme.name, sector: group.title, count: companies.length });
         });
     });
 
-    return index;
+    return { sectors, hierarchy, allIndustries };
 };
 
 const getHeatmapColor = (value) => {
@@ -460,32 +445,6 @@ const ThemeBlock = React.memo(({ block, themeCompaniesMap, heatmapData, loading,
     );
 });
 
-const ContextThemeBlock = React.memo(({ block, alignPopover }) => {
-    const {
-        themeCompaniesMap,
-        heatmapData,
-        loading,
-        stockPerfMapRef,
-        highlightedTheme,
-        isMobile,
-        onSelect
-    } = useContext(ThemeGridDataContext);
-
-    return (
-        <ThemeBlock
-            block={block}
-            themeCompaniesMap={themeCompaniesMap}
-            heatmapData={heatmapData}
-            loading={loading}
-            stockPerfMapRef={stockPerfMapRef}
-            highlightedTheme={highlightedTheme}
-            isMobile={isMobile}
-            alignPopover={alignPopover}
-            onSelect={onSelect}
-        />
-    );
-});
-
 const estimateBlockHeight = (themeCount) => Math.max(260, 84 + (Math.max(1, themeCount) * 30));
 
 const ThemeBlockSkeleton = ({ themeCount = 1 }) => (
@@ -512,31 +471,84 @@ const buildVisibleIdsFromMap = (visibilityMap, mapSource) => {
     return ids;
 };
 
+const areThemePerfValuesEqual = (prevPerf = EMPTY_THEME_PERF, nextPerf = EMPTY_THEME_PERF) => (
+    COLUMNS.every(({ key }) => prevPerf?.[key] === nextPerf?.[key])
+);
+
+const doesBlockNeedUpdate = (prevProps, nextProps) => {
+    const themeNames = prevProps.block?.themes?.map((theme) => theme.name) || EMPTY_ARRAY;
+
+    for (const themeName of themeNames) {
+        if ((prevProps.themeCompaniesMap?.[themeName] || EMPTY_ARRAY) !== (nextProps.themeCompaniesMap?.[themeName] || EMPTY_ARRAY)) {
+            return true;
+        }
+        if (!areThemePerfValuesEqual(prevProps.heatmapData?.[themeName], nextProps.heatmapData?.[themeName])) {
+            return true;
+        }
+    }
+
+    if (prevProps.highlightedTheme !== nextProps.highlightedTheme) {
+        const prevHighlightedInBlock = prevProps.highlightedTheme && themeNames.includes(prevProps.highlightedTheme);
+        const nextHighlightedInBlock = nextProps.highlightedTheme && themeNames.includes(nextProps.highlightedTheme);
+        if (prevHighlightedInBlock || nextHighlightedInBlock) return true;
+    }
+
+    return false;
+};
+
 const DeferredThemeBlock = React.memo(({
     block,
     blockId,
     isVisible,
     attachRef,
-    alignPopover
+    alignPopover,
+    themeCompaniesMap,
+    heatmapData,
+    loading,
+    stockPerfMapRef,
+    highlightedTheme,
+    isMobile,
+    onSelect
 }) => {
     return (
         <div id={blockId} ref={attachRef} data-block-id={blockId} className="scroll-mt-32 min-h-[220px]">
             {isVisible ? (
-                <ContextThemeBlock block={block} alignPopover={alignPopover} />
+                <ThemeBlock
+                    block={block}
+                    themeCompaniesMap={themeCompaniesMap}
+                    heatmapData={heatmapData}
+                    loading={loading}
+                    stockPerfMapRef={stockPerfMapRef}
+                    highlightedTheme={highlightedTheme}
+                    isMobile={isMobile}
+                    alignPopover={alignPopover}
+                    onSelect={onSelect}
+                />
             ) : (
                 <ThemeBlockSkeleton themeCount={block?.themes?.length || 1} />
             )}
         </div>
     );
+}, (prevProps, nextProps) => {
+    if (prevProps.block !== nextProps.block) return false;
+    if (prevProps.blockId !== nextProps.blockId) return false;
+    if (prevProps.isVisible !== nextProps.isVisible) return false;
+    if (prevProps.attachRef !== nextProps.attachRef) return false;
+    if (prevProps.alignPopover !== nextProps.alignPopover) return false;
+    if (!prevProps.isVisible && !nextProps.isVisible) return true;
+    if (prevProps.loading !== nextProps.loading) return false;
+    if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
+    if (prevProps.isMobile !== nextProps.isMobile) return false;
+    if (prevProps.onSelect !== nextProps.onSelect) return false;
+    return !doesBlockNeedUpdate(prevProps, nextProps);
 });
 DeferredThemeBlock.displayName = 'DeferredThemeBlock';
 
-const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, onVisibleThemesChange }) => {
+const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, onSelect }) => {
     const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
     const refCallbacks = useRef(new Map());
-    const lastVisibleKeyRef = useRef('');
 
     useEffect(() => {
         const initialIds = buildInitialVisibleIds(mapSource);
@@ -558,20 +570,6 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, on
         visibilityRef.current = nextVisibility;
         setVisibleIds(initialIds);
     }, [mapSource]);
-
-    useEffect(() => {
-        if (!onVisibleThemesChange || !isActive) return;
-        const nextThemes = [];
-        mapSource.forEach((block) => {
-            const id = makeBlockId(block.title);
-            if (!visibleIds.has(id)) return;
-            (block.themes || []).forEach((theme) => nextThemes.push(theme.name));
-        });
-        const key = nextThemes.join('|');
-        if (key === lastVisibleKeyRef.current) return;
-        lastVisibleKeyRef.current = key;
-        onVisibleThemesChange(nextThemes);
-    }, [visibleIds, mapSource, onVisibleThemesChange, isActive]);
 
     const attachNodeRef = useCallback((blockId, node) => {
         if (node) {
@@ -603,8 +601,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, on
                     const id = entry.target.getAttribute('data-block-id');
                     if (!id) return;
                     const prevValue = !!visibilityRef.current.get(id);
-                    // Keep mounted once visible to prevent remount flicker and layout jumps while scrolling.
-                    const nextValue = prevValue || entry.isIntersecting;
+                    const nextValue = entry.isIntersecting;
                     if (prevValue === nextValue) return;
                     visibilityRef.current.set(id, nextValue);
                     hasChanges = true;
@@ -614,7 +611,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, on
                 const nextIds = buildVisibleIdsFromMap(visibilityRef.current, mapSource);
                 setVisibleIds(nextIds.size > 0 ? nextIds : buildInitialVisibleIds(mapSource));
             },
-            { root: null, rootMargin: isMobile ? '800px 0px' : BLOCK_PREFETCH_ROOT_MARGIN, threshold: 0.01 }
+            { root: null, rootMargin: isMobile ? '320px 0px' : BLOCK_PREFETCH_ROOT_MARGIN, threshold: 0.01 }
         );
 
         nodeRefs.current.forEach((node) => {
@@ -636,6 +633,13 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, on
                         isVisible={visibleIds.has(blockId)}
                         attachRef={getAttachRef(blockId)}
                         alignPopover={idx % 3 === 2 ? 'left' : 'right'}
+                        themeCompaniesMap={themeCompaniesMap}
+                        heatmapData={heatmapData}
+                        loading={loading}
+                        stockPerfMapRef={stockPerfMapRef}
+                        highlightedTheme={highlightedTheme}
+                        isMobile={isMobile}
+                        onSelect={onSelect}
                     />
                 );
             })}
@@ -644,20 +648,22 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, isActive, on
 });
 ThemeGrid.displayName = 'ThemeGrid';
 
-const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, isMobile, onVisibleThemesChange }) => {
+const ThematicGridPane = React.memo(({ isActive, isMounted, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme }) => {
     if (!isMounted) return null;
 
     return (
         <div className={cn(isActive ? 'block' : 'hidden')} aria-hidden={!isActive}>
-            <ThemeGridDataContext.Provider value={gridContextValue}>
-                <ThemeGrid
-                    mapSource={THEMATIC_MAP}
-                    gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3 md:auto-rows-fr"
-                    isMobile={isMobile}
-                    isActive={isActive}
-                    onVisibleThemesChange={onVisibleThemesChange}
-                />
-            </ThemeGridDataContext.Provider>
+            <ThemeGrid
+                mapSource={THEMATIC_MAP}
+                gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3 md:auto-rows-fr"
+                isMobile={isMobile}
+                themeCompaniesMap={themeCompaniesMap}
+                heatmapData={heatmapData}
+                loading={loading}
+                stockPerfMapRef={stockPerfMapRef}
+                highlightedTheme={highlightedTheme}
+                onSelect={onSelectTheme}
+            />
         </div>
     );
 }, (prevProps, nextProps) => {
@@ -665,24 +671,32 @@ const ThematicGridPane = React.memo(({ isActive, isMounted, gridContextValue, is
     if (prevProps.isActive !== nextProps.isActive) return false;
     if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (!prevProps.isActive && !nextProps.isActive) return true;
-    return prevProps.gridContextValue === nextProps.gridContextValue;
+    if (prevProps.loading !== nextProps.loading) return false;
+    if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
+    if (prevProps.onSelectTheme !== nextProps.onSelectTheme) return false;
+    return !doesBlockNeedUpdate(
+        { block: { themes: THEMATIC_MAP.flatMap((mapBlock) => mapBlock.themes) }, themeCompaniesMap: prevProps.themeCompaniesMap, heatmapData: prevProps.heatmapData, highlightedTheme: prevProps.highlightedTheme },
+        { block: { themes: THEMATIC_MAP.flatMap((mapBlock) => mapBlock.themes) }, themeCompaniesMap: nextProps.themeCompaniesMap, heatmapData: nextProps.heatmapData, highlightedTheme: nextProps.highlightedTheme }
+    );
 });
 ThematicGridPane.displayName = 'ThematicGridPane';
 
-const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextValue, isMobile, onVisibleThemesChange }) => {
+const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme }) => {
     if (!isMounted) return null;
 
     return (
         <div className={cn(isActive ? 'block' : 'hidden')} aria-hidden={!isActive}>
-            <ThemeGridDataContext.Provider value={gridContextValue}>
-                <ThemeGrid
-                    mapSource={macroMap}
-                    gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 md:auto-rows-fr"
-                    isMobile={isMobile}
-                    isActive={isActive}
-                    onVisibleThemesChange={onVisibleThemesChange}
-                />
-            </ThemeGridDataContext.Provider>
+            <ThemeGrid
+                mapSource={macroMap}
+                gridClassName="grid items-start gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-12 grid-cols-1 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 md:auto-rows-fr"
+                isMobile={isMobile}
+                themeCompaniesMap={themeCompaniesMap}
+                heatmapData={heatmapData}
+                loading={loading}
+                stockPerfMapRef={stockPerfMapRef}
+                highlightedTheme={highlightedTheme}
+                onSelect={onSelectTheme}
+            />
         </div>
     );
 }, (prevProps, nextProps) => {
@@ -691,11 +705,17 @@ const MacroGridPane = React.memo(({ isActive, isMounted, macroMap, gridContextVa
     if (prevProps.isMobile !== nextProps.isMobile) return false;
     if (prevProps.macroMap !== nextProps.macroMap) return false;
     if (!prevProps.isActive && !nextProps.isActive) return true;
-    return prevProps.gridContextValue === nextProps.gridContextValue;
+    if (prevProps.loading !== nextProps.loading) return false;
+    if (prevProps.stockPerfMapRef !== nextProps.stockPerfMapRef) return false;
+    if (prevProps.onSelectTheme !== nextProps.onSelectTheme) return false;
+    return !doesBlockNeedUpdate(
+        { block: { themes: prevProps.macroMap.flatMap((mapBlock) => mapBlock.themes || EMPTY_ARRAY) }, themeCompaniesMap: prevProps.themeCompaniesMap, heatmapData: prevProps.heatmapData, highlightedTheme: prevProps.highlightedTheme },
+        { block: { themes: nextProps.macroMap.flatMap((mapBlock) => mapBlock.themes || EMPTY_ARRAY) }, themeCompaniesMap: nextProps.themeCompaniesMap, heatmapData: nextProps.heatmapData, highlightedTheme: nextProps.highlightedTheme }
+    );
 });
 MacroGridPane.displayName = 'MacroGridPane';
 
-const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme, onVisibleThemesChange }) => {
+const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme }) => {
     const [hasMountedMacro, setHasMountedMacro] = useState(viewMode === 'MACRO');
 
     useEffect(() => {
@@ -704,32 +724,30 @@ const ThemeGridSection = React.memo(({ viewMode, macroMap, themeCompaniesMap, he
         }
     }, [viewMode, hasMountedMacro]);
 
-    const gridContextValue = useMemo(() => ({
-        themeCompaniesMap,
-        heatmapData,
-        loading,
-        stockPerfMapRef,
-        highlightedTheme,
-        isMobile,
-        onSelect: onSelectTheme
-    }), [themeCompaniesMap, heatmapData, loading, stockPerfMapRef, highlightedTheme, isMobile, onSelectTheme]);
-
     return (
         <>
             <ThematicGridPane
                 isActive={viewMode === 'THEMATIC'}
                 isMounted={true}
-                gridContextValue={gridContextValue}
+                themeCompaniesMap={themeCompaniesMap}
+                heatmapData={heatmapData}
+                loading={loading}
+                stockPerfMapRef={stockPerfMapRef}
+                highlightedTheme={highlightedTheme}
                 isMobile={isMobile}
-                onVisibleThemesChange={onVisibleThemesChange}
+                onSelectTheme={onSelectTheme}
             />
             <MacroGridPane
                 isActive={viewMode === 'MACRO'}
                 isMounted={hasMountedMacro}
                 macroMap={macroMap}
-                gridContextValue={gridContextValue}
+                themeCompaniesMap={themeCompaniesMap}
+                heatmapData={heatmapData}
+                loading={loading}
+                stockPerfMapRef={stockPerfMapRef}
+                highlightedTheme={highlightedTheme}
                 isMobile={isMobile}
-                onVisibleThemesChange={onVisibleThemesChange}
+                onSelectTheme={onSelectTheme}
             />
         </>
     );
@@ -756,7 +774,7 @@ const Legend = React.memo(() => (
     </div>
 ));
 
-export const MarketMapView = ({ hierarchy }) => {
+const MarketMapViewComponent = ({ hierarchy }) => {
     const [hideBSE, _setHideBSE] = useState(() => localStorage.getItem('tt_map_hideBSE') === 'true');
     const setHideBSE = useCallback(v => _setHideBSE(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_map_hideBSE', String(next)); return next; }), []);
     const [searchQuery, setSearchQuery] = useState('');
@@ -767,11 +785,6 @@ export const MarketMapView = ({ hierarchy }) => {
     const [displayMode, _setDisplayMode] = useState(() => localStorage.getItem('tt_map_displayMode') || 'HEATMAP');
     const setDisplayMode = useCallback(v => _setDisplayMode(prev => { const next = typeof v === 'function' ? v(prev) : v; localStorage.setItem('tt_map_displayMode', next); return next; }), []);
     const scrollPosRef = useRef(0);
-    const [visibleThemeNames, setVisibleThemeNames] = useState([]);
-    const handleVisibleThemesChange = useCallback((themes) => {
-        startTransition(() => setVisibleThemeNames(themes));
-    }, []);
-
     const onEnterCharts = useCallback((name) => {
         scrollPosRef.current = window.scrollY;
         setSelectedThemeName(name);
@@ -835,6 +848,14 @@ export const MarketMapView = ({ hierarchy }) => {
         () => buildNseThemeCompaniesMap(allThemeCompaniesMap),
         [allThemeCompaniesMap]
     );
+    const thematicSyncDataAll = useMemo(
+        () => buildSyncData(THEMATIC_MAP, allThemeCompaniesMap),
+        [allThemeCompaniesMap]
+    );
+    const thematicSyncDataNse = useMemo(
+        () => buildSyncData(THEMATIC_MAP, nseThemeCompaniesMap),
+        [nseThemeCompaniesMap]
+    );
 
     const macroMap = useMemo(() => {
         return MACRO_PILLARS.map((pillar) => ({
@@ -845,45 +866,51 @@ export const MarketMapView = ({ hierarchy }) => {
             )
         }));
     }, []);
-
-    const allThematicSearchIndex = useMemo(
-        () => buildSearchIndex(THEMATIC_MAP, allThemeCompaniesMap),
-        [allThemeCompaniesMap]
-    );
-    const nseThematicSearchIndex = useMemo(
-        () => buildSearchIndex(THEMATIC_MAP, nseThemeCompaniesMap),
-        [nseThemeCompaniesMap]
-    );
-    const allMacroSearchIndex = useMemo(
-        () => buildSearchIndex(macroMap, allThemeCompaniesMap),
+    const macroSyncDataAll = useMemo(
+        () => buildSyncData(macroMap, allThemeCompaniesMap),
         [macroMap, allThemeCompaniesMap]
     );
-    const nseMacroSearchIndex = useMemo(
-        () => buildSearchIndex(macroMap, nseThemeCompaniesMap),
+    const macroSyncDataNse = useMemo(
+        () => buildSyncData(macroMap, nseThemeCompaniesMap),
         [macroMap, nseThemeCompaniesMap]
     );
 
     const filteredHierarchy = hideBSE ? nseHierarchy : hierarchy;
     const themeCompaniesMap = hideBSE ? nseThemeCompaniesMap : allThemeCompaniesMap;
-    const searchIndex = viewMode === 'MACRO'
-        ? (hideBSE ? nseMacroSearchIndex : allMacroSearchIndex)
-        : (hideBSE ? nseThematicSearchIndex : allThematicSearchIndex);
+    const deferredViewMode = useDeferredValue(viewMode);
+    const deferredFilteredHierarchy = useDeferredValue(filteredHierarchy);
+    const deferredThemeCompaniesMap = useDeferredValue(themeCompaniesMap);
 
     const searchResults = useMemo(() => {
         if (!searchQuery.trim() || searchQuery.length < 2) return [];
         const q = searchQuery.toLowerCase();
-
-        // Remove duplicates and filter
         const seen = new Set();
-        return searchIndex.filter(item => {
-            const matches = item.name.toLowerCase().includes(q) || item.symbol.toLowerCase().includes(q);
-            if (matches && !seen.has(item.symbol)) {
-                seen.add(item.symbol);
-                return true;
+        const matches = [];
+        const activeMap = viewMode === 'MACRO' ? macroMap : THEMATIC_MAP;
+
+        for (const block of activeMap) {
+            for (const theme of block.themes) {
+                const companies = themeCompaniesMap[theme.name] || EMPTY_ARRAY;
+                for (const company of companies) {
+                    if (seen.has(company.symbol)) continue;
+                    const companyName = company.name?.toLowerCase() || '';
+                    const companySymbol = company.symbol?.toLowerCase() || '';
+                    if (!companyName.includes(q) && !companySymbol.includes(q)) continue;
+                    seen.add(company.symbol);
+                    matches.push({
+                        ...company,
+                        type: 'STOCK',
+                        themeName: theme.name,
+                        groupTitle: block.title,
+                        blockId: makeBlockId(block.title)
+                    });
+                    if (matches.length >= 8) return matches;
+                }
             }
-            return false;
-        }).slice(0, 8);
-    }, [searchIndex, searchQuery]);
+        }
+
+        return matches;
+    }, [viewMode, macroMap, themeCompaniesMap, searchQuery]);
 
     const scrollToBlock = (blockId, themeName) => {
         const el = document.getElementById(blockId);
@@ -908,8 +935,7 @@ export const MarketMapView = ({ hierarchy }) => {
 
     const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress } = useThematicHeatmap(
         THEMATIC_MAP,
-        filteredHierarchy,
-        { activeThemeNames: visibleThemeNames }
+        deferredFilteredHierarchy
     );
     const deferredHeatmapData = useDeferredValue(heatmapData);
     const stockPerfMapRef = useRef(stockPerfMap);
@@ -931,46 +957,13 @@ export const MarketMapView = ({ hierarchy }) => {
         })
         .join(' | ');
 
-    const thematicSyncData = useMemo(() => {
-        const sectors = THEMATIC_MAP.map(b => b.title);
-        const hierarchy = {};
-        const allIndustries = [];
-
-        THEMATIC_MAP.forEach(block => {
-            hierarchy[block.title] = {};
-            block.themes.forEach(theme => {
-                const companies = themeCompaniesMap[theme.name] || [];
-                hierarchy[block.title][theme.name] = companies;
-                allIndustries.push({ name: theme.name, sector: block.title, count: companies.length });
-            });
-        });
-
-        return { sectors, hierarchy, allIndustries };
-    }, [themeCompaniesMap]);
-
-    const macroSyncData = useMemo(() => {
-        const sectors = MACRO_PILLARS.map(p => p.title);
-        const hierarchy = {};
-        const allIndustries = [];
-
-        MACRO_PILLARS.forEach(pillar => {
-            hierarchy[pillar.title] = {};
-            pillar.blocks.forEach(blockTitle => {
-                const block = THEMATIC_MAP.find(b => b.title === blockTitle);
-                if (block) {
-                    block.themes.forEach(theme => {
-                        const companies = themeCompaniesMap[theme.name] || [];
-                        hierarchy[pillar.title][theme.name] = companies;
-                        allIndustries.push({ name: theme.name, sector: pillar.title, count: companies.length });
-                    });
-                }
-            });
-        });
-
-        return { sectors, hierarchy, allIndustries };
-    }, [themeCompaniesMap]);
-
-    const activeSyncData = viewMode === 'THEMATIC' ? thematicSyncData : macroSyncData;
+    const activeSyncData = useMemo(() => {
+        if (deferredViewMode === 'MACRO') {
+            return hideBSE ? macroSyncDataNse : macroSyncDataAll;
+        }
+        return hideBSE ? thematicSyncDataNse : thematicSyncDataAll;
+    }, [deferredViewMode, hideBSE, macroSyncDataAll, macroSyncDataNse, thematicSyncDataAll, thematicSyncDataNse]);
+    const deferredActiveSyncData = useDeferredValue(activeSyncData);
 
     return (
         <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 overflow-x-hidden relative">
@@ -1143,21 +1136,20 @@ export const MarketMapView = ({ hierarchy }) => {
                             <Legend />
                             <div className="w-full md:w-auto min-w-[320px]">
                                 <WatchlistSyncCard
-                                    {...activeSyncData}
+                                    {...deferredActiveSyncData}
                                 />
                             </div>
                         </div>
                         <ThemeGridSection
-                            viewMode={viewMode}
+                            viewMode={deferredViewMode}
                             macroMap={macroMap}
-                            themeCompaniesMap={themeCompaniesMap}
+                            themeCompaniesMap={deferredThemeCompaniesMap}
                             heatmapData={deferredHeatmapData}
                             loading={loading}
                             stockPerfMapRef={stockPerfMapRef}
                             highlightedTheme={highlightedTheme}
                             isMobile={isMobile}
                             onSelectTheme={onEnterCharts}
-                            onVisibleThemesChange={handleVisibleThemesChange}
                         />
                     </>
                 ) : (
@@ -1176,3 +1168,7 @@ export const MarketMapView = ({ hierarchy }) => {
         </ViewWrapper >
     );
 };
+
+export const MarketMapView = React.memo(MarketMapViewComponent, (prevProps, nextProps) => (
+    prevProps.hierarchy === nextProps.hierarchy
+));

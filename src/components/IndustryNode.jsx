@@ -2,7 +2,7 @@ import React from 'react';
 import { WatchlistCopyButton } from './WatchlistCopyButton';
 import { BaseNode } from './BaseNode';
 
-export const IndustryNode = ({ name, count, onClick, onCopy, index, disableEnterAnimation = false, disableContentVisibility = false }) => {
+export const IndustryNode = React.memo(({ name, count, onClick, onCopy, index, disableEnterAnimation = false, disableContentVisibility = false }) => {
     return (
         <BaseNode
             label="Industry"
@@ -24,4 +24,12 @@ export const IndustryNode = ({ name, count, onClick, onCopy, index, disableEnter
             </div>
         </BaseNode>
     );
-};
+}, (prevProps, nextProps) => (
+    prevProps.name === nextProps.name &&
+    prevProps.count === nextProps.count &&
+    prevProps.onClick === nextProps.onClick &&
+    prevProps.onCopy === nextProps.onCopy &&
+    prevProps.index === nextProps.index &&
+    prevProps.disableEnterAnimation === nextProps.disableEnterAnimation &&
+    prevProps.disableContentVisibility === nextProps.disableContentVisibility
+));

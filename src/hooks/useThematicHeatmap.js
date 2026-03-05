@@ -44,10 +44,11 @@ function hasAnyHeatmapValues(heatmap) {
     );
 }
 
-export function useThematicHeatmap(thematicMap, hierarchy) {
+export function useThematicHeatmap(thematicMap, hierarchy, options = {}) {
     const { subscribeIntervalSymbols } = useMarketDataRegistry();
     const intervalVersion = useIntervalVersion();
     const [secondaryPhaseActive, setSecondaryPhaseActive] = useState(false);
+    const enabled = options?.enabled !== false;
 
     const themeMappings = useMemo(() => {
         if (!thematicMap || !hierarchy) return { themeToSymbols: new Map(), allSymbols: [] };
@@ -115,16 +116,20 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
     );
 
     useEffect(() => {
+        if (!enabled) {
+            setSecondaryPhaseActive(false);
+            return;
+        }
         setSecondaryPhaseActive(false);
-    }, [normalizedSymbols]);
+    }, [enabled, normalizedSymbols]);
 
     useEffect(() => {
-        if (!normalizedSymbols.length) return;
+        if (!enabled || !normalizedSymbols.length) return;
         return subscribeIntervalSymbols(PRIMARY_INTERVALS, normalizedSymbols);
-    }, [normalizedSymbols, subscribeIntervalSymbols]);
+    }, [enabled, normalizedSymbols, subscribeIntervalSymbols]);
 
     useEffect(() => {
-        if (!normalizedSymbols.length) return undefined;
+        if (!enabled || !normalizedSymbols.length) return undefined;
 
         let cancelled = false;
         let timeoutId = null;
@@ -148,12 +153,12 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
                 window.clearTimeout(timeoutId);
             }
         };
-    }, [normalizedSymbols]);
+    }, [enabled, normalizedSymbols]);
 
     useEffect(() => {
-        if (!normalizedSymbols.length || !secondaryPhaseActive) return;
+        if (!enabled || !normalizedSymbols.length || !secondaryPhaseActive) return;
         return subscribeIntervalSymbols(SECONDARY_INTERVALS, normalizedSymbols);
-    }, [normalizedSymbols, secondaryPhaseActive, subscribeIntervalSymbols]);
+    }, [enabled, normalizedSymbols, secondaryPhaseActive, subscribeIntervalSymbols]);
 
     const { heatmapData, stockPerfMap, intervalProgress, pendingIntervals, primaryHasValues } = useMemo(() => {
         const intervalResults = new Map();
@@ -164,7 +169,7 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
         HEATMAP_INTERVALS.forEach((interval) => {
             const perfMap = new Map();
             let completedSymbols = 0;
-            const isQueued = !secondaryPhaseActive && SECONDARY_INTERVALS.includes(interval);
+            const isQueued = enabled && !secondaryPhaseActive && SECONDARY_INTERVALS.includes(interval);
 
             normalizedSymbols.forEach((symbol) => {
                 const entry = getCachedIntervalEntry(symbol, interval, { silent: true });
@@ -204,10 +209,10 @@ export function useThematicHeatmap(thematicMap, hierarchy) {
             pendingIntervals: pending,
             primaryHasValues: hasAnyHeatmapValues(primaryHeatmap)
         };
-    }, [normalizedSymbols, themeToSymbols, intervalVersion, secondaryPhaseActive]);
+    }, [enabled, normalizedSymbols, themeToSymbols, intervalVersion, secondaryPhaseActive]);
 
     const primaryStillLoading = PRIMARY_INTERVALS.some((interval) => !intervalProgress?.[interval]?.done);
-    const loading = normalizedSymbols.length > 0 && primaryStillLoading && !primaryHasValues;
+    const loading = enabled && normalizedSymbols.length > 0 && primaryStillLoading && !primaryHasValues;
 
     return {
         heatmapData: heatmapData || {},

@@ -47,12 +47,18 @@ function readScopeSnapshot(scope) {
     const store = readSnapshotStore();
     const snapshot = store?.scopes?.[scope];
     if (!snapshot) return null;
-    if (typeof snapshot.savedAt !== 'number') return null;
+    const snapshotTimestamp = typeof snapshot.generatedAtMs === 'number'
+        ? snapshot.generatedAtMs
+        : snapshot.savedAt;
+    if (typeof snapshotTimestamp !== 'number') return null;
 
-    const isExpired = Date.now() - snapshot.savedAt > SNAPSHOT_TTL_MS;
+    const isExpired = Date.now() - snapshotTimestamp > SNAPSHOT_TTL_MS;
     if (isExpired) return null;
 
-    return snapshot;
+    return {
+        ...snapshot,
+        generatedAtMs: snapshotTimestamp
+    };
 }
 
 function writeScopeSnapshot(scope, snapshot) {
@@ -103,12 +109,64 @@ export function mergeMarketMapHeatmapData(snapshotHeatmapData, liveHeatmapData) 
 
 export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
     const [revision, setRevision] = useState(0);
+    const [networkState, setNetworkState] = useState({
+        loading: Boolean(scope),
+        resolved: false,
+        error: null
+    });
 
     const snapshotState = useMemo(() => readScopeSnapshot(scope), [scope, revision]);
     const snapshotHeatmapData = snapshotState?.heatmapData || null;
     const hasSnapshot = hasAnyHeatmapValues(snapshotHeatmapData);
-    const snapshotAgeMs = snapshotState?.savedAt ? Math.max(0, Date.now() - snapshotState.savedAt) : null;
+    const snapshotAgeMs = snapshotState?.generatedAtMs ? Math.max(0, Date.now() - snapshotState.generatedAtMs) : null;
     const snapshotIsComplete = snapshotState?.complete !== false;
+    const snapshotSource = snapshotState?.source || null;
+
+    useEffect(() => {
+        if (!scope || typeof window === 'undefined') {
+            setNetworkState({ loading: false, resolved: true, error: null });
+            return undefined;
+        }
+
+        const controller = new AbortController();
+        setNetworkState({ loading: !hasSnapshot, resolved: false, error: null });
+
+        const loadRemoteSnapshot = async () => {
+            try {
+                const response = await fetch(`/api/market-map/snapshot?scope=${encodeURIComponent(scope)}`, {
+                    method: 'GET',
+                    headers: { Accept: 'application/json' },
+                    signal: controller.signal,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Snapshot request failed: ${response.status}`);
+                }
+
+                const payload = await response.json();
+                const snapshot = payload?.snapshot;
+                if (!snapshot || typeof snapshot !== 'object' || typeof snapshot.heatmapData !== 'object') {
+                    throw new Error('Snapshot payload invalid');
+                }
+
+                writeScopeSnapshot(scope, {
+                    generatedAtMs: Date.parse(snapshot.generatedAt) || Date.now(),
+                    complete: true,
+                    heatmapData: snapshot.heatmapData,
+                    source: 'server'
+                });
+                setRevision((value) => value + 1);
+                setNetworkState({ loading: false, resolved: true, error: null });
+            } catch (error) {
+                if (controller.signal.aborted) return;
+                setNetworkState({ loading: false, resolved: true, error });
+            }
+        };
+
+        loadRemoteSnapshot();
+
+        return () => controller.abort();
+    }, [scope, hasSnapshot]);
 
     useEffect(() => {
         if (!scope || !hasAnyHeatmapValues(liveHeatmapData)) return;
@@ -116,15 +174,15 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
         const nextComplete = !Array.isArray(pendingIntervals) || pendingIntervals.length === 0;
         const currentSnapshot = readScopeSnapshot(scope);
 
-        // Persist one partial snapshot if nothing exists, then upgrade it once the background
-        // interval hydration completes. Avoid rewriting on every live cache tick.
-        const shouldPersist = !currentSnapshot || (!currentSnapshot.complete && nextComplete);
+        // Persist client-derived fallback snapshots only when there is no server snapshot yet.
+        const shouldPersist = !currentSnapshot || (currentSnapshot.source !== 'server' && !currentSnapshot.complete && nextComplete);
         if (!shouldPersist) return;
 
         writeScopeSnapshot(scope, {
-            savedAt: Date.now(),
+            generatedAtMs: Date.now(),
             complete: nextComplete,
-            heatmapData: liveHeatmapData
+            heatmapData: liveHeatmapData,
+            source: 'client'
         });
         setRevision((value) => value + 1);
     }, [scope, liveHeatmapData, pendingIntervals]);
@@ -133,6 +191,10 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
         snapshotHeatmapData,
         hasSnapshot,
         snapshotAgeMs,
-        snapshotIsComplete
+        snapshotIsComplete,
+        snapshotSource,
+        snapshotLoading: networkState.loading,
+        snapshotResolved: networkState.resolved,
+        snapshotError: networkState.error
     };
 }

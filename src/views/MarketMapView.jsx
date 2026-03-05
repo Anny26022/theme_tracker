@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom';
 import { ViewWrapper } from '../components/ViewWrapper';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { cn } from '../lib/utils';
+import { useIntervalVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
 import { mergeMarketMapHeatmapData, useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
+import { cleanSymbol, getCachedIntervalEntry } from '../services/priceService';
 import { Search, X, BarChart3, LayoutGrid } from 'lucide-react';
 import { UniverseLoader } from '../components/UniverseLoader';
 import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
@@ -25,6 +27,7 @@ const EMPTY_ARRAY = Object.freeze([]);
 const BLOCK_PREFETCH_ROOT_MARGIN = '160px 0px';
 const INITIAL_VISIBLE_BLOCKS = 1;
 const makeBlockId = (title) => `block-${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+const COMPOSITION_INTERVAL_KEYS = COLUMNS.map((column) => column.key);
 const formatSnapshotAge = (ageMs) => {
     if (!Number.isFinite(ageMs)) return null;
     const minutes = Math.max(1, Math.round(ageMs / 60000));
@@ -128,6 +131,47 @@ const buildNseThemeCompaniesMap = (allThemeCompaniesMap) => {
     return next;
 };
 
+function useCompositionPerfMap(companies, fallbackPerfMapRef, fallbackPerfMap) {
+    const { subscribeIntervalSymbols } = useMarketDataRegistry();
+    const intervalVersion = useIntervalVersion();
+
+    const normalizedSymbols = useMemo(
+        () => Array.from(new Set((companies || []).map((company) => cleanSymbol(company?.symbol)).filter(Boolean))),
+        [companies]
+    );
+
+    useEffect(() => {
+        if (!normalizedSymbols.length) return;
+        return subscribeIntervalSymbols(COMPOSITION_INTERVAL_KEYS, normalizedSymbols);
+    }, [normalizedSymbols, subscribeIntervalSymbols]);
+
+    return useMemo(() => {
+        const merged = new Map();
+        const basePerfMap = fallbackPerfMapRef?.current ?? fallbackPerfMap;
+
+        COMPOSITION_INTERVAL_KEYS.forEach((interval) => {
+            const intervalMap = new Map();
+            const baseIntervalMap = basePerfMap?.get(interval);
+            if (baseIntervalMap instanceof Map) {
+                baseIntervalMap.forEach((value, symbol) => {
+                    intervalMap.set(symbol, value);
+                });
+            }
+
+            normalizedSymbols.forEach((symbol) => {
+                const entry = getCachedIntervalEntry(symbol, interval, { silent: true });
+                if (entry?.data && typeof entry.data.changePct === 'number') {
+                    intervalMap.set(symbol, entry.data);
+                }
+            });
+
+            merged.set(interval, intervalMap);
+        });
+
+        return merged;
+    }, [fallbackPerfMap, fallbackPerfMapRef, intervalVersion, normalizedSymbols]);
+}
+
 const buildSyncData = (mapSource, themeCompaniesMap) => {
     const sectors = mapSource.map((group) => group.title);
     const hierarchy = {};
@@ -168,11 +212,11 @@ const getHeatmapColor = (value) => {
 
 const CompositionCard = ({ theme, companies, stockPerfMap, stockPerfMapRef, onClose, isMobile }) => {
     const count = companies.length;
-    const perfMap = stockPerfMapRef?.current ?? stockPerfMap;
+    const perfMap = useCompositionPerfMap(companies, stockPerfMapRef, stockPerfMap);
     const hasAnyMissingData = useMemo(() => {
         if (!perfMap || perfMap.size === 0) return false;
         return companies.some(stock => {
-            const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
+            const cleaned = cleanSymbol(stock.symbol);
             return COLUMNS.some(col => {
                 const val = perfMap.get(col.key)?.get(cleaned)?.changePct;
                 return val === null || val === undefined;
@@ -211,7 +255,7 @@ const CompositionCard = ({ theme, companies, stockPerfMap, stockPerfMapRef, onCl
                 companies.length > 15 && !isMobile ? "grid-cols-2" : "grid-cols-1"
             )}>
                 {companies.map((stock) => {
-                    const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
+                    const cleaned = cleanSymbol(stock.symbol);
                     return (
                         <div key={stock.symbol} className="flex items-center justify-between gap-3 group/item py-0.5 border-b border-[var(--ui-divider)]/10 last:border-0">
                             <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -235,7 +279,6 @@ const CompositionCard = ({ theme, companies, stockPerfMap, stockPerfMapRef, onCl
                                     <span className="text-[9px] font-black uppercase tracking-tight text-[var(--text-main)] whitespace-normal leading-tight flex items-center gap-1">
                                         {stock.name}
                                         {(() => {
-                                            const cleaned = stock.symbol.replace(':NSE', '').replace(':BSE', '');
                                             const hasData = COLUMNS.some(col => {
                                                 const val = perfMap?.get(col.key)?.get(cleaned)?.changePct;
                                                 return val !== null && val !== undefined;
@@ -944,17 +987,22 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         }
     };
 
-    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress, secondaryPhaseActive } = useThematicHeatmap(
-        THEMATIC_MAP,
-        deferredFilteredHierarchy
-    );
     const snapshotScope = hideBSE ? 'nse' : 'all';
     const {
         snapshotHeatmapData,
         hasSnapshot,
         snapshotAgeMs,
-        snapshotIsComplete
-    } = useMarketMapSnapshot(snapshotScope, heatmapData, pendingIntervals);
+        snapshotIsComplete,
+        snapshotSource,
+        snapshotLoading,
+        snapshotResolved,
+    } = useMarketMapSnapshot(snapshotScope);
+    const liveHeatmapEnabled = snapshotResolved && !hasSnapshot;
+    const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress, secondaryPhaseActive } = useThematicHeatmap(
+        THEMATIC_MAP,
+        deferredFilteredHierarchy,
+        { enabled: liveHeatmapEnabled }
+    );
     const effectiveHeatmapData = useMemo(
         () => mergeMarketMapHeatmapData(snapshotHeatmapData, heatmapData),
         [snapshotHeatmapData, heatmapData]
@@ -982,6 +1030,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const snapshotAgeLabel = formatSnapshotAge(snapshotAgeMs);
     const isBackgroundRefreshing = hasSnapshot && pendingIntervals.length > 0;
     const isPrimaryStageOnly = !secondaryPhaseActive && pendingIntervals.length > 0;
+    const showInitialLoader = !hasHeatmapData && (snapshotLoading || loading);
 
     const activeSyncData = useMemo(() => {
         if (deferredViewMode === 'MACRO') {
@@ -993,7 +1042,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
 
     return (
         <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 overflow-x-hidden relative">
-            {loading && !hasHeatmapData && <UniverseLoader />}
+            {showInitialLoader && <UniverseLoader />}
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60]">
                 <div className="space-y-1 relative z-10 w-full md:w-auto">
@@ -1005,7 +1054,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
                     </p>
                     {hasSnapshot && (
                         <p className="text-[6px] md:text-[8px] font-black uppercase tracking-[0.2em] text-[var(--text-muted)] opacity-65 mt-2">
-                            Cached Snapshot {snapshotAgeLabel ? `· ${snapshotAgeLabel}` : ''}{snapshotIsComplete ? '' : ' · partial'}
+                            {snapshotSource === 'server' ? 'Server Snapshot' : 'Cached Snapshot'} {snapshotAgeLabel ? `· ${snapshotAgeLabel}` : ''}{snapshotIsComplete ? '' : ' · partial'}
                         </p>
                     )}
                     {isBackgroundRefreshing && (

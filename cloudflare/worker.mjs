@@ -1,9 +1,12 @@
 /**
- * Cloudflare Worker router (snapshot-free):
+ * Cloudflare Worker router:
  * - Serves static app via ASSETS binding
  * - Implements API proxies directly at edge
  * - Mirrors Vercel rewrite behavior (/api/v1/* and /api/tv/*)
+ * - Publishes Market Map aggregate snapshots from R2
  */
+
+import { readMarketMapSnapshot, storeMarketMapSnapshots } from './marketMapSnapshot.mjs';
 
 const API_V1_REWRITES = new Map([
     ['/api/v1/fuckyouuuu', '/api/fuckyouuuu'],
@@ -477,7 +480,44 @@ function handleRemovedNseRoutes(request) {
     });
 }
 
-async function handleApi(request, env, url) {
+async function handleMarketMapSnapshot(request, env, url, ctx) {
+    if (request.method === 'OPTIONS') return createOptionsResponse('GET, OPTIONS');
+    if (request.method !== 'GET') return createMethodNotAllowedResponse('GET');
+
+    const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
+    const scope = rawScope === 'all' ? 'all' : 'nse';
+
+    try {
+        const stored = await readMarketMapSnapshot(env, scope);
+        if (!stored?.snapshot) {
+            if (ctx?.waitUntil) {
+                ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
+            }
+            return createJsonResponse(404, {
+                ok: false,
+                error: 'Market Map snapshot not found',
+                code: 'MARKET_MAP_SNAPSHOT_MISSING',
+                scope,
+            });
+        }
+
+        return createJsonResponse(200, {
+            ok: true,
+            scope,
+            snapshot: stored.snapshot,
+        }, {
+            'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+        });
+    } catch (error) {
+        return createJsonResponse(500, {
+            ok: false,
+            error: 'Failed to read Market Map snapshot',
+            details: error?.message || 'Unknown error',
+        });
+    }
+}
+
+async function handleApi(request, env, url, ctx) {
     if (url.pathname.startsWith('/api/nse/')) {
         return handleRemovedNseRoutes(request);
     }
@@ -487,6 +527,8 @@ async function handleApi(request, env, url) {
     }
 
     switch (url.pathname) {
+        case '/api/market-map/snapshot':
+            return handleMarketMapSnapshot(request, env, url, ctx);
         case '/api/fuckyouuuu':
             return handleGoogleBatch(request, url, { encryptedPost: true });
         case '/api/mobile-batch':
@@ -510,14 +552,18 @@ async function handleApi(request, env, url) {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         normalizeApiPath(url);
 
         if (url.pathname.startsWith('/api/')) {
-            return handleApi(request, env, url);
+            return handleApi(request, env, url, ctx);
         }
 
         return handleStatic(request, env, url);
+    },
+
+    async scheduled(_controller, env, ctx) {
+        ctx.waitUntil(storeMarketMapSnapshots(env));
     },
 };

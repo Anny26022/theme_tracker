@@ -62,7 +62,7 @@ const FUNDA_SNAPSHOT_PREFIX = 'snapshots/fundamentals';
 const FUNDA_META_KEY = `${FUNDA_SNAPSHOT_PREFIX}/meta.json`;
 const CHART_SNAPSHOT_PREFIX = 'snapshots/charts';
 const CHART_META_KEY = `${CHART_SNAPSHOT_PREFIX}/meta.json`;
-const WORKER_BUILD_ID = '2026-03-04-201';
+const WORKER_BUILD_ID = '2026-03-05-005';
 const DEFAULT_SNAPSHOT_SOURCE_URL = 'https://24e8e3a97bab753a1a1d82e0b7a5b283.r2.cloudflarestorage.com/nexusmap/data.json';
 const REFRESH_STATUS_KEY = 'snapshots/system/refresh-status.json';
 const REFRESH_PROGRESS_KEY = 'snapshots/system/refresh-progress.json';
@@ -77,6 +77,29 @@ let lastRefreshState = {
     errors: {},
     stages: {},
 };
+
+function resolveTimeoutMs(rawValue, fallbackMs) {
+    const value = Number(rawValue);
+    if (!Number.isFinite(value) || value <= 0) return fallbackMs;
+    return Math.floor(value);
+}
+
+function isRetriablePutError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return (
+        message.includes('(10001)') ||
+        message.includes('internal error') ||
+        message.includes('temporar') ||
+        message.includes('timeout') ||
+        message.includes('connection')
+    );
+}
+
+function resolveRetryAttempts(rawValue, fallback) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(1, Math.min(Math.floor(parsed), 10));
+}
 
 async function writeRefreshStatus(env, status) {
     if (!env?.NSE_SNAPSHOTS?.put) return;
@@ -598,19 +621,40 @@ async function putSnapshotObject(env, key, payload, { gzip = true, cacheControl 
         encoding = compressed.encoding;
     }
 
-    await env.NSE_SNAPSHOTS.put(key, data, {
-        httpMetadata: {
-            contentType: 'application/json; charset=utf-8',
-            contentEncoding: encoding || undefined,
-            cacheControl: cacheControl || NSE_SNAPSHOT_CACHE_CONTROL,
-        },
-    });
+    const maxAttempts = resolveRetryAttempts(env?.NSE_SNAPSHOT_PUT_MAX_ATTEMPTS, 4);
+    const baseDelayMs = resolveTimeoutMs(env?.NSE_SNAPSHOT_PUT_RETRY_BASE_MS, 200);
+
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            await env.NSE_SNAPSHOTS.put(key, data, {
+                httpMetadata: {
+                    contentType: 'application/json; charset=utf-8',
+                    contentEncoding: encoding || undefined,
+                    cacheControl: cacheControl || NSE_SNAPSHOT_CACHE_CONTROL,
+                },
+            });
+            return;
+        } catch (error) {
+            lastError = error;
+            const retriable = isRetriablePutError(error);
+            if (!retriable || attempt === maxAttempts) break;
+            const jitter = Math.floor(Math.random() * 125);
+            const backoff = Math.min(3000, baseDelayMs * (2 ** (attempt - 1)) + jitter);
+            console.warn(`[R2 PUT] Retrying key=${key} attempt=${attempt}/${maxAttempts} delayMs=${backoff}`, error);
+            await sleep(backoff);
+        }
+    }
+
+    throw lastError || new Error(`Failed to write snapshot object: ${key}`);
 }
 
 async function refreshNseSnapshots(env) {
-    const existingMeta = await env.NSE_SNAPSHOTS.get(NSE_META_KEY);
-    if (existingMeta) {
-        console.log('[NSE Snapshot] Already exists, skipping');
+    const existingMeta = await readSnapshotJson(env, NSE_META_KEY);
+    const nseRefreshWindowMs = resolveTimeoutMs(env?.NSE_META_REFRESH_INTERVAL_MS, 6 * 60 * 60 * 1000);
+    const generatedAtMs = Date.parse(existingMeta?.generatedAt || '');
+    if (Number.isFinite(generatedAtMs) && Date.now() - generatedAtMs < nseRefreshWindowMs) {
+        console.log('[NSE Snapshot] Fresh meta present, skipping heavy rebuild');
         return;
     }
 
@@ -755,7 +799,7 @@ async function checkAndFixStuckStages(env) {
     const status = await readRefreshStatus(env);
     if (!status || status.status !== 'running') return status;
     
-    const stuckTimeout = 5 * 60 * 1000;
+    const stuckTimeout = resolveTimeoutMs(env?.NSE_REFRESH_STAGE_STUCK_TIMEOUT_MS, 10 * 60 * 1000);
     const stages = status.stages || {};
     const now = Date.now();
     const fixedStages = { ...stages };
@@ -792,19 +836,16 @@ async function runIncrementalRefresh(env) {
     const status = await checkAndFixStuckStages(env);
     console.log('[Incremental] Status after fix:', JSON.stringify(status));
     const lastRunId = status?.runId;
-    const stages = status?.stages || {};
-    const currentErrors = status?.errors || {};
+    let stages = status?.stages || {};
+    let currentErrors = status?.errors || {};
 
-    const isNsePending = !stages.nse || stages.nse.status !== 'success';
-    const isIntervalsPending = !stages.intervals || stages.intervals.status !== 'success';
-    const isPricesPending = !stages.prices || stages.prices.status !== 'success';
-    const isChartsPending = !stages.charts || stages.charts.status !== 'success';
+    const allComplete =
+        stages.nse?.status === 'success' &&
+        stages.intervals?.status === 'success' &&
+        stages.prices?.status === 'success' &&
+        stages.charts?.status === 'success';
 
-    console.log('[Incremental] isNsePending:', isNsePending, 'isIntervalsPending:', isIntervalsPending, 'isPricesPending:', isPricesPending, 'isChartsPending:', isChartsPending, 'status.status:', status.status);
-
-    const allComplete = !isNsePending && !isIntervalsPending && !isPricesPending && !isChartsPending;
-
-    if (allComplete || !lastRunId || status.status === 'success' || status.status === 'error') {
+    if (allComplete || !lastRunId || status?.status === 'success' || status?.status === 'error') {
         await writeRefreshStatus(env, {
             runId,
             startedAt,
@@ -813,6 +854,8 @@ async function runIncrementalRefresh(env) {
             errors: {},
             stages: {},
         });
+        stages = {};
+        currentErrors = {};
     } else {
         await writeRefreshStatus(env, {
             ...status,
@@ -820,18 +863,43 @@ async function runIncrementalRefresh(env) {
         });
     }
 
+    const isNsePending = !stages.nse || stages.nse.status !== 'success';
+    const isIntervalsPending = !stages.intervals || stages.intervals.status !== 'success';
+    const isPricesPending = !stages.prices || stages.prices.status !== 'success';
+    const isChartsPending = !stages.charts || stages.charts.status !== 'success';
+
+    console.log('[Incremental] isNsePending:', isNsePending, 'isIntervalsPending:', isIntervalsPending, 'isPricesPending:', isPricesPending, 'isChartsPending:', isChartsPending, 'status.status:', status?.status || null);
+
     const currentStages = { ...stages };
+    const canRunStage = (stageState) => !stageState || stageState.status === 'pending' || stageState.status === 'error';
 
     console.log('[Incremental] currentStages:', JSON.stringify(currentStages));
 
-    if (isNsePending && !currentStages.nse?.startedAt) {
+    // Do not advance to later stages while an earlier stage is still running.
+    // Stale running stages are reset by checkAndFixStuckStages().
+    const blockingStage = ['nse', 'intervals', 'prices', 'charts'].find((stage) => currentStages[stage]?.status === 'running');
+    if (blockingStage) {
+        return {
+            runId,
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            errors: currentErrors,
+            ok: false,
+            stage: blockingStage,
+            stages: currentStages,
+        };
+    }
+
+    if (isNsePending && canRunStage(currentStages.nse)) {
         try {
+            const nextErrors = { ...currentErrors };
+            delete nextErrors.nse;
             currentStages.nse = { status: 'running', startedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages: currentStages });
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
             await refreshNseSnapshots(env);
             currentStages.nse = { status: 'success', startedAt: currentStages.nse.startedAt, finishedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors, stages: currentStages });
-            return { runId, startedAt, finishedAt: startedAt, errors, ok: false, stage: 'nse', stages: currentStages };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: nextErrors, ok: false, stage: 'nse', stages: currentStages };
         } catch (error) {
             errors.nse = error?.message || 'NSE snapshot failed';
             currentStages.nse = { status: 'error', startedAt: currentStages.nse?.startedAt || null, finishedAt: new Date().toISOString() };
@@ -842,15 +910,26 @@ async function runIncrementalRefresh(env) {
     }
 
     console.log('[Incremental] Checking intervals, isIntervalsPending:', isIntervalsPending, 'startedAt:', currentStages.intervals?.startedAt);
-    if (isIntervalsPending && !currentStages.intervals?.startedAt) {
+    if (isIntervalsPending && canRunStage(currentStages.intervals)) {
         console.log('[Incremental] RUNNING INTERVALS');
         try {
+            const nextErrors = { ...currentErrors };
+            delete nextErrors.intervals;
             currentStages.intervals = { status: 'running', startedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
-            await refreshIntervalSnapshots(env);
-            currentStages.intervals = { status: 'success', startedAt: currentStages.intervals.startedAt, finishedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
-            return { runId, startedAt, finishedAt: startedAt, errors: currentErrors, ok: false, stage: 'intervals', stages: currentStages };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
+            const intervalResult = await refreshIntervalSnapshots(env);
+            const intervalsComplete = intervalResult?.complete !== false;
+            currentStages.intervals = intervalsComplete
+                ? { status: 'success', startedAt: currentStages.intervals.startedAt, finishedAt: new Date().toISOString() }
+                : {
+                    status: 'pending',
+                    startedAt: null,
+                    finishedAt: new Date().toISOString(),
+                    currentInterval: intervalResult?.processedInterval || null,
+                    nextCursor: intervalResult?.nextCursor ?? null,
+                };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: nextErrors, ok: false, stage: 'intervals', stages: currentStages };
         } catch (error) {
             errors.intervals = error?.message || 'Interval snapshot failed';
             currentStages.intervals = { status: 'error', startedAt: currentStages.intervals?.startedAt || null, finishedAt: new Date().toISOString() };
@@ -860,14 +939,16 @@ async function runIncrementalRefresh(env) {
         }
     }
 
-    if (isPricesPending && !currentStages.prices?.startedAt) {
+    if (isPricesPending && canRunStage(currentStages.prices)) {
         try {
+            const nextErrors = { ...currentErrors };
+            delete nextErrors.prices;
             currentStages.prices = { status: 'running', startedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
             await refreshPriceSnapshots(env);
             currentStages.prices = { status: 'success', startedAt: currentStages.prices.startedAt, finishedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
-            return { runId, startedAt, finishedAt: startedAt, errors: currentErrors, ok: false, stage: 'prices', stages: currentStages };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: nextErrors, ok: false, stage: 'prices', stages: currentStages };
         } catch (error) {
             errors.prices = error?.message || 'Price snapshot failed';
             currentStages.prices = { status: 'error', startedAt: currentStages.prices?.startedAt || null, finishedAt: new Date().toISOString() };
@@ -877,14 +958,25 @@ async function runIncrementalRefresh(env) {
         }
     }
 
-    if (isChartsPending && !currentStages.charts?.startedAt) {
+    if (isChartsPending && canRunStage(currentStages.charts)) {
         try {
+            const nextErrors = { ...currentErrors };
+            delete nextErrors.charts;
             currentStages.charts = { status: 'running', startedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
-            await refreshChartSnapshots(env);
-            currentStages.charts = { status: 'success', startedAt: currentStages.charts.startedAt, finishedAt: new Date().toISOString() };
-            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: currentErrors, stages: currentStages });
-            return { runId, startedAt, finishedAt: startedAt, errors: currentErrors, ok: false, stage: 'charts', stages: currentStages };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
+            const chartResult = await refreshChartSnapshots(env);
+            const chartsComplete = chartResult?.complete !== false;
+            currentStages.charts = chartsComplete
+                ? { status: 'success', startedAt: currentStages.charts.startedAt, finishedAt: new Date().toISOString() }
+                : {
+                    status: 'pending',
+                    startedAt: null,
+                    finishedAt: new Date().toISOString(),
+                    currentInterval: chartResult?.processedInterval || null,
+                    nextCursor: chartResult?.nextCursor ?? null,
+                };
+            await writeRefreshStatus(env, { runId, startedAt, finishedAt: null, status: 'running', errors: nextErrors, stages: currentStages });
+            return { runId, startedAt, finishedAt: startedAt, errors: nextErrors, ok: false, stage: 'charts', stages: currentStages };
         } catch (error) {
             errors.charts = error?.message || 'Chart snapshot failed';
             currentStages.charts = { status: 'error', startedAt: currentStages.charts?.startedAt || null, finishedAt: new Date().toISOString() };
@@ -919,12 +1011,6 @@ async function refreshIntervalSnapshots(env) {
         return;
     }
 
-    const existingMeta = await env.NSE_SNAPSHOTS.get(INTERVAL_META_KEY);
-    if (existingMeta) {
-        console.log('[Interval Snapshot] Already exists, skipping');
-        return;
-    }
-
     const rawUniverse = await fetchUniverseData(env);
     if (!Array.isArray(rawUniverse)) {
         throw new Error('Universe payload invalid');
@@ -936,120 +1022,133 @@ async function refreshIntervalSnapshots(env) {
     }
 
     const intervals = parseIntervalList(env);
+    if (intervals.length === 0) return;
+
+    const progress = await readRefreshProgress(env) || {};
+    const rawCursor = Number(progress.intervalCursor || 0);
+    const normalizedCursor = Number.isFinite(rawCursor)
+        ? ((Math.floor(rawCursor) % intervals.length) + intervals.length) % intervals.length
+        : 0;
+    const targetInterval = intervals[normalizedCursor];
+
     const chunkMode = resolveChunkMode(env?.NSE_SNAPSHOT_CHUNK_MODE);
     const batchSize = Math.max(1, Math.min(Number(env?.NSE_INTERVAL_SNAPSHOT_BATCH_SIZE || 550), 550));
     const concurrency = Math.max(1, Math.min(Number(env?.NSE_INTERVAL_SNAPSHOT_CONCURRENCY || 3), 8));
 
     const metaChunks = new Set();
+    const window = getIntervalWindow(targetInterval);
+    const buckets = new Map();
 
-    for (const interval of intervals) {
-        const window = getIntervalWindow(interval);
-        const buckets = new Map();
-
-        const ensureBucket = (key) => {
-            let bucket = buckets.get(key);
-            if (!bucket) {
-                bucket = {};
-                buckets.set(key, bucket);
-            }
-            return bucket;
-        };
-
-        const chunks = [];
-        for (let i = 0; i < symbols.length; i += batchSize) {
-            chunks.push(symbols.slice(i, i + batchSize));
+    const ensureBucket = (key) => {
+        let bucket = buckets.get(key);
+        if (!bucket) {
+            bucket = {};
+            buckets.set(key, bucket);
         }
+        return bucket;
+    };
 
-        let cursor = 0;
-        const runWorker = async () => {
-            while (cursor < chunks.length) {
-                const index = cursor;
-                cursor += 1;
-                const groupSymbols = chunks[index];
-                const entries = groupSymbols.map((sym) => {
-                    const ex = /^\d+$/.test(sym) ? 'BOM' : 'NSE';
-                    const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
-                    return [GOOGLE_RPC_CHART, rpcArgs, null, 'generic'];
-                });
+    const chunks = [];
+    for (let i = 0; i < symbols.length; i += batchSize) {
+        chunks.push(symbols.slice(i, i + batchSize));
+    }
 
-                let frames = [];
-                try {
-                    const batchResult = await executeGoogleBatch(entries, GOOGLE_RPC_CHART);
-                    frames = parseAllFrames(batchResult.text).filter((frame) => frame.rpcId === GOOGLE_RPC_CHART);
-                } catch (error) {
-                    console.error(`[Interval Snapshot] Batch failed (${interval})`, error);
+    let cursor = 0;
+    const runWorker = async () => {
+        while (cursor < chunks.length) {
+            const index = cursor;
+            cursor += 1;
+            const groupSymbols = chunks[index];
+            const entries = groupSymbols.map((sym) => {
+                const ex = /^\d+$/.test(sym) ? 'BOM' : 'NSE';
+                const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
+                return [GOOGLE_RPC_CHART, rpcArgs, null, 'generic'];
+            });
+
+            let frames = [];
+            try {
+                const batchResult = await executeGoogleBatch(entries, GOOGLE_RPC_CHART);
+                frames = parseAllFrames(batchResult.text).filter((frame) => frame.rpcId === GOOGLE_RPC_CHART);
+            } catch (error) {
+                console.error(`[Interval Snapshot] Batch failed (${targetInterval})`, error);
+            }
+
+            const returned = new Map();
+            frames.forEach((frame) => {
+                const extracted = extractIntervalFromFrame(frame.payload, targetInterval);
+                if (extracted?.symbol) {
+                    returned.set(extracted.symbol, extracted.data);
                 }
+            });
 
-                const returned = new Map();
-                frames.forEach((frame) => {
-                    const extracted = extractIntervalFromFrame(frame.payload, interval);
-                    if (extracted?.symbol) {
-                        returned.set(extracted.symbol, extracted.data);
-                    }
-                });
+            groupSymbols.forEach((sym) => {
+                const data = returned.has(sym) ? returned.get(sym) : null;
+                const chunkKey = chunkKeyForSymbol(sym, chunkMode);
+                metaChunks.add(chunkKey);
+                const bucket = ensureBucket(chunkKey);
+                bucket[sym] = data;
+            });
 
-                groupSymbols.forEach((sym) => {
-                    const data = returned.has(sym) ? returned.get(sym) : null;
-                    const chunkKey = chunkKeyForSymbol(sym, chunkMode);
-                    metaChunks.add(chunkKey);
-                    const bucket = ensureBucket(chunkKey);
-                    bucket[sym] = data;
-                });
-
-                await sleep(50);
-            }
-        };
-
-        await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, runWorker));
-
-        for (const [chunkKey, bucket] of buckets.entries()) {
-            await putSnapshotObject(
-                env,
-                `${INTERVAL_SNAPSHOT_PREFIX}/${interval}/chunks/${chunkKey}.json.gz`,
-                bucket,
-                { gzip: true, cacheControl: INTERVAL_SNAPSHOT_CACHE_CONTROL }
-            );
+            await sleep(50);
         }
+    };
 
-        const intervalMeta = {
-            interval,
-            window,
-            generatedAt: new Date().toISOString(),
-            symbolCount: symbols.length,
-            chunkMode,
-            chunkCount: buckets.size,
-            chunks: Array.from(buckets.keys()).sort(),
-        };
+    await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, runWorker));
 
+    for (const [chunkKey, bucket] of buckets.entries()) {
         await putSnapshotObject(
             env,
-            `${INTERVAL_SNAPSHOT_PREFIX}/${interval}/meta.json`,
-            intervalMeta,
-            { gzip: false, cacheControl: INTERVAL_META_CACHE_CONTROL }
+            `${INTERVAL_SNAPSHOT_PREFIX}/${targetInterval}/chunks/${chunkKey}.json.gz`,
+            bucket,
+            { gzip: true, cacheControl: INTERVAL_SNAPSHOT_CACHE_CONTROL }
         );
     }
 
-    const meta = {
+    const intervalMeta = {
+        interval: targetInterval,
+        window,
+        generatedAt: new Date().toISOString(),
+        symbolCount: symbols.length,
+        chunkMode,
+        chunkCount: buckets.size,
+        chunks: Array.from(buckets.keys()).sort(),
+    };
+
+    await putSnapshotObject(
+        env,
+        `${INTERVAL_SNAPSHOT_PREFIX}/${targetInterval}/meta.json`,
+        intervalMeta,
+        { gzip: false, cacheControl: INTERVAL_META_CACHE_CONTROL }
+    );
+
+    const meta = (await buildIntervalMetaFallback(env)) || {
         schemaVersion: 1,
         generatedAt: new Date().toISOString(),
-        intervals,
+        intervals: [targetInterval],
         chunkMode,
         chunks: Array.from(metaChunks).sort(),
         chunkCount: metaChunks.size,
         symbolCount: symbols.length,
     };
-
     await putSnapshotObject(env, INTERVAL_META_KEY, meta, { gzip: false, cacheControl: INTERVAL_META_CACHE_CONTROL });
+
+    const nextCursor = (normalizedCursor + 1) % intervals.length;
+    await writeRefreshProgress(env, {
+        ...progress,
+        intervalCursor: nextCursor,
+        intervalLastProcessed: targetInterval,
+        updatedAt: new Date().toISOString(),
+    });
+
+    return {
+        complete: nextCursor === 0,
+        processedInterval: targetInterval,
+        nextCursor,
+    };
 }
 
 async function refreshPriceSnapshots(env) {
     if (!env?.NSE_PRICE_SNAPSHOT_ENABLED || String(env.NSE_PRICE_SNAPSHOT_ENABLED).toLowerCase() !== 'true') {
-        return;
-    }
-
-    const existingMeta = await env.NSE_SNAPSHOTS.get(PRICE_META_KEY);
-    if (existingMeta) {
-        console.log('[Price Snapshot] Already exists, skipping');
         return;
     }
 
@@ -1233,93 +1332,205 @@ async function refreshChartSnapshots(env) {
         return;
     }
 
-    const existingMeta = await env.NSE_SNAPSHOTS.get(CHART_META_KEY);
-    if (existingMeta) {
-        console.log('[Chart Snapshot] Already exists, skipping');
-        return;
-    }
-
     const rawUniverse = await fetchUniverseData(env);
     if (!Array.isArray(rawUniverse)) throw new Error('Universe payload invalid');
     const symbols = Array.from(new Set(rawUniverse.map((row) => normalizeSymbol(row?.symbol)).filter(Boolean)));
     if (symbols.length === 0) throw new Error('Universe returned no symbols');
 
     const intervals = parseIntervalListValue(env?.NSE_CHART_SNAPSHOT_INTERVALS);
+    if (intervals.length === 0) return;
+
+    const progress = await readRefreshProgress(env) || {};
+    const rawCursor = Number(progress.chartCursor || 0);
+    const normalizedCursor = Number.isFinite(rawCursor)
+        ? ((Math.floor(rawCursor) % intervals.length) + intervals.length) % intervals.length
+        : 0;
+    const targetInterval = intervals[normalizedCursor];
+
     const batchSize = Math.max(1, Math.min(Number(env?.NSE_CHART_SNAPSHOT_BATCH_SIZE || 200), 550));
-    const concurrency = Math.max(1, Math.min(Number(env?.NSE_CHART_SNAPSHOT_CONCURRENCY || 2), 6));
 
-    for (const interval of intervals) {
-        const window = getIntervalWindow(interval);
-        const batches = [];
-        for (let i = 0; i < symbols.length; i += batchSize) {
-            batches.push(symbols.slice(i, i + batchSize));
-        }
-
-        let cursor = 0;
-        const runWorker = async () => {
-            while (cursor < batches.length) {
-                const index = cursor;
-                cursor += 1;
-                const groupSymbols = batches[index];
-                const entries = groupSymbols.map((sym) => {
-                    const ex = getExchangeForSymbol(sym);
-                    const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
-                    return [GOOGLE_RPC_CHART, rpcArgs, null, 'generic'];
-                });
-
-                let frames = [];
-                try {
-                    const batchResult = await executeGoogleBatch(entries, GOOGLE_RPC_CHART);
-                    frames = parseAllFrames(batchResult.text).filter((frame) => frame.rpcId === GOOGLE_RPC_CHART);
-                } catch (error) {
-                    console.error(`[Chart Snapshot] Batch failed (${interval})`, error);
-                }
-
-                const returned = new Map();
-                frames.forEach((frame) => {
-                    const extracted = extractWideChartFromFrame(frame.payload);
-                    if (extracted?.symbol) returned.set(extracted.symbol, extracted.series);
-                });
-
-                for (const sym of groupSymbols) {
-                    const series = returned.has(sym) ? returned.get(sym) : null;
-                    await putSnapshotObject(
-                        env,
-                        `${CHART_SNAPSHOT_PREFIX}/${interval}/symbols/${sym}.json.gz`,
-                        series,
-                        { gzip: true, cacheControl: INTERVAL_SNAPSHOT_CACHE_CONTROL }
-                    );
-                }
-
-                await sleep(50);
-            }
-        };
-
-        await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, runWorker));
-
-        const intervalMeta = {
-            interval,
-            window,
-            generatedAt: new Date().toISOString(),
-            symbolCount: symbols.length,
-        };
-
-        await putSnapshotObject(
-            env,
-            `${CHART_SNAPSHOT_PREFIX}/${interval}/meta.json`,
-            intervalMeta,
-            { gzip: false, cacheControl: INTERVAL_META_CACHE_CONTROL }
-        );
+    const window = getIntervalWindow(targetInterval);
+    const batches = [];
+    for (let i = 0; i < symbols.length; i += batchSize) {
+        batches.push(symbols.slice(i, i + batchSize));
     }
 
-    const meta = {
-        schemaVersion: 1,
+    const rawBatchCursor = Number(progress.chartBatchCursor || 0);
+    const chartBatchInterval = typeof progress.chartBatchInterval === 'string' ? progress.chartBatchInterval : null;
+    const batchCursor = chartBatchInterval === targetInterval && Number.isFinite(rawBatchCursor)
+        ? Math.max(0, Math.min(Math.floor(rawBatchCursor), Math.max(0, batches.length - 1)))
+        : 0;
+    const batchesPerRun = Math.max(1, Math.min(Number(env?.NSE_CHART_SNAPSHOT_BATCHES_PER_RUN || 2), batches.length));
+    const writeConcurrency = Math.max(1, Math.min(Number(env?.NSE_CHART_SNAPSHOT_WRITE_CONCURRENCY || 20), 100));
+    const endBatchExclusive = Math.min(batchCursor + batchesPerRun, batches.length);
+
+    for (let index = batchCursor; index < endBatchExclusive; index += 1) {
+        const groupSymbols = batches[index];
+        const entries = groupSymbols.map((sym) => {
+            const ex = getExchangeForSymbol(sym);
+            const rpcArgs = JSON.stringify([[[null, [sym, ex]]], window, null, null, null, null, null, 0]);
+            return [GOOGLE_RPC_CHART, rpcArgs, null, 'generic'];
+        });
+
+        let frames = [];
+        try {
+            const batchResult = await executeGoogleBatch(entries, GOOGLE_RPC_CHART);
+            frames = parseAllFrames(batchResult.text).filter((frame) => frame.rpcId === GOOGLE_RPC_CHART);
+        } catch (error) {
+            console.error(`[Chart Snapshot] Batch failed (${targetInterval})`, error);
+        }
+
+        const returned = new Map();
+        frames.forEach((frame) => {
+            const extracted = extractWideChartFromFrame(frame.payload);
+            if (extracted?.symbol) returned.set(extracted.symbol, extracted.series);
+        });
+
+        for (let offset = 0; offset < groupSymbols.length; offset += writeConcurrency) {
+            const slice = groupSymbols.slice(offset, offset + writeConcurrency);
+            await Promise.all(slice.map(async (sym) => {
+                const series = returned.has(sym) ? returned.get(sym) : null;
+                await putSnapshotObject(
+                    env,
+                    `${CHART_SNAPSHOT_PREFIX}/${targetInterval}/symbols/${sym}.json.gz`,
+                    series,
+                    { gzip: false, cacheControl: INTERVAL_SNAPSHOT_CACHE_CONTROL }
+                );
+            }));
+        }
+
+        await sleep(50);
+    }
+
+    if (endBatchExclusive < batches.length) {
+        await writeRefreshProgress(env, {
+            ...progress,
+            chartCursor: normalizedCursor,
+            chartBatchCursor: endBatchExclusive,
+            chartBatchInterval: targetInterval,
+            updatedAt: new Date().toISOString(),
+        });
+        return {
+            complete: false,
+            processedInterval: targetInterval,
+            nextCursor: normalizedCursor,
+            batchCursor: endBatchExclusive,
+            totalBatches: batches.length,
+        };
+    }
+
+    const intervalMeta = {
+        interval: targetInterval,
+        window,
         generatedAt: new Date().toISOString(),
-        intervals,
         symbolCount: symbols.length,
     };
 
+    await putSnapshotObject(
+        env,
+        `${CHART_SNAPSHOT_PREFIX}/${targetInterval}/meta.json`,
+        intervalMeta,
+        { gzip: false, cacheControl: INTERVAL_META_CACHE_CONTROL }
+    );
+
+    const meta = (await buildChartMetaFallback(env)) || {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        intervals: [targetInterval],
+        symbolCount: symbols.length,
+    };
     await putSnapshotObject(env, CHART_META_KEY, meta, { gzip: false, cacheControl: INTERVAL_META_CACHE_CONTROL });
+
+    const nextCursor = (normalizedCursor + 1) % intervals.length;
+    await writeRefreshProgress(env, {
+        ...progress,
+        chartCursor: nextCursor,
+        chartBatchCursor: 0,
+        chartBatchInterval: null,
+        chartLastProcessed: targetInterval,
+        updatedAt: new Date().toISOString(),
+    });
+
+    return {
+        complete: nextCursor === 0,
+        processedInterval: targetInterval,
+        nextCursor,
+    };
+}
+
+async function readSnapshotJson(env, key) {
+    if (!env?.NSE_SNAPSHOTS?.get) return null;
+    try {
+        const object = await env.NSE_SNAPSHOTS.get(key);
+        if (!object) return null;
+        const text = await object.text();
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+async function buildIntervalMetaFallback(env) {
+    const configuredIntervals = parseIntervalList(env);
+    const available = [];
+    const chunks = new Set();
+    let symbolCount = 0;
+    let generatedAt = null;
+    let chunkMode = null;
+
+    for (const interval of configuredIntervals) {
+        const meta = await readSnapshotJson(env, `${INTERVAL_SNAPSHOT_PREFIX}/${interval}/meta.json`);
+        if (!meta) continue;
+        available.push(interval);
+        if (!chunkMode && typeof meta.chunkMode === 'string') chunkMode = meta.chunkMode;
+        if (typeof meta.symbolCount === 'number' && Number.isFinite(meta.symbolCount)) {
+            symbolCount = Math.max(symbolCount, meta.symbolCount);
+        }
+        if (Array.isArray(meta.chunks)) {
+            meta.chunks.forEach((chunk) => chunks.add(chunk));
+        }
+        if (typeof meta.generatedAt === 'string' && (!generatedAt || meta.generatedAt > generatedAt)) {
+            generatedAt = meta.generatedAt;
+        }
+    }
+
+    if (available.length === 0) return null;
+    return {
+        schemaVersion: 1,
+        generatedAt: generatedAt || new Date().toISOString(),
+        intervals: available,
+        chunkMode: chunkMode || resolveChunkMode(env?.NSE_SNAPSHOT_CHUNK_MODE),
+        chunks: Array.from(chunks).sort(),
+        chunkCount: chunks.size,
+        symbolCount,
+    };
+}
+
+async function buildChartMetaFallback(env) {
+    const configuredIntervals = parseIntervalListValue(env?.NSE_CHART_SNAPSHOT_INTERVALS);
+    const available = [];
+    let symbolCount = 0;
+    let generatedAt = null;
+
+    for (const interval of configuredIntervals) {
+        const meta = await readSnapshotJson(env, `${CHART_SNAPSHOT_PREFIX}/${interval}/meta.json`);
+        if (!meta) continue;
+        available.push(interval);
+        if (typeof meta.symbolCount === 'number' && Number.isFinite(meta.symbolCount)) {
+            symbolCount = Math.max(symbolCount, meta.symbolCount);
+        }
+        if (typeof meta.generatedAt === 'string' && (!generatedAt || meta.generatedAt > generatedAt)) {
+            generatedAt = meta.generatedAt;
+        }
+    }
+
+    if (available.length === 0) return null;
+    return {
+        schemaVersion: 1,
+        generatedAt: generatedAt || new Date().toISOString(),
+        intervals: available,
+        symbolCount,
+    };
 }
 
 async function handleIntervalSnapshotRequest(request, env, url) {
@@ -1353,7 +1564,23 @@ async function handleIntervalSnapshotRequest(request, env, url) {
     }
 
     const object = await env.NSE_SNAPSHOTS.get(key);
-    if (!object) return createJsonResponse(404, { error: 'Snapshot not found' });
+    if (!object) {
+        if (url.pathname === '/api/nse/intervals/meta') {
+            const fallback = await buildIntervalMetaFallback(env);
+            if (fallback) return createJsonResponse(200, fallback);
+            return createJsonResponse(200, {
+                schemaVersion: 1,
+                generatedAt: null,
+                intervals: [],
+                chunkMode: resolveChunkMode(env?.NSE_SNAPSHOT_CHUNK_MODE),
+                chunks: [],
+                chunkCount: 0,
+                symbolCount: 0,
+                status: 'pending',
+            });
+        }
+        return createJsonResponse(404, { error: 'Snapshot not found' });
+    }
 
     const headers = new Headers();
     object.writeHttpMetadata(headers);
@@ -1503,7 +1730,20 @@ async function handleChartSnapshotRequest(request, env, url) {
     }
 
     const object = await env.NSE_SNAPSHOTS.get(key);
-    if (!object) return createJsonResponse(404, { error: 'Snapshot not found' });
+    if (!object) {
+        if (url.pathname === '/api/nse/charts/meta') {
+            const fallback = await buildChartMetaFallback(env);
+            if (fallback) return createJsonResponse(200, fallback);
+            return createJsonResponse(200, {
+                schemaVersion: 1,
+                generatedAt: null,
+                intervals: [],
+                symbolCount: 0,
+                status: 'pending',
+            });
+        }
+        return createJsonResponse(404, { error: 'Snapshot not found' });
+    }
 
     const headers = new Headers();
     object.writeHttpMetadata(headers);
@@ -1944,36 +2184,42 @@ async function handleSnapshotRefresh(request, env, ctx) {
 
     const origin = new URL(request.url).origin;
     const envWithOrigin = { ...env, _manualOrigin: origin };
-    const startedAt = new Date().toISOString();
+    const currentStatus = await readRefreshStatus(env);
+    if (currentStatus?.status === 'running') {
+        const startedAtMs = Date.parse(currentStatus.startedAt || '');
+        const overlapTimeout = resolveTimeoutMs(env?.NSE_REFRESH_OVERLAP_TIMEOUT_MS, 30 * 60 * 1000);
+        const isFreshRun = Number.isFinite(startedAtMs) && Date.now() - startedAtMs < overlapTimeout;
+        if (isFreshRun) {
+            return createJsonResponse(409, {
+                ok: false,
+                error: 'Refresh already running',
+                runId: currentStatus.runId || null,
+                stages: currentStatus.stages || {},
+            });
+        }
+    }
+
+    const result = await runIncrementalRefresh(envWithOrigin);
     lastRefreshState = {
-        runId: `manual-${Date.now()}`,
-        startedAt,
-        finishedAt: null,
-        status: 'running',
-        errors: {},
-        stages: {},
+        runId: result.runId,
+        startedAt: result.startedAt,
+        finishedAt: result.finishedAt,
+        status: result.ok ? 'success' : 'partial',
+        errors: result.errors,
+        stages: result.stages || {},
     };
     await writeRefreshStatus(env, lastRefreshState);
 
-    const runner = (async () => {
-        const result = await runRefreshPipeline(envWithOrigin);
-        lastRefreshState = {
-            runId: result.runId,
-            startedAt: result.startedAt,
-            finishedAt: result.finishedAt,
-            status: result.ok ? 'success' : 'partial',
-            errors: result.errors,
-            stages: result.stages,
-        };
-    })();
-
-    if (ctx?.waitUntil) {
-        ctx.waitUntil(runner);
-    } else {
-        await runner;
-    }
-
-    return createJsonResponse(200, { ok: true, startedAt });
+    return createJsonResponse(200, {
+        ok: true,
+        startedAt: result.startedAt,
+        stage: result.stage || null,
+        status: lastRefreshState.status,
+        finishedAt: lastRefreshState.finishedAt,
+        runId: result.runId || null,
+        stages: result.stages || {},
+        errors: result.errors || {},
+    });
 }
 
 async function handleApi(request, env, url, ctx) {
@@ -2062,7 +2308,7 @@ export default {
             
             if (status?.status === 'running') {
                 console.log('[Cron] Previous refresh still running, checking if stuck...');
-                const stuckTime = 10 * 60 * 1000;
+                const stuckTime = resolveTimeoutMs(env?.NSE_REFRESH_RUN_STUCK_TIMEOUT_MS, 30 * 60 * 1000);
                 const startTime = new Date(status.startedAt).getTime();
                 if (Date.now() - startTime > stuckTime) {
                     console.log('[Cron] Previous refresh stuck, resetting for incremental retry');
@@ -2080,16 +2326,6 @@ export default {
                 }
             }
             
-            lastRefreshState = {
-                runId: `scheduled-${Date.now()}`,
-                startedAt: now,
-                finishedAt: null,
-                status: 'running',
-                errors: {},
-                stages: {},
-            };
-            await writeRefreshStatus(env, lastRefreshState);
-            
             const result = await runIncrementalRefresh(env);
             
             lastRefreshState = {
@@ -2098,6 +2334,7 @@ export default {
                 finishedAt: result.finishedAt,
                 status: result.ok ? 'success' : 'partial',
                 errors: result.errors,
+                stages: result.stages || {},
             };
             await writeRefreshStatus(env, lastRefreshState);
             

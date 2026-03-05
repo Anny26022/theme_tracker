@@ -13,42 +13,40 @@ const COMPARISON_STORAGE_KEY = 'tt_comparison_symbols:v2';
 const LEGACY_COMPARISON_STORAGE_KEY = 'tt_comparison_symbols_v2';
 
 const ComparisonChartPane = React.memo(({
-    loading,
-    partial,
     totalChartSymbols,
-    chartData,
     chartSymbols,
     symbolNames,
     timeframe
-}) => (
-    <div className="glass-card p-4 md:p-10 relative">
-        {loading && (
-            <div className="absolute inset-0 bg-[var(--bg-main)]/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
-                <Activity className="w-6 h-6 text-[var(--accent-primary)] animate-pulse" />
-            </div>
-        )}
-        {partial && (
-            <div className="absolute top-3 left-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
-                Syncing remaining series
-            </div>
-        )}
-        {totalChartSymbols > MAX_CHART_SYMBOLS && (
-            <div className="absolute top-3 right-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
-                Showing {MAX_CHART_SYMBOLS} / {totalChartSymbols}
-            </div>
-        )}
-        <ComparisonChart
-            data={chartData}
-            symbols={chartSymbols}
-            labels={symbolNames}
-            interval={timeframe}
-        />
-    </div>
-), (prevProps, nextProps) => (
-    prevProps.loading === nextProps.loading &&
-    prevProps.partial === nextProps.partial &&
+}) => {
+    const { data: chartData, loading, partial } = useComparisonData(chartSymbols, timeframe);
+
+    return (
+        <div className="glass-card p-4 md:p-10 relative">
+            {loading && (
+                <div className="absolute inset-0 bg-[var(--bg-main)]/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
+                    <Activity className="w-6 h-6 text-[var(--accent-primary)] animate-pulse" />
+                </div>
+            )}
+            {partial && (
+                <div className="absolute top-3 left-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
+                    Syncing remaining series
+                </div>
+            )}
+            {totalChartSymbols > MAX_CHART_SYMBOLS && (
+                <div className="absolute top-3 right-3 z-20 px-2 py-1 rounded border border-[var(--ui-divider)] bg-[var(--bg-main)]/80 text-[7px] font-bold tracking-widest uppercase text-[var(--text-muted)]">
+                    Showing {MAX_CHART_SYMBOLS} / {totalChartSymbols}
+                </div>
+            )}
+            <ComparisonChart
+                data={chartData}
+                symbols={chartSymbols}
+                labels={symbolNames}
+                interval={timeframe}
+            />
+        </div>
+    );
+}, (prevProps, nextProps) => (
     prevProps.totalChartSymbols === nextProps.totalChartSymbols &&
-    prevProps.chartData === nextProps.chartData &&
     prevProps.chartSymbols === nextProps.chartSymbols &&
     prevProps.symbolNames === nextProps.symbolNames &&
     prevProps.timeframe === nextProps.timeframe
@@ -214,8 +212,6 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
             chartSymbols: all.slice(0, MAX_CHART_SYMBOLS)
         };
     }, [selectedSymbols, allIndustries, allClusters, exchangePreference]);
-
-    const { data: chartData, loading, partial } = useComparisonData(chartSymbols, timeframe);
 
     const toggleSymbol = (item) => {
         const isSelected = selectedSymbols.find(s => s.id === item.symbol);
@@ -383,10 +379,7 @@ export const ComparisonView = ({ hierarchy, timeframe, setTimeframe, onOpenInsig
 
             {/* Chart Area */}
             <ComparisonChartPane
-                loading={loading}
-                partial={partial}
                 totalChartSymbols={totalChartSymbols}
-                chartData={chartData}
                 chartSymbols={chartSymbols}
                 symbolNames={symbolNames}
                 timeframe={timeframe}

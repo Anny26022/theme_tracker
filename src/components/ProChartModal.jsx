@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef, useCallback, memo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback, memo, startTransition, useDeferredValue } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Search, ChevronLeft, ChevronRight, Hash, LayoutGrid, Link2, Clock, Crosshair, ChevronDown, Layers, TrendingUp, Activity, Save, FolderOpen, Star, Trash2, Edit3, Copy, Plus, Check, BookOpen } from 'lucide-react';
 const MA_PERIODS = [5, 10, 21, 50, 100, 200];
@@ -118,6 +118,75 @@ const CHART_LAYOUTS = {
 };
 const EMPTY_SERIES = Object.freeze([]);
 
+const ChartCell = memo(function ChartCell({
+    index,
+    chart,
+    isActive,
+    isMulti,
+    gridArea,
+    onActivate,
+    onTimeframeChange,
+    companyNameBySymbol,
+    resolvedChartStyle,
+    resolvedMaConfig
+}) {
+    return (
+        <div
+            onClick={() => onActivate(index)}
+            className={`relative bg-black/20 rounded-lg overflow-hidden border transition-all duration-300 flex flex-col ${isActive ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/20 shadow-[0_0_30px_rgba(0,133,255,0.15)] z-10' : 'border-white/[0.04] hover:border-white/10'}`}
+            style={gridArea ? { gridArea } : undefined}
+        >
+            {isMulti && (
+                <div className="h-9 flex items-center gap-2.5 px-3 bg-white/[0.03] border-b border-white/[0.06] shrink-0">
+                    <div className="w-5 h-5 rounded bg-white/5 flex items-center justify-center border border-white/5 overflow-hidden">
+                        <img src={`https://images.dhan.co/symbol/${chart.symbol}.png`} alt="" className="w-full h-full object-contain brightness-110"
+                            onError={(e) => { e.target.style.display = 'none'; }} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-black text-[var(--accent-primary)] uppercase tracking-tight">{chart.symbol}</span>
+                        {isActive && <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />}
+                    </div>
+                    <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest truncate max-w-[100px]">
+                        {(chart.name && chart.name !== 'Empty')
+                            ? chart.name
+                            : companyNameBySymbol.get(chart.symbol) || ''
+                        }
+                    </span>
+                    <div className="ml-auto flex gap-1.5">
+                        {['1D', '1W', '1M', '1Y'].map(tf => (
+                            <button key={tf}
+                                onClick={(e) => { e.stopPropagation(); onTimeframeChange(index, tf); }}
+                                className={`px-2 py-0.5 rounded-[2px] text-[10px] font-black transition-all ${chart.timeframe === tf ? 'bg-[var(--accent-primary)] text-black' : 'text-white/20 hover:text-white'}`}
+                            >{tf}</button>
+                        ))}
+                    </div>
+                </div>
+            )}
+            <div className="flex-1 min-h-0">
+                <FinvizChart
+                    symbol={chart.symbol}
+                    name={chart.name}
+                    series={EMPTY_SERIES}
+                    forcedTimeframe={chart.timeframe}
+                    isProMode={true}
+                    isActive={isActive}
+                    chartStyle={resolvedChartStyle}
+                    maConfig={resolvedMaConfig}
+                />
+            </div>
+        </div>
+    );
+}, (prevProps, nextProps) => {
+    if (prevProps.index !== nextProps.index) return false;
+    if (prevProps.isActive !== nextProps.isActive) return false;
+    if (prevProps.isMulti !== nextProps.isMulti) return false;
+    if (prevProps.gridArea !== nextProps.gridArea) return false;
+    if (prevProps.chart !== nextProps.chart) return false;
+    if (prevProps.resolvedChartStyle !== nextProps.resolvedChartStyle) return false;
+    if (prevProps.resolvedMaConfig !== nextProps.resolvedMaConfig) return false;
+    return true;
+});
+
 const ProChartModal = ({
     isOpen,
     onClose,
@@ -148,12 +217,14 @@ const ProChartModal = ({
         localStorage.setItem('tt_pro_watchlist_open', !isWatchlistOpen);
     };
     const toggleWatchlistNavMode = () => {
-        setIsWatchlistNavMode((prev) => {
-            const next = !prev;
-            localStorage.setItem(WATCHLIST_NAV_MODE_KEY, next ? 'true' : 'false');
-            return next;
+        startTransition(() => {
+            setIsWatchlistNavMode((prev) => {
+                const next = !prev;
+                localStorage.setItem(WATCHLIST_NAV_MODE_KEY, next ? 'true' : 'false');
+                return next;
+            });
+            setIsClusterOpen(false);
         });
-        setIsClusterOpen(false);
     };
 
     const switcherData = useMemo(() => {
@@ -243,36 +314,45 @@ const ProChartModal = ({
         localStorage.setItem('tt_pro_sync', JSON.stringify(next));
         return next;
     }), []);
-    const isBatchSyncEnabled = layoutId !== '1' && (syncOptions.cluster || isWatchlistNavMode);
+    const isBatchSyncEnabled = layoutId !== '1' && (isWatchlistNavMode ? syncOptions.pageNav : syncOptions.cluster);
     const [chartStates, _setChartStates] = useState(() => load('tt_pro_charts', makeDefaultChartStates(symbol, name, initialTimeframe)));
+    const chartPersistRef = useRef({ timer: null, pending: null, last: null });
+    const scheduleChartPersist = useCallback((next) => {
+        const ref = chartPersistRef.current;
+        ref.pending = next;
+        if (ref.timer) return;
+        ref.timer = setTimeout(() => {
+            ref.timer = null;
+            const pending = ref.pending;
+            if (!pending) return;
+            const json = JSON.stringify(pending);
+            if (json !== ref.last) {
+                localStorage.setItem('tt_pro_charts', json);
+                ref.last = json;
+            }
+        }, 200);
+    }, []);
+    useEffect(() => () => {
+        const ref = chartPersistRef.current;
+        if (ref.timer) clearTimeout(ref.timer);
+        ref.timer = null;
+        if (ref.pending) {
+            const json = JSON.stringify(ref.pending);
+            if (json !== ref.last) {
+                localStorage.setItem('tt_pro_charts', json);
+                ref.last = json;
+            }
+        }
+    }, []);
     const setChartStates = useCallback((updater) => _setChartStates((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
-        localStorage.setItem('tt_pro_charts', JSON.stringify(next));
+        scheduleChartPersist(next);
         return next;
-    }), []);
+    }), [scheduleChartPersist]);
     const [chartStyle, _setChartStyle] = useState(() => localStorage.getItem('tt_pro_style') || 'candles');
-    const setChartStyle = useCallback((updater) => _setChartStyle((prev) => {
-        const next = typeof updater === 'function' ? updater(prev) : updater;
-        localStorage.setItem('tt_pro_style', next);
-        window.dispatchEvent(new Event('tt_chart_settings'));
-        return next;
-    }), []);
+    const applySettingsToAll = layoutId === '1';
     const [maConfig, _setMaConfig] = useState(() => load('tt_pro_ma', DEFAULT_MA_CONFIG));
-    const setMaConfig = useCallback((updater) => _setMaConfig((prev) => {
-        const next = typeof updater === 'function' ? updater(prev) : updater;
-        localStorage.setItem('tt_pro_ma', JSON.stringify(next));
-        window.dispatchEvent(new Event('tt_chart_settings'));
-        return next;
-    }), []);
     const [paintBars, _setPaintBars] = useState(() => localStorage.getItem('tt_pro_paint_bars') === 'true');
-    const setPaintBars = useCallback((val) => {
-        _setPaintBars(val);
-        localStorage.setItem('tt_pro_paint_bars', val);
-        window.dispatchEvent(new Event('tt_chart_settings'));
-    }, []);
-
-    const toggleMa = (type, period) => setMaConfig(prev => prev.find(m => m.type === type && m.period === period) ? prev.filter(m => !(m.type === type && m.period === period)) : [...prev, { type, period }].sort((a, b) => a.period - b.period));
-    const hasMa = (type, period) => maConfig.some(m => m.type === type && m.period === period);
     const [activeChartIndex, setActiveChartIndex] = useState(0);
     const currentChart = chartStates[activeChartIndex] || chartStates[0];
     const [isHeaderLogoVisible, setIsHeaderLogoVisible] = useState(true);
@@ -282,6 +362,42 @@ const ProChartModal = ({
     activeChartIndexRef.current = activeChartIndex;
     syncSymbolRef.current = syncOptions.symbol;
     onSymbolChangeRef.current = onSymbolChange;
+    const setChartStyle = useCallback((updater) => {
+        startTransition(() => {
+            _setChartStyle((prev) => {
+                const next = typeof updater === 'function' ? updater(prev) : updater;
+                localStorage.setItem('tt_pro_style', next);
+                window.dispatchEvent(new Event('tt_chart_settings'));
+                return next;
+            });
+        });
+    }, []);
+    const setMaConfig = useCallback((updater) => {
+        startTransition(() => {
+            _setMaConfig((prev) => {
+                const next = typeof updater === 'function' ? updater(prev) : updater;
+                localStorage.setItem('tt_pro_ma', JSON.stringify(next));
+                window.dispatchEvent(new Event('tt_chart_settings'));
+                return next;
+            });
+        });
+    }, []);
+    const setPaintBars = useCallback((updater) => {
+        startTransition(() => {
+            _setPaintBars((prev) => {
+                const next = typeof updater === 'function' ? updater(prev) : updater;
+                localStorage.setItem('tt_pro_paint_bars', String(next));
+                window.dispatchEvent(new Event('tt_chart_settings'));
+                return next;
+            });
+        });
+    }, []);
+    const chartMaConfig = useMemo(() => ({ lines: maConfig, paintBars }), [maConfig, paintBars]);
+    const deferredChartStyle = useDeferredValue(chartStyle);
+    const deferredChartMaConfig = useDeferredValue(chartMaConfig);
+
+    const toggleMa = (type, period) => setMaConfig(prev => prev.find(m => m.type === type && m.period === period) ? prev.filter(m => !(m.type === type && m.period === period)) : [...prev, { type, period }].sort((a, b) => a.period - b.period));
+    const hasMa = (type, period) => maConfig.some(m => m.type === type && m.period === period);
 
     /* ─── Template System State ─── */
     const [templates, _setTemplates] = useState(() => loadTemplates());
@@ -415,7 +531,8 @@ const ProChartModal = ({
     const searchInputRef = useRef(null);
 
     const activeSymbol = useMemo(() => cleanSymbol(currentChart.symbol), [currentChart.symbol]);
-    const liveData = useLivePrice(activeSymbol);
+    const liveHeaderSymbol = layoutId === '1' ? activeSymbol : '';
+    const liveData = useLivePrice(liveHeaderSymbol);
     const TF_MAP = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
     const perf = getCachedInterval(activeSymbol, TF_MAP[currentChart.timeframe] || '1D', { silent: true });
     let changePct = perf?.changePct ?? 0;
@@ -442,21 +559,52 @@ const ProChartModal = ({
     // Batch sync for multi-chart pages from active navigation source.
     useEffect(() => {
         if (!isOpen || !isBatchSyncEnabled || !activeNavigationCompanies.length) return;
-        setChartStates(prev => {
-            let changed = false;
-            const next = prev.map((slot, i) => {
-                const stock = activeNavigationCompanies[clusterOffset + i];
-                const nextSymbol = stock?.symbol || '';
-                const nextName = stock?.name || 'Empty';
-                if (slot.symbol === nextSymbol && slot.name === nextName) return slot;
-                changed = true;
-                return { ...slot, symbol: nextSymbol, name: nextName };
+        startTransition(() => {
+            setChartStates(prev => {
+                let changed = false;
+                const next = prev.map((slot, i) => {
+                    if (i >= chartsCount) return slot;
+                    const stock = activeNavigationCompanies[clusterOffset + i];
+                    const nextSymbol = stock?.symbol || '';
+                    const nextName = stock?.name || 'Empty';
+                    if (slot.symbol === nextSymbol && slot.name === nextName) return slot;
+                    changed = true;
+                    return { ...slot, symbol: nextSymbol, name: nextName };
+                });
+                return changed ? next : prev;
             });
-            return changed ? next : prev;
         });
-    }, [activeNavigationCompanies, clusterOffset, isBatchSyncEnabled, isOpen, setChartStates]);
+    }, [activeNavigationCompanies, clusterOffset, isBatchSyncEnabled, isOpen, setChartStates, chartsCount]);
 
 
+    const navigateSymbol = (dir) => {
+        const navList = activeNavigationCompanies;
+        if (!navList.length) return;
+
+        // Page Nav: shift the whole batch by one page
+        if (syncOptions.pageNav && layoutId !== '1' && (isWatchlistNavMode ? syncOptions.pageNav : syncOptions.cluster)) {
+            startTransition(() => {
+                setClusterOffset(prev => {
+                    const next = prev + dir * chartsCount;
+                    return next >= 0 && next < navList.length ? next : prev;
+                });
+            });
+            return;
+        }
+
+        // Slot Nav: only change the active slot's symbol
+        if (syncOptions.slotNav) {
+            const curIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(chartStates[activeChartIndex].symbol));
+            const nextIdx = curIdx === -1 ? (dir > 0 ? 0 : navList.length - 1) : (curIdx + dir + navList.length) % navList.length;
+            handleChartChange(activeChartIndex, navList[nextIdx]);
+            return;
+        }
+
+        // Default: change currentChart symbol
+        const curIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(currentChart.symbol));
+        const nextIdx = curIdx === -1 ? (dir > 0 ? 0 : navList.length - 1) : (curIdx + dir + navList.length) % navList.length;
+        handleChartChange(activeChartIndex, navList[nextIdx]);
+    };
     // Keyboard Hotkeys
     useEffect(() => {
         if (!isOpen) return;
@@ -495,34 +643,7 @@ const ProChartModal = ({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, isSearchOpen, allCompanies, symbol, onClose]);
-
-    const navigateSymbol = (dir) => {
-        const navList = activeNavigationCompanies;
-        if (!navList.length) return;
-
-        // Page Nav: shift the whole batch by one page
-        if (syncOptions.pageNav && layoutId !== '1' && isBatchSyncEnabled) {
-            setClusterOffset(prev => {
-                const next = prev + dir * chartsCount;
-                return next >= 0 && next < navList.length ? next : prev;
-            });
-            return;
-        }
-
-        // Slot Nav: only change the active slot's symbol
-        if (syncOptions.slotNav) {
-            const curIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(chartStates[activeChartIndex].symbol));
-            const nextIdx = curIdx === -1 ? (dir > 0 ? 0 : navList.length - 1) : (curIdx + dir + navList.length) % navList.length;
-            handleChartChange(activeChartIndex, navList[nextIdx]);
-            return;
-        }
-
-        // Default: change currentChart symbol
-        const curIdx = navList.findIndex(c => cleanSymbol(c.symbol) === cleanSymbol(currentChart.symbol));
-        const nextIdx = curIdx === -1 ? (dir > 0 ? 0 : navList.length - 1) : (curIdx + dir + navList.length) % navList.length;
-        handleChartChange(activeChartIndex, navList[nextIdx]);
-    };
+    }, [isOpen, isSearchOpen, allCompanies, symbol, onClose, syncOptions, layoutId, isWatchlistNavMode, activeNavigationCompanies, chartsCount, activeChartIndex, chartStates, currentChart]);
 
     const handleChartChange = useCallback((index, newData) => {
         setChartStates(prev => {
@@ -544,16 +665,25 @@ const ProChartModal = ({
     }, [setChartStates]);
 
     const handleTimeframeChange = useCallback((index, tf) => {
-        setChartStates(prev => {
-            const next = [...prev];
-            if (syncOptions.interval) {
-                return next.map(c => ({ ...c, timeframe: tf }));
-            } else {
+        startTransition(() => {
+            setChartStates(prev => {
+                const shouldSyncInterval = syncOptions.interval;
+                if (shouldSyncInterval) {
+                    let changed = false;
+                    const next = prev.map(c => {
+                        if (c.timeframe === tf) return c;
+                        changed = true;
+                        return { ...c, timeframe: tf };
+                    });
+                    return changed ? next : prev;
+                }
+                if (prev[index]?.timeframe === tf) return prev;
+                const next = [...prev];
                 next[index] = { ...next[index], timeframe: tf };
                 return next;
-            }
+            });
         });
-    }, [setChartStates, syncOptions.interval]);
+    }, [setChartStates, syncOptions.interval, layoutId]);
 
     const handleWatchlistSymbolSelect = useCallback((selected) => {
         handleChartChange(activeChartIndex, selected);
@@ -1031,7 +1161,12 @@ const ProChartModal = ({
                                                                     return (
                                                                         <button
                                                                             key={id}
-                                                                            onClick={() => { setLayoutId(id); setIsLayoutOpen(false); }}
+                                                                            onClick={() => {
+                                                                                startTransition(() => {
+                                                                                    setLayoutId(id);
+                                                                                    setIsLayoutOpen(false);
+                                                                                });
+                                                                            }}
                                                                             className={`w-10 h-10 rounded border flex flex-col items-center justify-center transition-all ${layoutId === id ? 'bg-[var(--accent-primary)]/20 border-[var(--accent-primary)]/40' : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20'}`}
                                                                         >
                                                                             <div className="w-5 h-5 grid gap-0.5 overflow-hidden rounded-[1px] border border-white/10 p-0.5" style={{
@@ -1175,54 +1310,24 @@ const ProChartModal = ({
                             if (isBatchSyncEnabled && !chart?.symbol) return null;
                             const isActive = activeChartIndex === idx;
                             const isMulti = layoutId !== '1';
+                            const resolvedChartStyle = isActive ? chartStyle : deferredChartStyle;
+                            const resolvedMaConfig = isActive ? chartMaConfig : deferredChartMaConfig;
+                            const gridArea = CHART_LAYOUTS[layoutId].custom ? "abcdefghijklmnop"[idx] : '';
 
                             return (
-                                <div
+                                <ChartCell
                                     key={idx}
-                                    onClick={() => setActiveChartIndex(idx)}
-                                    className={`relative bg-black/20 rounded-lg overflow-hidden border transition-all duration-300 flex flex-col ${isActive ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/20 shadow-[0_0_30px_rgba(0,133,255,0.15)] z-10' : 'border-white/[0.04] hover:border-white/10'}`}
-                                    style={{
-                                        ...(CHART_LAYOUTS[layoutId].custom ? { gridArea: "abcdefghijklmnop"[idx] } : {})
-                                    }}
-                                >
-                                    {isMulti && (
-                                        <div className="h-9 flex items-center gap-2.5 px-3 bg-white/[0.03] border-b border-white/[0.06] shrink-0">
-                                            <div className="w-5 h-5 rounded bg-white/5 flex items-center justify-center border border-white/5 overflow-hidden">
-                                                <img src={`https://images.dhan.co/symbol/${chart.symbol}.png`} alt="" className="w-full h-full object-contain brightness-110"
-                                                    onError={(e) => { e.target.style.display = 'none'; }} />
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[13px] font-black text-[var(--accent-primary)] uppercase tracking-tight">{chart.symbol}</span>
-                                                {isActive && <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />}
-                                            </div>
-                                            <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest truncate max-w-[100px]">
-                                                {(chart.name && chart.name !== 'Empty')
-                                                    ? chart.name
-                                                    : companyNameBySymbol.get(chart.symbol) || ''
-                                                }
-                                            </span>
-                                            <div className="ml-auto flex gap-1.5">
-                                                {['1D', '1W', '1M', '1Y'].map(tf => (
-                                                    <button key={tf}
-                                                        onClick={(e) => { e.stopPropagation(); handleTimeframeChange(idx, tf); }}
-                                                        className={`px-2 py-0.5 rounded-[2px] text-[10px] font-black transition-all ${chart.timeframe === tf ? 'bg-[var(--accent-primary)] text-black' : 'text-white/20 hover:text-white'}`}
-                                                    >{tf}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                    <div className="flex-1 min-h-0">
-                                        <FinvizChart
-                                            symbol={chart.symbol}
-                                            name={chart.name}
-                                            series={EMPTY_SERIES}
-                                            forcedTimeframe={chart.timeframe}
-                                            isProMode={true}
-                                            chartStyle={chartStyle}
-                                            maConfig={maConfig}
-                                        />
-                                    </div>
-                                </div>
+                                    index={idx}
+                                    chart={chart}
+                                    isActive={isActive}
+                                    isMulti={isMulti}
+                                    gridArea={gridArea}
+                                    onActivate={setActiveChartIndex}
+                                    onTimeframeChange={handleTimeframeChange}
+                                    companyNameBySymbol={companyNameBySymbol}
+                                    resolvedChartStyle={resolvedChartStyle}
+                                    resolvedMaConfig={resolvedMaConfig}
+                                />
                             );
                         })}
                     </div>

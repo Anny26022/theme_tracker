@@ -21,6 +21,7 @@ const buildEmaSeries = (values, period) => {
 };
 const MA_COLORS = { 5: '#ff6b6b', 10: '#ffa94d', 21: '#ffd43b', 50: '#51cf66', 100: '#22b8cf', 200: '#9d27b0' };
 const _defaultMa = [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }];
+const NOOP_SUBSCRIBE = () => () => { };
 let _maSnap = { raw: null, pb: null, val: { lines: _defaultMa, paintBars: false } };
 let _styleSnap = { raw: null, val: 'candles' };
 const getMAConfig = () => {
@@ -34,6 +35,23 @@ const getMAConfig = () => {
 };
 const getStyle = () => { const r = localStorage.getItem('tt_pro_style'); if (r === _styleSnap.raw) return _styleSnap.val; _styleSnap = { raw: r, val: r || 'candles' }; return _styleSnap.val; };
 const subChartSettings = (cb) => { window.addEventListener('tt_chart_settings', cb); return () => window.removeEventListener('tt_chart_settings', cb); };
+const isSameMaConfig = (left, right) => {
+    const lPaintBars = !!left?.paintBars;
+    const rPaintBars = !!right?.paintBars;
+    if (lPaintBars !== rPaintBars) return false;
+
+    const lLines = Array.isArray(left?.lines) ? left.lines : [];
+    const rLines = Array.isArray(right?.lines) ? right.lines : [];
+    if (lLines === rLines) return true;
+    if (lLines.length !== rLines.length) return false;
+
+    for (let i = 0; i < lLines.length; i += 1) {
+        const l = lLines[i];
+        const r = rLines[i];
+        if (l?.type !== r?.type || l?.period !== r?.period) return false;
+    }
+    return true;
+};
 
 let _cs = null;
 const cs = () => _cs || (_cs = JSON.parse(localStorage.getItem('tt_cs_v4') || '{}'));
@@ -48,18 +66,30 @@ const FinvizChart = React.memo(function FinvizChart({
     forcedTimeframe = null,
     initialTimeframe = '1D',
     isProMode = false,
+    isActive = false,
     allCompanies = [],
     disabled = false,
     chartStyle: chartStyleProp = null,
     maConfig: maConfigProp = null
 }) {
-    const lsStyle = useSyncExternalStore(subChartSettings, getStyle);
-    const lsMa = useSyncExternalStore(subChartSettings, getMAConfig);
+    const lsStyle = useSyncExternalStore(
+        chartStyleProp == null ? subChartSettings : NOOP_SUBSCRIBE,
+        chartStyleProp == null ? getStyle : () => chartStyleProp
+    );
+    const lsMa = useSyncExternalStore(
+        maConfigProp == null ? subChartSettings : NOOP_SUBSCRIBE,
+        maConfigProp == null ? getMAConfig : () => maConfigProp
+    );
     const chartStyle = chartStyleProp ?? lsStyle;
     const maConfig = maConfigProp ?? lsMa;
+    const maLinesConfig = maConfig?.lines || _defaultMa;
+    const paintBars = !!maConfig?.paintBars;
+    const isHeikinStyle = chartStyle === 'heikin';
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
     const totalPointsRef = useRef(9999);
+    const maSeriesCacheRef = useRef(new Map());
+    const seriesCacheRef = useRef({ signature: null, ordered: null, byTimeframe: new Map() });
     const cleaned = useMemo(() => cleanSymbol(symbol), [symbol]);
     const hoverIndexRef = useRef(null);
     const tooltipRef = useRef(null);
@@ -78,6 +108,8 @@ const FinvizChart = React.memo(function FinvizChart({
     const [priceOffset, setPriceOffset] = useState(init.y ?? 0);
     const [vScale, setVScale] = useState(init.v ?? 1.0);
     const dragRef = useRef({ isDragging: false, isYDragging: false, isFreeDragging: false, startX: 0, startY: 0, startPan: 0, startVPan: 0, startVScale: 1.0 });
+    const dragRafRef = useRef(null);
+    const dragPendingRef = useRef({ x: 0, y: 0 });
     const zoomDaysRef = useRef(zoomDays);
     const panOffsetRef = useRef(panOffset);
     const priceOffsetRef = useRef(priceOffset);
@@ -88,11 +120,41 @@ const FinvizChart = React.memo(function FinvizChart({
     useEffect(() => { priceOffsetRef.current = priceOffset; }, [priceOffset]);
     useEffect(() => { vScaleRef.current = vScale; }, [vScale]);
 
-    useEffect(() => setCs(cleaned, timeframe, { z: zoomDays, p: panOffset, y: priceOffset, v: vScale }),
-        [cleaned, timeframe, zoomDays, panOffset, priceOffset, vScale]);
+    const persistRef = useRef({ timer: null, pending: null, lastSig: null });
+    const schedulePersist = useCallback((next, sig) => {
+        const ref = persistRef.current;
+        ref.pending = { next, sig };
+        if (ref.timer) return;
+        ref.timer = setTimeout(() => {
+            const pending = ref.pending;
+            ref.timer = null;
+            if (!pending || pending.sig === ref.lastSig) return;
+            ref.lastSig = pending.sig;
+            setCs(cleaned, timeframe, pending.next);
+        }, 180);
+    }, [cleaned, timeframe]);
+
+    useEffect(() => {
+        const sig = `${cleaned}:${timeframe}:${zoomDays}:${panOffset}:${priceOffset}:${vScale}`;
+        schedulePersist({ z: zoomDays, p: panOffset, y: priceOffset, v: vScale }, sig);
+    }, [cleaned, timeframe, zoomDays, panOffset, priceOffset, vScale, schedulePersist]);
+
+    useEffect(() => () => {
+        const ref = persistRef.current;
+        if (!ref.timer) return;
+        clearTimeout(ref.timer);
+        ref.timer = null;
+        const pending = ref.pending;
+        if (pending && pending.sig !== ref.lastSig) {
+            ref.lastSig = pending.sig;
+            setCs(cleaned, timeframe, pending.next);
+        }
+    }, [cleaned, timeframe]);
 
     const { subscribeChartSymbols } = useMarketDataRegistry();
     const chartVersion = useChartVersion();
+    const shouldLive = !isProMode || isActive;
+    const effectiveChartVersion = chartVersion;
 
     const apiInterval = useMemo(() => {
         if (timeframe === '1D') return '1Y';
@@ -125,7 +187,7 @@ const FinvizChart = React.memo(function FinvizChart({
         }
 
         return (cachedTarget && cachedTarget.length > 0) ? cachedTarget : (series || []);
-    }, [cleaned, apiInterval, chartVersion, series]);
+    }, [cleaned, apiInterval, effectiveChartVersion, series]);
     const hasSeriesData = (activeSeries?.length || 0) > 1;
 
     const [dimensions, setDimensions] = useState({ width: 600, height: height || 400 });
@@ -155,19 +217,29 @@ const FinvizChart = React.memo(function FinvizChart({
         });
         obs.observe(node);
         return () => obs.disconnect();
-    }, [hasSeriesData, symbol, timeframe, height]);
+    }, [height, hasSeriesData]);
 
     const rafRef = useRef(null);
+    const wheelRafRef = useRef(null);
+    const wheelDeltaRef = useRef(0);
 
     const handleWheel = useCallback((e) => {
         e.preventDefault();
         e.stopPropagation();
-        const factor = e.deltaY < 0 ? 0.9 : 1.1;
-        setZoomDays(p => {
-            const next = Math.max(20, Math.min(totalPointsRef.current, Math.round(p * factor)));
-            // Clamp panOffset if it would go out of bounds after zoom change
-            setPanOffset(o => Math.max(0, Math.min(totalPointsRef.current - next, o)));
-            return next;
+        wheelDeltaRef.current += e.deltaY || 0;
+        if (wheelRafRef.current) return;
+        wheelRafRef.current = requestAnimationFrame(() => {
+            wheelRafRef.current = null;
+            const delta = Math.max(-120, Math.min(120, wheelDeltaRef.current));
+            wheelDeltaRef.current = 0;
+            if (!delta) return;
+            const factor = Math.exp(delta * 0.002);
+            setZoomDays(p => {
+                const next = Math.max(20, Math.min(totalPointsRef.current, Math.round(p * factor)));
+                // Clamp panOffset if it would go out of bounds after zoom change
+                setPanOffset(o => Math.max(0, Math.min(totalPointsRef.current - next, o)));
+                return next;
+            });
         });
     }, [setZoomDays]);
 
@@ -175,7 +247,40 @@ const FinvizChart = React.memo(function FinvizChart({
     const baseData = useMemo(() => {
         if (!activeSeries || activeSeries.length === 0) return null;
 
-        let ordered = [...activeSeries].sort((a, b) => a.time - b.time);
+        const signature = (() => {
+            const len = activeSeries.length;
+            if (len === 0) return `${effectiveChartVersion}:0`;
+            const sample = (i) => {
+                const p = activeSeries[i];
+                if (!p) return '0:0';
+                return `${p.time ?? 0}:${p.close ?? 0}`;
+            };
+            const first = sample(0);
+            const q1 = sample(Math.floor(len * 0.25));
+            const mid = sample(Math.floor(len * 0.5));
+            const q3 = sample(Math.floor(len * 0.75));
+            const last = sample(len - 1);
+            return `${effectiveChartVersion}:${len}:${first}:${q1}:${mid}:${q3}:${last}`;
+        })();
+
+        const cache = seriesCacheRef.current;
+        if (cache.signature !== signature) {
+            let isSorted = true;
+            for (let i = 1; i < activeSeries.length; i += 1) {
+                if ((activeSeries[i]?.time ?? 0) < (activeSeries[i - 1]?.time ?? 0)) {
+                    isSorted = false;
+                    break;
+                }
+            }
+            cache.signature = signature;
+            cache.ordered = isSorted ? activeSeries : [...activeSeries].sort((a, b) => a.time - b.time);
+            cache.byTimeframe = new Map();
+        }
+
+        const cached = cache.byTimeframe.get(timeframe);
+        if (cached) return cached;
+
+        let ordered = cache.ordered || activeSeries;
         if (timeframe !== '1D') {
             const b = new Map();
             ordered.forEach(p => {
@@ -217,53 +322,10 @@ const FinvizChart = React.memo(function FinvizChart({
         const allCloses = allPoints.map(p => p.close);
         const allVolumes = allPoints.map(p => p.volume);
 
-        // --- Volume Metrics (Simple Volume Logic) ---
+        // --- Volume Metrics (precompute SMA only) ---
         const volSMA50 = buildSmaSeries(allVolumes, 50);
 
-        // Process each point for labels and colors
-        for (let i = 0; i < allPoints.length; i++) {
-            const p = allPoints[i];
-            const prev = i > 0 ? allPoints[i - 1] : p;
-            const sma = volSMA50[i];
-            const isUp = p.close > prev.close || (p.close === prev.close && p.close >= p.open);
-
-            // 1. PPV (Pocket Pivot Volume) - Up day, volume > max(down-day volumes in last 10 trading days)
-            let maxDownVol10 = 0;
-            const lookback = 10;
-            for (let j = Math.max(0, i - lookback); j < i; j++) {
-                const ref = allPoints[j];
-                const preRef = j > 0 ? allPoints[j - 1] : ref;
-                const refIsDown = ref.close < preRef.close || (ref.close === preRef.close && ref.close < ref.open);
-                if (refIsDown) maxDownVol10 = Math.max(maxDownVol10, ref.volume);
-            }
-            const isPPV = isUp && p.volume > maxDownVol10 && i >= 10;
-
-            // 2. Bull Snort - 3x vol SMA50, close in top 35%, above previous close
-            const range = p.high - p.low || 0.01;
-            const relativeClose = (p.close - p.low) / range;
-            const isBullSnort = (sma > 0 && p.volume > 3 * sma) && (relativeClose >= 0.65) && (p.close > prev.close);
-
-            // 3. Dry/Low Volume - Volume < 1/5 SMA50
-            const isDry = sma > 0 && p.volume < (sma / 5);
-
-            // 4. Color Decision
-            let color = '#8b95a7'; // Neutral Grey-Blue (clear visibility)
-            if (isPPV) color = '#3b82f6'; // Blue
-            else if (isUp && sma > 0 && p.volume > sma) color = '#22c55e'; // Green
-            else if (!isUp && sma > 0 && p.volume > sma) color = '#ef4444'; // Red
-            else if (isDry) color = '#f59e0b'; // Orange
-
-            p.volColor = color;
-            p.volSMA50 = sma;
-            p.isBullSnort = isBullSnort;
-            p.isPPV = isPPV;
-            p.isDry = isDry;
-
-            // Relative Volume (RVol)
-            p.rVol = sma > 0 ? (p.volume / sma) : 0;
-        }
-
-        // 5. Summary Stats (for the last points or 50 bars)
+        // Summary Stats (for the last points or 50 bars)
         const last50 = allPoints.slice(-50);
         let sumUpVol = 0, sumDownVol = 0, sumVol = 0, sumPrice = 0;
         last50.forEach((p, idx) => {
@@ -279,16 +341,41 @@ const FinvizChart = React.memo(function FinvizChart({
         const avgPrice50 = sumPrice / (last50.length || 1);
         const udRatio = sumDownVol > 0 ? (sumUpVol / sumDownVol) : (sumUpVol > 0 ? 99 : 0);
         const avgDollarVol = avgVol50 * avgPrice50;
-        const currentRVol = allPoints[allPoints.length - 1].rVol || 0;
+        const lastIdx = allPoints.length - 1;
+        const lastSma = volSMA50[lastIdx] || 0;
+        const currentRVol = lastSma > 0 ? (allVolumes[lastIdx] / lastSma) : 0;
 
-        const maSeriesMap = {};
-        (maConfig.lines || []).forEach(m => { maSeriesMap[`${m.type}_${m.period}`] = (m.type === 'EMA' ? buildEmaSeries : buildSmaSeries)(allCloses, m.period); });
-
-        return {
-            allPoints, maSeriesMap, totalPoints: allPoints.length,
+        const result = {
+            allPoints, allCloses, allVolumes, volSMA50, totalPoints: allPoints.length,
             stats: { udRatio, avgDollarVol: avgDollarVol / 10000000, currentRVol, avgVol50 } // avgDollarVol in Crores (approx)
         };
-    }, [activeSeries, timeframe, maConfig.lines]);
+        cache.byTimeframe.set(timeframe, result);
+        return result;
+    }, [activeSeries, timeframe]);
+
+    const maSeriesMap = useMemo(() => {
+        if (!baseData?.allCloses) return {};
+        const cache = maSeriesCacheRef.current;
+        const signature = (() => {
+            const lastIdx = baseData.allCloses.length - 1;
+            const lastPoint = baseData.allPoints?.[lastIdx];
+            const lastClose = baseData.allCloses[lastIdx] ?? 0;
+            return `${baseData.allCloses.length}:${lastPoint?.time ?? 0}:${lastClose}`;
+        })();
+        const map = {};
+        maLinesConfig.forEach((m) => {
+            const key = `${m.type}_${m.period}`;
+            const cached = cache.get(key);
+            if (cached?.signature === signature) {
+                map[key] = cached.values;
+                return;
+            }
+            const values = (m.type === 'EMA' ? buildEmaSeries : buildSmaSeries)(baseData.allCloses, m.period);
+            cache.set(key, { signature, values });
+            map[key] = values;
+        });
+        return map;
+    }, [baseData, maLinesConfig]);
 
     // Sync view state cleanly on timeframe/symbol change
     useEffect(() => {
@@ -315,9 +402,47 @@ const FinvizChart = React.memo(function FinvizChart({
         const startIdx = Math.max(0, endIdx - sliceCount);
 
         let points = baseData.allPoints.slice(startIdx, endIdx).map(p => ({ ...p }));
-        const slicedMaMap = Object.fromEntries(Object.entries(baseData.maSeriesMap).map(([k, a]) => [k, a.slice(startIdx, endIdx)]));
+        const slicedMaMap = Object.fromEntries(Object.entries(maSeriesMap).map(([k, a]) => [k, a.slice(startIdx, endIdx)]));
 
-        if (chartStyle === 'heikin') {
+        const basePoints = baseData.allPoints;
+        const volSMA50 = baseData.volSMA50 || [];
+        const lookback = 10;
+        points.forEach((p, i) => {
+            const g = startIdx + i;
+            const prev = g > 0 ? basePoints[g - 1] : p;
+            const sma = volSMA50[g] || 0;
+            const isUp = p.close > prev.close || (p.close === prev.close && p.close >= p.open);
+
+            let maxDownVol10 = 0;
+            for (let j = Math.max(0, g - lookback); j < g; j++) {
+                const ref = basePoints[j];
+                const preRef = j > 0 ? basePoints[j - 1] : ref;
+                const refIsDown = ref.close < preRef.close || (ref.close === preRef.close && ref.close < ref.open);
+                if (refIsDown) maxDownVol10 = Math.max(maxDownVol10, ref.volume);
+            }
+            const isPPV = isUp && p.volume > maxDownVol10 && g >= lookback;
+
+            const range = p.high - p.low || 0.01;
+            const relativeClose = (p.close - p.low) / range;
+            const isBullSnort = (sma > 0 && p.volume > 3 * sma) && (relativeClose >= 0.65) && (p.close > prev.close);
+
+            const isDry = sma > 0 && p.volume < (sma / 5);
+
+            let color = '#8b95a7';
+            if (isPPV) color = '#3b82f6';
+            else if (isUp && sma > 0 && p.volume > sma) color = '#22c55e';
+            else if (!isUp && sma > 0 && p.volume > sma) color = '#ef4444';
+            else if (isDry) color = '#f59e0b';
+
+            p.volColor = color;
+            p.volSMA50 = sma;
+            p.isBullSnort = isBullSnort;
+            p.isPPV = isPPV;
+            p.isDry = isDry;
+            p.rVol = sma > 0 ? (p.volume / sma) : 0;
+        });
+
+        if (isHeikinStyle) {
             const haPoints = [];
             points.forEach((p, i) => {
                 const close = (p.open + p.high + p.low + p.close) / 4;
@@ -374,7 +499,7 @@ const FinvizChart = React.memo(function FinvizChart({
             points, maMap: slicedMaMap, minP, maxP, maxV, pRange: maxP - minP || 0.01,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, zoomDays, panOffset, vScale, priceOffset, chartH, chartStyle, maConfig.lines]);
+    }, [baseData, maSeriesMap, zoomDays, panOffset, vScale, priceOffset, chartH, isHeikinStyle]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;
@@ -490,7 +615,14 @@ const FinvizChart = React.memo(function FinvizChart({
         }
 
         const volBars = [];
+        const groupVolumeBars = !paintBars;
+        const volBarsByColor = groupVolumeBars ? new Map() : null;
         const bullSnortDots = [];
+
+        const useGroupedPaths = !paintBars;
+        let wickUpD = '', wickDownD = '';
+        let bodyUpFillD = '', bodyUpStrokeD = '', bodyDownFillD = '', bodyDownStrokeD = '';
+        let barUpD = '', barDownD = '';
 
         const wickUp = [], wickDown = [];
         const bodyUpFill = [], bodyUpStroke = [], bodyDownStroke = [], bodyDownFill = [];
@@ -503,25 +635,39 @@ const FinvizChart = React.memo(function FinvizChart({
             const isGrowth = i > 0 ? p.close >= points[i - 1].close : true;
 
             const vColor = p.volColor || (isGrowth ? colorUp : colorDown);
-            const pColor = (maConfig && maConfig.paintBars && p.volColor && p.volColor !== '#8b95a7') ? p.volColor : (isUp ? colorUp : colorDown);
+            const pColor = (paintBars && p.volColor && p.volColor !== '#8b95a7') ? p.volColor : (isUp ? colorUp : colorDown);
 
             // Volume
             if (maxV > 0 && p.volume > 0) {
                 const vh = (p.volume / maxV) * volH;
                 const vy = H - paddingBottom - vh;
-                volBars.push(<path key={`v-${i}`} d={`M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`} fill={vColor} opacity={isProMode ? "1" : "0.78"} />);
-
+                const d = `M${(x - hw).toFixed(1)},${vy.toFixed(1)}h${candleWidth.toFixed(1)}v${vh.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
+                if (groupVolumeBars) {
+                    const cur = volBarsByColor.get(vColor) || '';
+                    volBarsByColor.set(vColor, cur + d);
+                } else {
+                    volBars.push(<path key={`v-${i}`} d={d} fill={vColor} opacity={isProMode ? "1" : "0.78"} />);
+                }
             }
 
             if (chartStyle === 'bars') {
                 const highY = getY(p.high), lowY = getY(p.low), openY = getY(p.open), closeY = getY(p.close);
                 const path = `M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)} M${(x - hw).toFixed(1)},${openY.toFixed(1)}H${x.toFixed(1)} M${x.toFixed(1)},${closeY.toFixed(1)}H${(x + hw).toFixed(1)}`;
-                if (isUp) barUp.push({ path, color: pColor });
-                else barDown.push({ path, color: pColor });
+                if (useGroupedPaths) {
+                    if (isUp) barUpD += path; else barDownD += path;
+                } else {
+                    if (isUp) barUp.push({ path, color: pColor });
+                    else barDown.push({ path, color: pColor });
+                }
             } else {
                 // Wicks
                 const highY = getY(p.high), lowY = getY(p.low);
-                (isUp ? wickUp : wickDown).push({ d: `M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`, color: pColor });
+                const wickD = `M${x.toFixed(1)},${highY.toFixed(1)}V${lowY.toFixed(1)}`;
+                if (useGroupedPaths) {
+                    if (isUp) wickUpD += wickD; else wickDownD += wickD;
+                } else {
+                    (isUp ? wickUp : wickDown).push({ d: wickD, color: pColor });
+                }
 
                 // Bodies
                 const openY = getY(p.open), closeY = getY(p.close);
@@ -529,11 +675,19 @@ const FinvizChart = React.memo(function FinvizChart({
                 const bodyD = `M${(x - hw).toFixed(1)},${top.toFixed(1)}h${candleWidth.toFixed(1)}v${bodyH.toFixed(1)}h-${candleWidth.toFixed(1)}Z`;
 
                 if (chartStyle === 'hollow' || chartStyle === 'white') {
-                    if (isUp) bodyUpStroke.push({ d: bodyD, color: pColor });
-                    else bodyDownFill.push({ d: bodyD, color: pColor });
+                    if (useGroupedPaths) {
+                        if (isUp) bodyUpStrokeD += bodyD; else bodyDownFillD += bodyD;
+                    } else {
+                        if (isUp) bodyUpStroke.push({ d: bodyD, color: pColor });
+                        else bodyDownFill.push({ d: bodyD, color: pColor });
+                    }
                 } else {
-                    if (isUp) bodyUpFill.push({ d: bodyD, color: pColor });
-                    else bodyDownFill.push({ d: bodyD, color: pColor });
+                    if (useGroupedPaths) {
+                        if (isUp) bodyUpFillD += bodyD; else bodyDownFillD += bodyD;
+                    } else {
+                        if (isUp) bodyUpFill.push({ d: bodyD, color: pColor });
+                        else bodyDownFill.push({ d: bodyD, color: pColor });
+                    }
                 }
 
                 // Bull Snort Dot
@@ -545,29 +699,51 @@ const FinvizChart = React.memo(function FinvizChart({
 
         return (
             <>
-                {volBars}
+                {groupVolumeBars
+                    ? Array.from(volBarsByColor.entries()).map(([color, d], i) => (
+                        d ? <path key={`v-${i}`} d={d} fill={color} opacity={isProMode ? "1" : "0.78"} /> : null
+                    ))
+                    : volBars}
                 {bullSnortDots}
 
                 {chartStyle === 'bars' ? (
-                    <>
-                        {barUp.map((b, i) => <path key={`up-${i}`} d={b.path} fill="none" stroke={b.color} strokeWidth="1.2" />)}
-                        {barDown.map((b, i) => <path key={`dn-${i}`} d={b.path} fill="none" stroke={b.color} strokeWidth="1.2" />)}
-                    </>
+                    useGroupedPaths ? (
+                        <>
+                            {barUpD && <path d={barUpD} fill="none" stroke={colorUp} strokeWidth="1.2" />}
+                            {barDownD && <path d={barDownD} fill="none" stroke={colorDown} strokeWidth="1.2" />}
+                        </>
+                    ) : (
+                        <>
+                            {barUp.map((b, i) => <path key={`up-${i}`} d={b.path} fill="none" stroke={b.color} strokeWidth="1.2" />)}
+                            {barDown.map((b, i) => <path key={`dn-${i}`} d={b.path} fill="none" stroke={b.color} strokeWidth="1.2" />)}
+                        </>
+                    )
                 ) : (
-                    <>
-                        {wickUp.map((w, i) => <path key={`wup-${i}`} d={w.d} fill="none" stroke={w.color} strokeWidth="1" />)}
-                        {wickDown.map((w, i) => <path key={`wdn-${i}`} d={w.d} fill="none" stroke={w.color} strokeWidth="1" />)}
-                        {bodyUpFill.map((b, i) => <path key={`buf-${i}`} d={b.d} fill={b.color} />)}
-                        {bodyUpStroke.map((b, i) => <path key={`bus-${i}`} d={b.d} fill="#0b0e14" stroke={b.color} strokeWidth="0.8" />)}
-                        {bodyDownFill.map((b, i) => <path key={`bdf-${i}`} d={b.d} fill={b.color} />)}
-                        {bodyDownStroke.map((b, i) => <path key={`bds-${i}`} d={b.d} fill="#0b0e14" stroke={b.color} strokeWidth="0.8" />)}
-                    </>
+                    useGroupedPaths ? (
+                        <>
+                            {wickUpD && <path d={wickUpD} fill="none" stroke={colorUp} strokeWidth="1" />}
+                            {wickDownD && <path d={wickDownD} fill="none" stroke={colorDown} strokeWidth="1" />}
+                            {bodyUpFillD && <path d={bodyUpFillD} fill={colorUp} />}
+                            {bodyUpStrokeD && <path d={bodyUpStrokeD} fill="#0b0e14" stroke={colorUp} strokeWidth="0.8" />}
+                            {bodyDownFillD && <path d={bodyDownFillD} fill={colorDown} />}
+                            {bodyDownStrokeD && <path d={bodyDownStrokeD} fill="#0b0e14" stroke={colorDown} strokeWidth="0.8" />}
+                        </>
+                    ) : (
+                        <>
+                            {wickUp.map((w, i) => <path key={`wup-${i}`} d={w.d} fill="none" stroke={w.color} strokeWidth="1" />)}
+                            {wickDown.map((w, i) => <path key={`wdn-${i}`} d={w.d} fill="none" stroke={w.color} strokeWidth="1" />)}
+                            {bodyUpFill.map((b, i) => <path key={`buf-${i}`} d={b.d} fill={b.color} />)}
+                            {bodyUpStroke.map((b, i) => <path key={`bus-${i}`} d={b.d} fill="#0b0e14" stroke={b.color} strokeWidth="0.8" />)}
+                            {bodyDownFill.map((b, i) => <path key={`bdf-${i}`} d={b.d} fill={b.color} />)}
+                            {bodyDownStroke.map((b, i) => <path key={`bds-${i}`} d={b.d} fill="#0b0e14" stroke={b.color} strokeWidth="0.8" />)}
+                        </>
+                    )
                 )}
             </>
         );
-    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned, isProMode, maConfig]);
+    }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned, isProMode, paintBars]);
 
-    const liveData = useLivePrice(cleaned);
+    const liveData = useLivePrice(shouldLive ? cleaned : '');
 
     // Map chart timeframe → interval key for actual period performance
     const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
@@ -607,15 +783,25 @@ const FinvizChart = React.memo(function FinvizChart({
                 e.preventDefault();
             }
 
-            if (dragRef.current.isYDragging) {
-                const dy = dragRef.current.startY - clientY;
-                setVScale(Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005)));
-            } else {
-                const dxPoints = Math.round(((clientX - dragRef.current.startX) / node.clientWidth) * zoomDaysRef.current);
-                const dyPrice = (clientY - dragRef.current.startY);
-                setPanOffset(Math.max(0, Math.min(totalPointsRef.current - zoomDaysRef.current, dragRef.current.startPan + dxPoints)));
-                setPriceOffset(dragRef.current.startVPan + dyPrice);
-            }
+            dragPendingRef.current.x = clientX;
+            dragPendingRef.current.y = clientY;
+            if (dragRafRef.current) return;
+            dragRafRef.current = requestAnimationFrame(() => {
+                dragRafRef.current = null;
+                const pending = dragPendingRef.current;
+                if (dragRef.current.isYDragging) {
+                    const dy = dragRef.current.startY - pending.y;
+                    const next = Math.max(0.1, Math.min(10, dragRef.current.startVScale + dy * 0.005));
+                    setVScale((prev) => (prev === next ? prev : next));
+                } else if (dragRef.current.isDragging) {
+                    const dxPoints = Math.round(((pending.x - dragRef.current.startX) / node.clientWidth) * zoomDaysRef.current);
+                    const dyPrice = (pending.y - dragRef.current.startY);
+                    const nextPan = Math.max(0, Math.min(totalPointsRef.current - zoomDaysRef.current, dragRef.current.startPan + dxPoints));
+                    const nextOffset = dragRef.current.startVPan + dyPrice;
+                    setPanOffset((prev) => (prev === nextPan ? prev : nextPan));
+                    setPriceOffset((prev) => (prev === nextOffset ? prev : nextOffset));
+                }
+            });
         };
 
         const onEnd = () => { dragRef.current.isDragging = false; dragRef.current.isYDragging = false; };
@@ -642,6 +828,11 @@ const FinvizChart = React.memo(function FinvizChart({
             node.removeEventListener('touchstart', onStart);
             window.removeEventListener('touchmove', onMove);
             window.removeEventListener('touchend', onEnd);
+            if (wheelRafRef.current) cancelAnimationFrame(wheelRafRef.current);
+            wheelRafRef.current = null;
+            wheelDeltaRef.current = 0;
+            if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current);
+            dragRafRef.current = null;
         };
     }, [handleWheel, disabled, !!data]);
 
@@ -659,8 +850,6 @@ const FinvizChart = React.memo(function FinvizChart({
         const projRVol = data.stats.avgVol50 > 0 ? (projVol / data.stats.avgVol50) : 0;
         return { projRVol, liquidity1m };
     }, [liveData, data, isProMode]);
-
-    if (!data) return null;
 
     // For 1D: use live price data which has accurate intraday change from prev close
     if (timeframe === '1D' && liveData.changePct !== null) {
@@ -843,7 +1032,7 @@ const FinvizChart = React.memo(function FinvizChart({
         if (prevProps.series !== nextProps.series) return false;
         if (prevProps.forcedTimeframe !== nextProps.forcedTimeframe) return false;
         if (prevProps.chartStyle !== nextProps.chartStyle) return false;
-        if (prevProps.maConfig !== nextProps.maConfig) return false;
+        if (!isSameMaConfig(prevProps.maConfig, nextProps.maConfig)) return false;
         if (prevProps.disabled !== nextProps.disabled) return false;
         return true;
     });

@@ -534,8 +534,8 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 className={showReorder ? 'cursor-grab active:cursor-grabbing' : ''}
             >
                 {symbolEntry.isHeader ? (
-                    <div className="group relative px-3 py-1.5 flex items-center justify-between border-b border-white/5 bg-[#0b0e14] mt-2 first:mt-0">
-                        <span className="text-[9px] font-black text-white/40 tracking-[0.2em] uppercase">{symbolEntry.header}</span>
+                    <div className="group relative px-3 py-1 flex items-center justify-between border-b border-white/5 bg-[#0b0e14]/40 mt-3 first:mt-0">
+                        <span className="text-[8px] font-bold text-white/30 tracking-[0.15em] uppercase">{symbolEntry.header}</span>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                             {showReorder && (
                                 <>
@@ -807,10 +807,10 @@ const ProWatchlist = memo(({ allCompanies, onSymbolSelect }) => {
                 )}
 
                 <div className="flex flex-col flex-1 min-h-0">
-                    <div className="px-3 flex items-center text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">
+                    <div className="px-3 flex items-center text-[9px] font-bold text-white/30 uppercase tracking-[0.15em] mb-1.5">
                         <span className="flex-1">Symbol</span>
                         {config.showLast && <span className="w-16 text-right">Last</span>}
-                        {config.showChange && <span className="w-16 text-right">Chg%</span>}
+                        {config.showChange && <span className="w-16 text-right px-1">Chg%</span>}
                     </div>
                     <div
                         className="flex-1 min-h-0"
@@ -929,22 +929,22 @@ const WatchlistItem = memo(({
                 </div>
 
                 <div className="flex flex-col min-w-0 pr-2">
-                    <span className="text-[11px] font-black text-white uppercase tracking-tight">{s.symbol}</span>
+                    <span className="text-[13px] font-bold text-white uppercase tracking-tight leading-tight">{s.symbol}</span>
                     {/^\d+$/.test(s.symbol) && (
-                        <span className="text-[8px] font-bold text-white/30 truncate uppercase tracking-tight leading-none">{s.name}</span>
+                        <span className="text-[8px] font-medium text-white/20 truncate uppercase tracking-tight leading-tight">{s.name}</span>
                     )}
                 </div>
             </div>
 
             {config.showLast && (
                 <div className="w-16 text-right flex flex-col justify-center">
-                    <span className={`${config.compact ? 'text-[9px]' : 'text-[10px]'} font-mono font-bold whitespace-nowrap`}>{price.toFixed(2)}</span>
+                    <span className={`${config.compact ? 'text-[12px]' : 'text-[13px]'} font-bold text-white/90 whitespace-nowrap tracking-tight`}>{price.toFixed(2)}</span>
                 </div>
             )}
 
             {config.showChange && (
                 <div className="w-16 text-right flex flex-col justify-center">
-                    <span className={`${config.compact ? 'text-[9px]' : 'text-[10px]'} font-mono font-bold whitespace-nowrap ${changePct >= 0 ? 'text-[#00c805]' : 'text-[#ff2e2e]'}`}>
+                    <span className={`${config.compact ? 'text-[11px]' : 'text-[12px]'} font-bold whitespace-nowrap tracking-tight ${changePct >= 0 ? 'text-[#10b981]' : 'text-[#f43f5e]'}`}>
                         {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
                     </span>
                 </div>

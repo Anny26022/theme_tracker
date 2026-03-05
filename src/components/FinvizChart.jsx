@@ -70,7 +70,8 @@ const FinvizChart = React.memo(function FinvizChart({
     allCompanies = [],
     disabled = false,
     chartStyle: chartStyleProp = null,
-    maConfig: maConfigProp = null
+    maConfig: maConfigProp = null,
+    allowStrike: allowStrikeProp = null
 }) {
     const lsStyle = useSyncExternalStore(
         chartStyleProp == null ? subChartSettings : NOOP_SUBSCRIBE,
@@ -764,7 +765,8 @@ const FinvizChart = React.memo(function FinvizChart({
         );
     }, [data, points, getX, getY, candleWidth, maxV, volH, H, paddingBottom, colorUp, colorDown, chartStyle, cleaned, isProMode, paintBars]);
 
-    const liveData = useLivePrice(shouldLive ? cleaned : '');
+    const allowStrike = allowStrikeProp ?? (isProMode ? isActive : false);
+    const liveData = useLivePrice(shouldLive ? cleaned : '', { allowStrike });
 
     // Map chart timeframe → interval key for actual period performance
     const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };

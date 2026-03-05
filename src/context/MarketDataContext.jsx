@@ -73,6 +73,7 @@ export function MarketDataProvider({ children }) {
     const intervalSymbolsRef = useRef(new Map());
     const chartSymbolsRef = useRef(new Map());
     const liveSymbolsRef = useRef(new Map());
+    const liveStrikeSymbolsRef = useRef(new Map());
     const fundaSymbolsRef = useRef(new Map());
     const lastIntervalRefreshRef = useRef(new Map());
     const lastChartRefreshRef = useRef(new Map());
@@ -90,7 +91,6 @@ export function MarketDataProvider({ children }) {
     const fundaVersionRef = useRef(0);
     const loopTimerRef = useRef(null);
     const isVisibleRef = useRef(typeof document !== 'undefined' ? document.visibilityState !== 'hidden' : true);
-    const liveSkipStrikeCountRef = useRef(0);
 
     const notifyInterval = useCallback(() => {
         intervalVersionRef.current += 1;
@@ -194,10 +194,14 @@ export function MarketDataProvider({ children }) {
             if (inFlightRef.current.has(key)) return;
             const symbols = Array.from(liveSymbolsRef.current.keys());
             if (symbols.length === 0) return;
+            const strikeSymbols = Array.from(liveStrikeSymbolsRef.current.keys());
 
             inFlightRef.current.add(key);
             try {
-                await fetchLivePrices(symbols, options);
+                await fetchLivePrices(symbols, { ...options, skipStrike: true });
+                if (strikeSymbols.length > 0) {
+                    await fetchLivePrices(strikeSymbols, { ...options, skipStrike: false });
+                }
                 lastLiveRefreshRef.current = Date.now();
                 notifyLive();
             } finally {
@@ -262,7 +266,7 @@ export function MarketDataProvider({ children }) {
             });
             const livePromises = [];
             if (liveSymbolsRef.current.size > 0 && now - lastLiveRefreshRef.current >= LIVE_REFRESH_MS) {
-                livePromises.push(refreshLive(null, { skipStrike: liveSkipStrikeCountRef.current > 0 }));
+                livePromises.push(refreshLive());
             }
             const fundaPromises = [];
             if (fundaSymbolsRef.current.size > 0 && now - lastFundaRefreshRef.current >= FUNDA_REFRESH_MS) {
@@ -307,7 +311,7 @@ export function MarketDataProvider({ children }) {
                 const fundaSymbols = Array.from(fundaSymbolsRef.current.keys());
                 void refreshIntervals(intervals);
                 void Promise.all(charts.map((interval) => refreshCharts(interval)));
-                void refreshLive(liveSymbols);
+                void refreshLive();
                 void refreshFundamentals(fundaSymbols);
             }
         };
@@ -363,12 +367,16 @@ export function MarketDataProvider({ children }) {
             const next = (liveSymbolsRef.current.get(symbol) || 0) + 1;
             liveSymbolsRef.current.set(symbol, next);
         });
-        if (skipStrike) liveSkipStrikeCountRef.current += 1;
+        if (!skipStrike) {
+            normalized.forEach((symbol) => {
+                const next = (liveStrikeSymbolsRef.current.get(symbol) || 0) + 1;
+                liveStrikeSymbolsRef.current.set(symbol, next);
+            });
+        }
         maybeStartLoop();
         void refreshLive(normalized, { skipStrike });
 
         return () => {
-            if (skipStrike) liveSkipStrikeCountRef.current -= 1;
             normalized.forEach((symbol) => {
                 const next = (liveSymbolsRef.current.get(symbol) || 0) - 1;
                 if (next <= 0) {
@@ -377,6 +385,16 @@ export function MarketDataProvider({ children }) {
                     liveSymbolsRef.current.set(symbol, next);
                 }
             });
+            if (!skipStrike) {
+                normalized.forEach((symbol) => {
+                    const next = (liveStrikeSymbolsRef.current.get(symbol) || 0) - 1;
+                    if (next <= 0) {
+                        liveStrikeSymbolsRef.current.delete(symbol);
+                    } else {
+                        liveStrikeSymbolsRef.current.set(symbol, next);
+                    }
+                });
+            }
             maybeStopLoop();
         };
     }, [maybeStartLoop, maybeStopLoop, refreshLive]);

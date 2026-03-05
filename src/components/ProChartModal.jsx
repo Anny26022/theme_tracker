@@ -585,7 +585,7 @@ const ProChartModal = ({
 
     const activeSymbol = useMemo(() => cleanSymbol(currentChart.symbol), [currentChart.symbol]);
     const liveHeaderSymbol = layoutId === '1' ? activeSymbol : '';
-    const liveData = useLivePrice(liveHeaderSymbol);
+    const liveData = useLivePrice(liveHeaderSymbol, { allowStrike: true });
     const TF_MAP = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
     const perf = getCachedInterval(activeSymbol, TF_MAP[currentChart.timeframe] || '1D', { silent: true });
     let changePct = perf?.changePct ?? 0;

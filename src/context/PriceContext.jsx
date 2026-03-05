@@ -10,16 +10,17 @@ export function PriceProvider({ children }) {
  * Hook to consume live price from the shared market data registry.
  * Checks interval cache first so navigating from Tracker/Theme shows data instantly.
  */
-export function useLivePrice(symbol) {
+export function useLivePrice(symbol, options = {}) {
     const { subscribeLiveSymbols } = useMarketDataRegistry();
     const liveVersion = useLiveVersion();
+    const { allowStrike = false } = options;
 
     const hasCache = !!getCachedPrice(symbol) || !!getCachedInterval(symbol, '1D', { silent: true })?.close;
 
     useEffect(() => {
         if (!symbol || hasCache) return;
-        return subscribeLiveSymbols([symbol]);
-    }, [symbol, hasCache, subscribeLiveSymbols]);
+        return subscribeLiveSymbols([symbol], { skipStrike: !allowStrike });
+    }, [symbol, hasCache, allowStrike, subscribeLiveSymbols]);
 
     const data = useMemo(() => {
         const cacheVersion = liveVersion;

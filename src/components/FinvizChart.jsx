@@ -88,7 +88,6 @@ const FinvizChart = React.memo(function FinvizChart({
     const containerRef = useRef(null);
     const chartAreaRef = useRef(null);
     const totalPointsRef = useRef(9999);
-    const maSeriesCacheRef = useRef(new Map());
     const seriesCacheRef = useRef({ signature: null, ordered: null, byTimeframe: new Map() });
     const cleaned = useMemo(() => cleanSymbol(symbol), [symbol]);
     const hoverIndexRef = useRef(null);
@@ -345,37 +344,19 @@ const FinvizChart = React.memo(function FinvizChart({
         const lastSma = volSMA50[lastIdx] || 0;
         const currentRVol = lastSma > 0 ? (allVolumes[lastIdx] / lastSma) : 0;
 
+        const closePrefixSum = new Array(allCloses.length + 1);
+        closePrefixSum[0] = 0;
+        for (let i = 0; i < allCloses.length; i += 1) {
+            closePrefixSum[i + 1] = closePrefixSum[i] + allCloses[i];
+        }
+
         const result = {
-            allPoints, allCloses, allVolumes, volSMA50, totalPoints: allPoints.length,
+            allPoints, allCloses, allVolumes, volSMA50, closePrefixSum, totalPoints: allPoints.length,
             stats: { udRatio, avgDollarVol: avgDollarVol / 10000000, currentRVol, avgVol50 } // avgDollarVol in Crores (approx)
         };
         cache.byTimeframe.set(timeframe, result);
         return result;
     }, [activeSeries, timeframe]);
-
-    const maSeriesMap = useMemo(() => {
-        if (!baseData?.allCloses) return {};
-        const cache = maSeriesCacheRef.current;
-        const signature = (() => {
-            const lastIdx = baseData.allCloses.length - 1;
-            const lastPoint = baseData.allPoints?.[lastIdx];
-            const lastClose = baseData.allCloses[lastIdx] ?? 0;
-            return `${baseData.allCloses.length}:${lastPoint?.time ?? 0}:${lastClose}`;
-        })();
-        const map = {};
-        maLinesConfig.forEach((m) => {
-            const key = `${m.type}_${m.period}`;
-            const cached = cache.get(key);
-            if (cached?.signature === signature) {
-                map[key] = cached.values;
-                return;
-            }
-            const values = (m.type === 'EMA' ? buildEmaSeries : buildSmaSeries)(baseData.allCloses, m.period);
-            cache.set(key, { signature, values });
-            map[key] = values;
-        });
-        return map;
-    }, [baseData, maLinesConfig]);
 
     // Sync view state cleanly on timeframe/symbol change
     useEffect(() => {
@@ -402,7 +383,47 @@ const FinvizChart = React.memo(function FinvizChart({
         const startIdx = Math.max(0, endIdx - sliceCount);
 
         let points = baseData.allPoints.slice(startIdx, endIdx).map(p => ({ ...p }));
-        const slicedMaMap = Object.fromEntries(Object.entries(maSeriesMap).map(([k, a]) => [k, a.slice(startIdx, endIdx)]));
+        const maMap = {};
+        const allCloses = baseData.allCloses || [];
+        const closePrefixSum = baseData.closePrefixSum || [];
+        const sliceLen = endIdx - startIdx;
+        const buildSmaSlice = (period) => {
+            const out = new Array(sliceLen).fill(null);
+            if (!closePrefixSum.length) return out;
+            for (let gi = startIdx; gi < endIdx; gi += 1) {
+                if (gi >= period - 1) {
+                    const sum = closePrefixSum[gi + 1] - closePrefixSum[gi + 1 - period];
+                    out[gi - startIdx] = sum / period;
+                }
+            }
+            return out;
+        };
+        const buildEmaSlice = (period) => {
+            const out = new Array(sliceLen).fill(null);
+            if (!allCloses.length || !closePrefixSum.length) return out;
+            const k = 2 / (period + 1);
+            const seedStart = Math.max(0, startIdx - period * 2);
+            let ema = null;
+            for (let gi = seedStart; gi < endIdx; gi += 1) {
+                const v = allCloses[gi];
+                if (ema === null) {
+                    if (gi >= period - 1) {
+                        const sum = closePrefixSum[gi + 1] - closePrefixSum[gi + 1 - period];
+                        ema = sum / period;
+                    }
+                } else {
+                    ema = v * k + ema * (1 - k);
+                }
+                if (gi >= startIdx && ema !== null) {
+                    out[gi - startIdx] = ema;
+                }
+            }
+            return out;
+        };
+        maLinesConfig.forEach((m) => {
+            const key = `${m.type}_${m.period}`;
+            maMap[key] = m.type === 'EMA' ? buildEmaSlice(m.period) : buildSmaSlice(m.period);
+        });
 
         const basePoints = baseData.allPoints;
         const volSMA50 = baseData.volSMA50 || [];
@@ -475,7 +496,7 @@ const FinvizChart = React.memo(function FinvizChart({
         let minP = Infinity, maxP = -Infinity, maxV = 0;
         points.forEach((p, i) => {
             minP = Math.min(minP, p.low); maxP = Math.max(maxP, p.high); maxV = Math.max(maxV, p.volume);
-            Object.values(slicedMaMap).forEach(a => { const v = a[i]; if (v > 0 && isFinite(v)) { minP = Math.min(minP, v); maxP = Math.max(maxP, v); } });
+            Object.values(maMap).forEach(a => { const v = a[i]; if (v > 0 && isFinite(v)) { minP = Math.min(minP, v); maxP = Math.max(maxP, v); } });
         });
 
         // Ensure we have a valid range
@@ -496,10 +517,10 @@ const FinvizChart = React.memo(function FinvizChart({
         maxP = mid + range / 2 + padding + pOffset;
 
         return {
-            points, maMap: slicedMaMap, minP, maxP, maxV, pRange: maxP - minP || 0.01,
+            points, maMap, minP, maxP, maxV, pRange: maxP - minP || 0.01,
             totalPoints: baseData.totalPoints
         };
-    }, [baseData, maSeriesMap, zoomDays, panOffset, vScale, priceOffset, chartH, isHeikinStyle]);
+    }, [baseData, maLinesConfig, zoomDays, panOffset, vScale, priceOffset, chartH, isHeikinStyle]);
 
     // Keep ref in sync with latest totalPoints (inline, no useEffect needed)
     if (data) totalPointsRef.current = data.totalPoints;

@@ -117,6 +117,7 @@ const CHART_LAYOUTS = {
     '16g': { r: 4, c: 4 },
 };
 const EMPTY_SERIES = Object.freeze([]);
+const STAGGER_BATCH = 4;
 
 const ChartCell = memo(function ChartCell({
     index,
@@ -357,41 +358,93 @@ const ProChartModal = ({
     const currentChart = chartStates[activeChartIndex] || chartStates[0];
     const [isHeaderLogoVisible, setIsHeaderLogoVisible] = useState(true);
     const activeChartIndexRef = useRef(activeChartIndex);
+    const chartStyleRef = useRef(chartStyle);
+    const maConfigRef = useRef(maConfig);
+    const paintBarsRef = useRef(paintBars);
     const syncSymbolRef = useRef(syncOptions.symbol);
     const onSymbolChangeRef = useRef(onSymbolChange);
     activeChartIndexRef.current = activeChartIndex;
+    chartStyleRef.current = chartStyle;
+    maConfigRef.current = maConfig;
+    paintBarsRef.current = paintBars;
     syncSymbolRef.current = syncOptions.symbol;
     onSymbolChangeRef.current = onSymbolChange;
+    const [staggerTick, setStaggerTick] = useState(0);
+    const _staggerTick = staggerTick;
+    void _staggerTick;
+    const settingsOverridesRef = useRef(new Map());
+    const settingsStaggerRef = useRef({ raf: null, queue: [] });
+    const timeframeStaggerRef = useRef({ raf: null, queue: [] });
+
+    useEffect(() => () => {
+        if (settingsStaggerRef.current.raf) cancelAnimationFrame(settingsStaggerRef.current.raf);
+        if (timeframeStaggerRef.current.raf) cancelAnimationFrame(timeframeStaggerRef.current.raf);
+        settingsStaggerRef.current.raf = null;
+        timeframeStaggerRef.current.raf = null;
+    }, []);
+
+    const startSettingsStagger = useCallback((fields) => {
+        if (layoutId === '1' || chartsCount <= 1) return;
+        if (settingsStaggerRef.current.raf) cancelAnimationFrame(settingsStaggerRef.current.raf);
+        settingsOverridesRef.current = new Map();
+        const queue = [];
+        for (let i = 0; i < chartsCount; i += 1) {
+            if (i === activeChartIndex) continue;
+            const chart = chartStates[i];
+            if (!chart?.symbol) continue;
+            const override = {};
+            if (fields.style !== undefined) override.style = fields.style;
+            if (fields.maConfig !== undefined) override.maConfig = fields.maConfig;
+            if (fields.paintBars !== undefined) override.paintBars = fields.paintBars;
+            settingsOverridesRef.current.set(i, override);
+            queue.push(i);
+        }
+        settingsStaggerRef.current.queue = queue;
+        setStaggerTick((t) => t + 1);
+
+        const step = () => {
+            const q = settingsStaggerRef.current.queue;
+            if (!q.length) return;
+            const batch = q.splice(0, STAGGER_BATCH);
+            batch.forEach((idx) => settingsOverridesRef.current.delete(idx));
+            setStaggerTick((t) => t + 1);
+            if (q.length) settingsStaggerRef.current.raf = requestAnimationFrame(step);
+        };
+        settingsStaggerRef.current.raf = requestAnimationFrame(step);
+    }, [layoutId, chartsCount, activeChartIndex, chartStates]);
     const setChartStyle = useCallback((updater) => {
+        const prev = chartStyleRef.current;
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        if (next === prev) return;
+        startSettingsStagger({ style: prev });
         startTransition(() => {
-            _setChartStyle((prev) => {
-                const next = typeof updater === 'function' ? updater(prev) : updater;
-                localStorage.setItem('tt_pro_style', next);
-                window.dispatchEvent(new Event('tt_chart_settings'));
-                return next;
-            });
+            _setChartStyle(next);
+            localStorage.setItem('tt_pro_style', next);
+            window.dispatchEvent(new Event('tt_chart_settings'));
         });
-    }, []);
+    }, [startSettingsStagger]);
     const setMaConfig = useCallback((updater) => {
+        const prev = maConfigRef.current;
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        if (next === prev) return;
+        startSettingsStagger({ maConfig: prev });
         startTransition(() => {
-            _setMaConfig((prev) => {
-                const next = typeof updater === 'function' ? updater(prev) : updater;
-                localStorage.setItem('tt_pro_ma', JSON.stringify(next));
-                window.dispatchEvent(new Event('tt_chart_settings'));
-                return next;
-            });
+            _setMaConfig(next);
+            localStorage.setItem('tt_pro_ma', JSON.stringify(next));
+            window.dispatchEvent(new Event('tt_chart_settings'));
         });
-    }, []);
+    }, [startSettingsStagger]);
     const setPaintBars = useCallback((updater) => {
+        const prev = paintBarsRef.current;
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        if (next === prev) return;
+        startSettingsStagger({ paintBars: prev });
         startTransition(() => {
-            _setPaintBars((prev) => {
-                const next = typeof updater === 'function' ? updater(prev) : updater;
-                localStorage.setItem('tt_pro_paint_bars', String(next));
-                window.dispatchEvent(new Event('tt_chart_settings'));
-                return next;
-            });
+            _setPaintBars(next);
+            localStorage.setItem('tt_pro_paint_bars', String(next));
+            window.dispatchEvent(new Event('tt_chart_settings'));
         });
-    }, []);
+    }, [startSettingsStagger]);
     const chartMaConfig = useMemo(() => ({ lines: maConfig, paintBars }), [maConfig, paintBars]);
     const deferredChartStyle = useDeferredValue(chartStyle);
     const deferredChartMaConfig = useDeferredValue(chartMaConfig);
@@ -665,25 +718,57 @@ const ProChartModal = ({
     }, [setChartStates]);
 
     const handleTimeframeChange = useCallback((index, tf) => {
+        const shouldSyncInterval = syncOptions.interval;
+        if (!shouldSyncInterval) {
+            startTransition(() => {
+                setChartStates(prev => {
+                    if (prev[index]?.timeframe === tf) return prev;
+                    const next = [...prev];
+                    next[index] = { ...next[index], timeframe: tf };
+                    return next;
+                });
+            });
+            return;
+        }
+
         startTransition(() => {
             setChartStates(prev => {
-                const shouldSyncInterval = syncOptions.interval;
-                if (shouldSyncInterval) {
-                    let changed = false;
-                    const next = prev.map(c => {
-                        if (c.timeframe === tf) return c;
-                        changed = true;
-                        return { ...c, timeframe: tf };
-                    });
-                    return changed ? next : prev;
-                }
                 if (prev[index]?.timeframe === tf) return prev;
                 const next = [...prev];
                 next[index] = { ...next[index], timeframe: tf };
                 return next;
             });
         });
-    }, [setChartStates, syncOptions.interval, layoutId]);
+
+        if (layoutId === '1' || chartsCount <= 1) return;
+        if (timeframeStaggerRef.current.raf) cancelAnimationFrame(timeframeStaggerRef.current.raf);
+        const queue = [];
+        for (let i = 0; i < chartsCount; i += 1) {
+            if (i === index) continue;
+            if (!chartStates[i]?.symbol) continue;
+            queue.push(i);
+        }
+        timeframeStaggerRef.current.queue = queue;
+        const step = () => {
+            const q = timeframeStaggerRef.current.queue;
+            if (!q.length) return;
+            const batch = q.splice(0, STAGGER_BATCH);
+            startTransition(() => {
+                setChartStates(prev => {
+                    let changed = false;
+                    const next = [...prev];
+                    batch.forEach((i) => {
+                        if (next[i]?.timeframe === tf) return;
+                        next[i] = { ...next[i], timeframe: tf };
+                        changed = true;
+                    });
+                    return changed ? next : prev;
+                });
+            });
+            if (q.length) timeframeStaggerRef.current.raf = requestAnimationFrame(step);
+        };
+        timeframeStaggerRef.current.raf = requestAnimationFrame(step);
+    }, [setChartStates, syncOptions.interval, layoutId, chartsCount, chartStates]);
 
     const handleWatchlistSymbolSelect = useCallback((selected) => {
         handleChartChange(activeChartIndex, selected);
@@ -1310,8 +1395,14 @@ const ProChartModal = ({
                             if (isBatchSyncEnabled && !chart?.symbol) return null;
                             const isActive = activeChartIndex === idx;
                             const isMulti = layoutId !== '1';
-                            const resolvedChartStyle = isActive ? chartStyle : deferredChartStyle;
-                            const resolvedMaConfig = isActive ? chartMaConfig : deferredChartMaConfig;
+                            const override = settingsOverridesRef.current.get(idx);
+                            const resolvedChartStyle = isActive ? chartStyle : (override?.style ?? deferredChartStyle);
+                            const resolvedMaConfig = isActive
+                                ? chartMaConfig
+                                : {
+                                    lines: override?.maConfig ?? deferredChartMaConfig.lines,
+                                    paintBars: override?.paintBars ?? deferredChartMaConfig.paintBars
+                                };
                             const gridArea = CHART_LAYOUTS[layoutId].custom ? "abcdefghijklmnop"[idx] : '';
 
                             return (

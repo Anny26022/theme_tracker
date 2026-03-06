@@ -25,8 +25,8 @@ const COLUMNS = [
 const EMPTY_THEME_PERF = Object.freeze({});
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
-const BLOCK_PREFETCH_ROOT_MARGIN = '160px 0px';
-const INITIAL_VISIBLE_BLOCKS = 1;
+const EMPTY_SYNC_DATA = Object.freeze({ sectors: EMPTY_ARRAY, hierarchy: EMPTY_OBJECT, allIndustries: EMPTY_ARRAY });
+const BLOCK_PREFETCH_ROOT_MARGIN = '80px 0px';
 const makeBlockId = (title) => `block-${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 const COMPOSITION_INTERVAL_KEYS = COLUMNS.map((column) => column.key);
 const formatSnapshotAge = (ageMs) => {
@@ -208,6 +208,14 @@ const buildSyncData = (mapSource, themeCompaniesMap) => {
 
     return { sectors, hierarchy, allIndustries };
 };
+
+const MACRO_MAP = MACRO_PILLARS.map((pillar) => ({
+    title: pillar.title,
+    isPillar: true,
+    themes: pillar.blocks.flatMap((blockTitle) =>
+        THEMATIC_MAP.find((block) => block.title === blockTitle)?.themes || EMPTY_ARRAY
+    )
+}));
 
 const getHeatmapColor = (value) => {
     if (value === null || value === undefined || isNaN(value)) return 'bg-[var(--ui-muted)]/5 text-[var(--text-muted)] opacity-20';
@@ -533,9 +541,11 @@ const ThemeBlockSkeleton = ({ themeCount = 1 }) => (
     />
 );
 
-const buildInitialVisibleIds = (mapSource) => {
+const getInitialVisibleBlockCount = (isMobile) => (isMobile ? 1 : 2);
+
+const buildInitialVisibleIds = (mapSource, isMobile) => {
     const ids = new Set();
-    mapSource.slice(0, INITIAL_VISIBLE_BLOCKS).forEach((block) => {
+    mapSource.slice(0, getInitialVisibleBlockCount(isMobile)).forEach((block) => {
         ids.add(makeBlockId(block.title));
     });
     return ids;
@@ -630,13 +640,14 @@ const DeferredThemeBlock = React.memo(({
 DeferredThemeBlock.displayName = 'DeferredThemeBlock';
 
 const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompaniesMap, heatmapData, loading, snapshotSymbolPerf, stockPerfMapRef, highlightedTheme, onSelect, allowCompositionNetworkFetch }) => {
-    const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource));
+    const [visibleIds, setVisibleIds] = useState(() => buildInitialVisibleIds(mapSource, isMobile));
+    const [observerEnabled, setObserverEnabled] = useState(false);
     const visibilityRef = useRef(new Map());
     const nodeRefs = useRef(new Map());
     const refCallbacks = useRef(new Map());
 
     useEffect(() => {
-        const initialIds = buildInitialVisibleIds(mapSource);
+        const initialIds = buildInitialVisibleIds(mapSource, isMobile);
         const validIds = new Set();
         const nextVisibility = new Map();
         mapSource.forEach((block) => {
@@ -654,7 +665,25 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompani
 
         visibilityRef.current = nextVisibility;
         setVisibleIds(initialIds);
-    }, [mapSource]);
+    }, [isMobile, mapSource]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+
+        const enableObserver = () => {
+            startTransition(() => setObserverEnabled(true));
+        };
+
+        window.addEventListener('scroll', enableObserver, { passive: true, once: true });
+        window.addEventListener('pointerdown', enableObserver, { passive: true, once: true });
+        window.addEventListener('keydown', enableObserver, { once: true });
+
+        return () => {
+            window.removeEventListener('scroll', enableObserver);
+            window.removeEventListener('pointerdown', enableObserver);
+            window.removeEventListener('keydown', enableObserver);
+        };
+    }, []);
 
     const attachNodeRef = useCallback((blockId, node) => {
         if (node) {
@@ -674,8 +703,12 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompani
     }, [attachNodeRef]);
 
     useEffect(() => {
+        if (!observerEnabled) return undefined;
+
         if (typeof window === 'undefined' || !('IntersectionObserver' in window)) {
-            setVisibleIds(() => new Set(mapSource.map((block) => makeBlockId(block.title))));
+            startTransition(() => {
+                setVisibleIds(() => new Set(mapSource.map((block) => makeBlockId(block.title))));
+            });
             return undefined;
         }
 
@@ -694,9 +727,11 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompani
 
                 if (!hasChanges) return;
                 const nextIds = buildVisibleIdsFromMap(visibilityRef.current, mapSource);
-                setVisibleIds(nextIds.size > 0 ? nextIds : buildInitialVisibleIds(mapSource));
+                startTransition(() => {
+                setVisibleIds(nextIds.size > 0 ? nextIds : buildInitialVisibleIds(mapSource, isMobile));
+                });
             },
-            { root: null, rootMargin: isMobile ? '320px 0px' : BLOCK_PREFETCH_ROOT_MARGIN, threshold: 0.01 }
+            { root: null, rootMargin: isMobile ? '240px 0px' : '0px 0px', threshold: 0.01 }
         );
 
         nodeRefs.current.forEach((node) => {
@@ -704,7 +739,7 @@ const ThemeGrid = React.memo(({ mapSource, gridClassName, isMobile, themeCompani
         });
 
         return () => observer.disconnect();
-    }, [mapSource, isMobile]);
+    }, [mapSource, isMobile, observerEnabled]);
 
     return (
         <div className={gridClassName}>
@@ -902,6 +937,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const [selectedThemeName, _setSelectedThemeName] = useState(() => localStorage.getItem('tt_map_theme') || null);
     const setSelectedThemeName = useCallback(v => { _setSelectedThemeName(v); if (v) localStorage.setItem('tt_map_theme', v); }, []);
     const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth < 768 : false));
+    const [showWatchlistSync, setShowWatchlistSync] = useState(false);
     const searchRef = useRef(null);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0, width: 0 });
 
@@ -912,6 +948,24 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         checkMobile();
         window.addEventListener('resize', checkMobile);
         return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+
+        const activate = () => {
+            startTransition(() => setShowWatchlistSync(true));
+        };
+
+        window.addEventListener('scroll', activate, { passive: true, once: true });
+        window.addEventListener('pointerdown', activate, { passive: true, once: true });
+        window.addEventListener('keydown', activate, { once: true });
+
+        return () => {
+            window.removeEventListener('scroll', activate);
+            window.removeEventListener('pointerdown', activate);
+            window.removeEventListener('keydown', activate);
+        };
     }, []);
 
     useEffect(() => {
@@ -942,8 +996,10 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const { hierarchy: fallbackHierarchy, loading: hierarchyFallbackLoading } = useMarketData({ enabled: shouldLoadHierarchyFallback });
     const resolvedHierarchy = hierarchy || fallbackHierarchy;
     const scopedSnapshotThemeCompaniesMap = hasSnapshotThemeCompanies ? snapshotThemeConstituents : null;
+    const shouldBuildFallbackThemeCompanies = !scopedSnapshotThemeCompaniesMap;
 
     const nseHierarchy = useMemo(() => {
+        if (!shouldBuildFallbackThemeCompanies) return null;
         if (!resolvedHierarchy) return null;
 
         const newHierarchy = {};
@@ -955,29 +1011,25 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         });
 
         return newHierarchy;
-    }, [resolvedHierarchy]);
+    }, [resolvedHierarchy, shouldBuildFallbackThemeCompanies]);
 
-    const allIndustryMap = useMemo(() => buildIndustryMap(resolvedHierarchy), [resolvedHierarchy]);
-    const allSymbolNameMap = useMemo(() => buildSymbolNameMap(allIndustryMap), [allIndustryMap]);
+    const allIndustryMap = useMemo(
+        () => (shouldBuildFallbackThemeCompanies ? buildIndustryMap(resolvedHierarchy) : EMPTY_OBJECT),
+        [resolvedHierarchy, shouldBuildFallbackThemeCompanies]
+    );
+    const allSymbolNameMap = useMemo(
+        () => (shouldBuildFallbackThemeCompanies ? buildSymbolNameMap(allIndustryMap) : new Map()),
+        [allIndustryMap, shouldBuildFallbackThemeCompanies]
+    );
 
     const fallbackAllThemeCompaniesMap = useMemo(
-        () => buildThemeCompaniesMap(allIndustryMap, allSymbolNameMap),
-        [allIndustryMap, allSymbolNameMap]
+        () => (shouldBuildFallbackThemeCompanies ? buildThemeCompaniesMap(allIndustryMap, allSymbolNameMap) : EMPTY_OBJECT),
+        [allIndustryMap, allSymbolNameMap, shouldBuildFallbackThemeCompanies]
     );
     const fallbackNseThemeCompaniesMap = useMemo(
-        () => buildNseThemeCompaniesMap(fallbackAllThemeCompaniesMap),
-        [fallbackAllThemeCompaniesMap]
+        () => (shouldBuildFallbackThemeCompanies ? buildNseThemeCompaniesMap(fallbackAllThemeCompaniesMap) : EMPTY_OBJECT),
+        [fallbackAllThemeCompaniesMap, shouldBuildFallbackThemeCompanies]
     );
-
-    const macroMap = useMemo(() => {
-        return MACRO_PILLARS.map((pillar) => ({
-            title: pillar.title,
-            isPillar: true,
-            themes: pillar.blocks.flatMap((blockTitle) =>
-                THEMATIC_MAP.find((block) => block.title === blockTitle)?.themes || EMPTY_ARRAY
-            )
-        }));
-    }, []);
 
     const filteredHierarchy = hideBSE ? nseHierarchy : resolvedHierarchy;
     const fallbackThemeCompaniesMap = hideBSE ? fallbackNseThemeCompaniesMap : fallbackAllThemeCompaniesMap;
@@ -991,7 +1043,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         const q = searchQuery.toLowerCase();
         const seen = new Set();
         const matches = [];
-        const activeMap = viewMode === 'MACRO' ? macroMap : THEMATIC_MAP;
+        const activeMap = viewMode === 'MACRO' ? MACRO_MAP : THEMATIC_MAP;
 
         for (const block of activeMap) {
             for (const theme of block.themes) {
@@ -1015,7 +1067,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         }
 
         return matches;
-    }, [viewMode, macroMap, themeCompaniesMap, searchQuery]);
+    }, [viewMode, themeCompaniesMap, searchQuery]);
 
     const scrollToBlock = (blockId, themeName) => {
         const el = document.getElementById(blockId);
@@ -1074,13 +1126,13 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const showInitialLoader = !hasHeatmapData && (snapshotLoading || hierarchyFallbackLoading || loading);
     const allowCompositionNetworkFetch = !hasSnapshot || snapshotSource !== 'server';
     const activeSyncData = useMemo(
-        () => buildSyncData(deferredViewMode === 'MACRO' ? macroMap : THEMATIC_MAP, deferredThemeCompaniesMap),
-        [deferredThemeCompaniesMap, deferredViewMode, macroMap]
+        () => (showWatchlistSync ? buildSyncData(deferredViewMode === 'MACRO' ? MACRO_MAP : THEMATIC_MAP, deferredThemeCompaniesMap) : EMPTY_SYNC_DATA),
+        [deferredThemeCompaniesMap, deferredViewMode, showWatchlistSync]
     );
     const deferredActiveSyncData = useDeferredValue(activeSyncData);
 
     return (
-        <ViewWrapper id="market-map" className="space-y-6 md:space-y-8 pb-32 overflow-x-hidden relative">
+        <ViewWrapper id="market-map" disableInitialAnimation className="space-y-6 md:space-y-8 pb-32 overflow-x-hidden relative">
             {showInitialLoader && <UniverseLoader />}
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-[var(--ui-divider)]/40 pb-6 md:pb-8 relative z-[60]">
@@ -1264,14 +1316,18 @@ const MarketMapViewComponent = ({ hierarchy }) => {
                         <div className="flex flex-col md:flex-row items-start justify-between gap-6 mb-8">
                             <Legend />
                             <div className="w-full md:w-auto min-w-[320px]">
-                                <WatchlistSyncCard
-                                    {...deferredActiveSyncData}
-                                />
+                                {showWatchlistSync ? (
+                                    <WatchlistSyncCard
+                                        {...deferredActiveSyncData}
+                                    />
+                                ) : (
+                                    <div className="h-[108px] glass-card border border-[var(--ui-divider)]/20 rounded-xl" />
+                                )}
                             </div>
                         </div>
                         <ThemeGridSection
                             viewMode={deferredViewMode}
-                            macroMap={macroMap}
+                            macroMap={MACRO_MAP}
                             themeCompaniesMap={deferredThemeCompaniesMap}
                             heatmapData={deferredHeatmapData}
                             loading={loading}

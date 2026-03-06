@@ -5,7 +5,18 @@ import { m } from 'framer-motion';
  * Standardized transition wrapper for all main views.
  * Ensures consistent entry/exit animations and layout spacing.
  */
-export const ViewWrapper = ({ children, className = "", id = "view" }) => {
+export const ViewWrapper = ({ children, className = "", id = "view", disableInitialAnimation = false }) => {
+    if (disableInitialAnimation) {
+        return (
+            <div
+                key={id}
+                className={`gpu-accel space-y-8 md:space-y-12 ${className}`}
+            >
+                {children}
+            </div>
+        );
+    }
+
     return (
         <m.div
             key={id}

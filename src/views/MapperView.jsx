@@ -10,6 +10,8 @@ import { WatchlistSyncCard } from '../components/WatchlistSyncCard';
 import { WatchlistCopyButton } from '../components/WatchlistCopyButton';
 import { useWatchlistSync } from '../hooks/useWatchlistSync';
 
+const EMPTY_ARRAY = Object.freeze([]);
+
 const TABS = {
     TRADINGVIEW: 'TradingView',
     DISTRIBUTION: 'Distribution',
@@ -38,6 +40,8 @@ const CompanyLogo = ({ symbol, name }) => {
 
 export const MapperView = ({ hierarchy, rawData, loading }) => {
     const { customLists, tvSessionId, fetchCustomLists } = useWatchlistSync();
+    const safeRawData = Array.isArray(rawData) ? rawData : EMPTY_ARRAY;
+    const safeCustomLists = Array.isArray(customLists) ? customLists : EMPTY_ARRAY;
     const [input, setInput] = useState(() => localStorage.getItem('preferred_mapper_input') || '');
     const [searchQuery, setSearchQuery] = useState('');
     const [activeTab, setActiveTab] = useState(TABS.TRADINGVIEW);
@@ -106,12 +110,12 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
     // Create a mapping index for fast lookups
     const symbolMap = useMemo(() => {
         const map = new Map();
-        rawData.forEach(item => {
+        safeRawData.forEach(item => {
             if (item.symbol) map.set(item.symbol.toUpperCase(), item);
             if (item.name) map.set(item.name.toUpperCase(), item);
         });
         return map;
-    }, [rawData]);
+    }, [safeRawData]);
 
     const handleProcess = (overrideInput) => {
         const sourceData = overrideInput ?? input;
@@ -139,7 +143,7 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
             if (match) {
                 mapped.push(match);
             } else {
-                const fuzzyMatch = rawData.find(item =>
+                const fuzzyMatch = safeRawData.find(item =>
                     (item.symbol || '').toUpperCase().includes(token) ||
                     (item.name || '').toUpperCase().includes(token)
                 );
@@ -195,7 +199,7 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
         if (input) {
             handleProcess();
         }
-    }, [rawData]); // Re-run if rawData arrives but input was already there
+    }, [safeRawData]); // Re-run if rawData arrives but input was already there
 
     // Auto-process when input changes via manual selection
     useEffect(() => {
@@ -209,14 +213,14 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
     }, [input]);
 
     const currentListName = useMemo(() => {
-        const list = customLists.find(l => String(l.id) === String(selectedWatchlistId));
+        const list = safeCustomLists.find(l => String(l.id) === String(selectedWatchlistId));
         return list ? `${list.name} (${list.count})` : '-- SELECT WATCHLIST --';
-    }, [customLists, selectedWatchlistId]);
+    }, [safeCustomLists, selectedWatchlistId]);
 
     const filteredLists = useMemo(() => {
         // UI-Level Deduplication: Group by name and keep the best version (usually newest/most symbols)
         const uniqueMap = new Map();
-        customLists.forEach(list => {
+        safeCustomLists.forEach(list => {
             const existing = uniqueMap.get(list.name);
             if (!existing || list.count > existing.count || (list.count === existing.count && String(list.id) > String(existing.id))) {
                 uniqueMap.set(list.name, list);
@@ -230,7 +234,7 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
         return uniqueLists
             .filter(l => l.name.toLowerCase().includes(q))
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [customLists, dropdownSearch]);
+    }, [safeCustomLists, dropdownSearch]);
 
     const handleAddSearch = () => {
         if (!searchQuery.trim()) return;
@@ -244,13 +248,13 @@ export const MapperView = ({ hierarchy, rawData, loading }) => {
     const suggestions = useMemo(() => {
         if (!searchQuery.trim() || searchQuery.length < 2) return [];
         const query = searchQuery.toUpperCase();
-        return rawData
+        return safeRawData
             .filter(item =>
                 (item.symbol || '').toUpperCase().includes(query) ||
                 (item.name || '').toUpperCase().includes(query)
             )
             .slice(0, 8);
-    }, [searchQuery, rawData]);
+    }, [searchQuery, safeRawData]);
 
     const handleSelectSuggestion = (suggestion) => {
         const symbol = suggestion.symbol;

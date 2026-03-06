@@ -188,8 +188,8 @@ export function mergeMarketMapHeatmapData(snapshotHeatmapData, liveHeatmapData) 
 export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
     const [snapshotState, setSnapshotState] = useState(() => readScopeSnapshot(scope));
     const [networkState, setNetworkState] = useState({
-        loading: Boolean(scope),
-        resolved: false,
+        loading: Boolean(scope) && !readScopeSnapshot(scope),
+        resolved: Boolean(readScopeSnapshot(scope)),
         error: null
     });
 
@@ -214,7 +214,6 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
         }
 
         let cancelled = false;
-        setNetworkState({ loading: !hasSnapshot, resolved: false, error: null });
 
         const loadRemoteSnapshot = async () => {
             try {
@@ -226,7 +225,9 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
                     snapshotVersionId === manifest.versionId &&
                     hasSnapshot
                 ) {
-                    setNetworkState({ loading: false, resolved: true, error: null });
+                    if (!networkState.resolved || networkState.error) {
+                        setNetworkState({ loading: false, resolved: true, error: null });
+                    }
                     return;
                 }
 
@@ -250,16 +251,48 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
                 setNetworkState({ loading: false, resolved: true, error: null });
             } catch (error) {
                 if (cancelled) return;
+                if (hasSnapshot) {
+                    setNetworkState((prev) => (
+                        prev.resolved && !prev.error ? prev : { loading: false, resolved: true, error: null }
+                    ));
+                    return;
+                }
                 setNetworkState({ loading: false, resolved: true, error });
             }
         };
 
+        if (hasSnapshot) {
+            let timeoutId = null;
+            let idleId = null;
+            const schedule = () => {
+                if (cancelled) return;
+                loadRemoteSnapshot();
+            };
+
+            if (typeof window.requestIdleCallback === 'function') {
+                idleId = window.requestIdleCallback(schedule, { timeout: 2000 });
+            } else {
+                timeoutId = window.setTimeout(schedule, 1200);
+            }
+
+            return () => {
+                cancelled = true;
+                if (idleId != null && typeof window.cancelIdleCallback === 'function') {
+                    window.cancelIdleCallback(idleId);
+                }
+                if (timeoutId != null) {
+                    window.clearTimeout(timeoutId);
+                }
+            };
+        }
+
+        setNetworkState({ loading: true, resolved: false, error: null });
         loadRemoteSnapshot();
 
         return () => {
             cancelled = true;
         };
-    }, [hasSnapshot, scope, snapshotState?.source, snapshotVersionId]);
+    }, [hasSnapshot, networkState.error, networkState.resolved, scope, snapshotState?.source, snapshotVersionId]);
 
     useEffect(() => {
         if (!scope || !hasAnyHeatmapValues(liveHeatmapData)) return;

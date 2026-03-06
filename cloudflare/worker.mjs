@@ -68,6 +68,47 @@ function createJsonResponse(status, data, extraHeaders = {}) {
     });
 }
 
+function withSnapshotDebugHeaders(headers, values = {}) {
+    return {
+        ...headers,
+        'X-Snapshot-Scope': values.scope || '',
+        'X-Snapshot-Version': values.versionId || '',
+        'X-Snapshot-Source': values.source || '',
+        'X-Snapshot-Cache-Policy': values.cachePolicy || '',
+        'X-Worker-Cache': values.workerCache || '',
+    };
+}
+
+function buildWorkerCacheKey(url) {
+    return new Request(url.toString(), { method: 'GET' });
+}
+
+async function matchWorkerCache(url) {
+    const cache = caches.default;
+    const key = buildWorkerCacheKey(url);
+    return cache.match(key);
+}
+
+async function putWorkerCache(url, response) {
+    if (!response || response.status !== 200) return;
+    const cache = caches.default;
+    const key = buildWorkerCacheKey(url);
+    await cache.put(key, response.clone());
+}
+
+function cloneResponseWithHeaders(response, extraHeaders = {}) {
+    const headers = new Headers(response.headers);
+    Object.entries(extraHeaders).forEach(([key, value]) => {
+        headers.set(key, value);
+    });
+
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
+}
+
 function createOptionsResponse(allowMethods, allowHeaders = 'Content-Type') {
     return new Response(null, {
         status: 204,
@@ -495,12 +536,17 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
     const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
     const scope = rawScope === 'all' ? 'all' : 'nse';
 
+    const cached = await matchWorkerCache(url);
+    if (cached) {
+        return cloneResponseWithHeaders(cached, { 'X-Worker-Cache': 'HIT' });
+    }
+
     try {
         const stored = await readMarketMapSnapshotManifest(env, scope);
         if (!stored?.manifest) {
             const legacy = await readMarketMapSnapshot(env, scope);
             if (legacy?.snapshot) {
-                return createJsonResponse(200, {
+                const response = createJsonResponse(200, {
                     ok: true,
                     scope,
                     manifest: {
@@ -510,10 +556,18 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
                         generatedAt: legacy.snapshot.generatedAt,
                         legacy: true,
                     },
-                }, {
+                }, withSnapshotDebugHeaders({
                     'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
                     'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
-                });
+                }, {
+                    scope,
+                    versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || scope}`,
+                    source: 'legacy-manifest',
+                    cachePolicy: 'manifest',
+                    workerCache: 'MISS'
+                }));
+                if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+                return response;
             }
             if (ctx?.waitUntil) {
                 ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
@@ -526,14 +580,22 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
             });
         }
 
-        return createJsonResponse(200, {
+        const response = createJsonResponse(200, {
             ok: true,
             scope,
             manifest: stored.manifest,
-        }, {
+        }, withSnapshotDebugHeaders({
             'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
             'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
-        });
+        }, {
+            scope,
+            versionId: stored.manifest?.versionId || '',
+            source: 'manifest',
+            cachePolicy: 'manifest',
+            workerCache: 'MISS'
+        }));
+        if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+        return response;
     } catch (error) {
         return createJsonResponse(500, {
             ok: false,
@@ -543,7 +605,7 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
     }
 }
 
-async function handleMarketMapSnapshotVersion(request, env, url) {
+async function handleMarketMapSnapshotVersion(request, env, url, ctx) {
     if (request.method === 'OPTIONS') return createOptionsResponse('GET, OPTIONS');
     if (request.method !== 'GET') return createMethodNotAllowedResponse('GET');
 
@@ -559,22 +621,35 @@ async function handleMarketMapSnapshotVersion(request, env, url) {
         });
     }
 
+    const cached = await matchWorkerCache(url);
+    if (cached) {
+        return cloneResponseWithHeaders(cached, { 'X-Worker-Cache': 'HIT' });
+    }
+
     try {
         const stored = await readMarketMapSnapshotVersion(env, scope, versionId);
         if (!stored?.snapshot) {
             if (versionId.startsWith('legacy-')) {
                 const legacy = await readMarketMapSnapshot(env, scope);
                 if (legacy?.snapshot) {
-                    return createJsonResponse(200, {
+                    const response = createJsonResponse(200, {
                         ok: true,
                         scope,
                         versionId,
                         snapshot: legacy.snapshot,
-                    }, {
+                    }, withSnapshotDebugHeaders({
                         'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
                         'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
                         ETag: `"market-map-${scope}-${versionId}"`,
-                    });
+                    }, {
+                        scope,
+                        versionId,
+                        source: 'legacy-payload',
+                        cachePolicy: 'payload',
+                        workerCache: 'MISS'
+                    }));
+                    if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+                    return response;
                 }
             }
             return createJsonResponse(404, {
@@ -586,16 +661,24 @@ async function handleMarketMapSnapshotVersion(request, env, url) {
             });
         }
 
-        return createJsonResponse(200, {
+        const response = createJsonResponse(200, {
             ok: true,
             scope,
             versionId,
             snapshot: stored.snapshot,
-        }, {
+        }, withSnapshotDebugHeaders({
             'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
             'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
             ETag: `"market-map-${scope}-${versionId}"`,
-        });
+        }, {
+            scope,
+            versionId,
+            source: 'payload',
+            cachePolicy: 'payload',
+            workerCache: 'MISS'
+        }));
+        if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+        return response;
     } catch (error) {
         return createJsonResponse(500, {
             ok: false,
@@ -621,12 +704,17 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
         });
     }
 
+    const cached = await matchWorkerCache(url);
+    if (cached) {
+        return cloneResponseWithHeaders(cached, { 'X-Worker-Cache': 'HIT' });
+    }
+
     try {
         const stored = await readThemeChartSnapshotManifest(env, scope, theme);
         if (!stored?.manifest) {
             const legacy = await readThemeChartSnapshot(env, scope, theme);
             if (legacy?.snapshot) {
-                return createJsonResponse(200, {
+                const response = createJsonResponse(200, {
                     ok: true,
                     scope,
                     theme,
@@ -638,10 +726,18 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
                         generatedAt: legacy.snapshot.generatedAt,
                         legacy: true,
                     },
-                }, {
+                }, withSnapshotDebugHeaders({
                     'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
                     'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
-                });
+                }, {
+                    scope,
+                    versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || theme}`,
+                    source: 'legacy-chart-manifest',
+                    cachePolicy: 'chart-manifest',
+                    workerCache: 'MISS'
+                }));
+                if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+                return response;
             }
             if (ctx?.waitUntil) {
                 ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
@@ -655,15 +751,23 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
             });
         }
 
-        return createJsonResponse(200, {
+        const response = createJsonResponse(200, {
             ok: true,
             scope,
             theme,
             manifest: stored.manifest,
-        }, {
+        }, withSnapshotDebugHeaders({
             'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
             'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
-        });
+        }, {
+            scope,
+            versionId: stored.manifest?.versionId || '',
+            source: 'chart-manifest',
+            cachePolicy: 'chart-manifest',
+            workerCache: 'MISS'
+        }));
+        if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+        return response;
     } catch (error) {
         return createJsonResponse(500, {
             ok: false,
@@ -673,7 +777,7 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
     }
 }
 
-async function handleMarketMapChartSnapshotVersion(request, env, url) {
+async function handleMarketMapChartSnapshotVersion(request, env, url, ctx) {
     if (request.method === 'OPTIONS') return createOptionsResponse('GET, OPTIONS');
     if (request.method !== 'GET') return createMethodNotAllowedResponse('GET');
 
@@ -690,23 +794,36 @@ async function handleMarketMapChartSnapshotVersion(request, env, url) {
         });
     }
 
+    const cached = await matchWorkerCache(url);
+    if (cached) {
+        return cloneResponseWithHeaders(cached, { 'X-Worker-Cache': 'HIT' });
+    }
+
     try {
         const stored = await readThemeChartSnapshotVersion(env, scope, theme, versionId);
         if (!stored?.snapshot) {
             if (versionId.startsWith('legacy-')) {
                 const legacy = await readThemeChartSnapshot(env, scope, theme);
                 if (legacy?.snapshot) {
-                    return createJsonResponse(200, {
+                    const response = createJsonResponse(200, {
                         ok: true,
                         scope,
                         theme,
                         versionId,
                         snapshot: legacy.snapshot,
-                    }, {
+                    }, withSnapshotDebugHeaders({
                         'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
                         'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
                         ETag: `"market-map-chart-${scope}-${versionId}"`,
-                    });
+                    }, {
+                        scope,
+                        versionId,
+                        source: 'legacy-chart-payload',
+                        cachePolicy: 'chart-payload',
+                        workerCache: 'MISS'
+                    }));
+                    if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+                    return response;
                 }
             }
             return createJsonResponse(404, {
@@ -719,17 +836,25 @@ async function handleMarketMapChartSnapshotVersion(request, env, url) {
             });
         }
 
-        return createJsonResponse(200, {
+        const response = createJsonResponse(200, {
             ok: true,
             scope,
             theme,
             versionId,
             snapshot: stored.snapshot,
-        }, {
+        }, withSnapshotDebugHeaders({
             'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
             'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
             ETag: `"market-map-chart-${scope}-${versionId}"`,
-        });
+        }, {
+            scope,
+            versionId,
+            source: 'chart-payload',
+            cachePolicy: 'chart-payload',
+            workerCache: 'MISS'
+        }));
+        if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
+        return response;
     } catch (error) {
         return createJsonResponse(500, {
             ok: false,
@@ -752,11 +877,11 @@ async function handleApi(request, env, url, ctx) {
         case '/api/market-map/snapshot':
             return handleMarketMapSnapshot(request, env, url, ctx);
         case '/api/market-map/snapshot/version':
-            return handleMarketMapSnapshotVersion(request, env, url);
+            return handleMarketMapSnapshotVersion(request, env, url, ctx);
         case '/api/market-map/chart-snapshot':
             return handleMarketMapChartSnapshot(request, env, url, ctx);
         case '/api/market-map/chart-snapshot/version':
-            return handleMarketMapChartSnapshotVersion(request, env, url);
+            return handleMarketMapChartSnapshotVersion(request, env, url, ctx);
         case '/api/fuckyouuuu':
             return handleGoogleBatch(request, url, { encryptedPost: true });
         case '/api/mobile-batch':

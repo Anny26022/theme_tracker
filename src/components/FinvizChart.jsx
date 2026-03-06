@@ -70,6 +70,7 @@ const areFinvizChartPropsEqual = (prevProps, nextProps) => {
     if (prevProps.useExternalSeries !== nextProps.useExternalSeries) return false;
     if (prevProps.enableLivePrice !== nextProps.enableLivePrice) return false;
     if (prevProps.preferMaxHistory !== nextProps.preferMaxHistory) return false;
+    if (prevProps.snapshotScope !== nextProps.snapshotScope) return false;
     return true;
 };
 
@@ -91,6 +92,7 @@ function FinvizChartBase({
     useExternalSeries = false,
     enableLivePrice = false,
     preferMaxHistory = false,
+    snapshotScope = 'all',
     chartVersion = 0,
     subscribeChartSymbols = null
 }) {
@@ -788,7 +790,7 @@ function FinvizChartBase({
 
     const allowStrike = allowStrikeProp ?? false;
     const liveData = useLivePrice(shouldLive ? cleaned : '', { allowStrike });
-    const snapshotSymbol = useMarketMapSnapshotSymbol(cleaned);
+    const snapshotSymbol = useMarketMapSnapshotSymbol(cleaned, snapshotScope);
 
     // Map chart timeframe → interval key for actual period performance
     const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };

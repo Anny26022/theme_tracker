@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useAsync } from './useAsync';
 import { buildHierarchyFromRawData, getSortedSectors } from '../../packages/core/src/market/hierarchy';
 
@@ -29,8 +29,13 @@ const fetchFunc = async () => {
     }
 };
 
-export const useMarketData = () => {
-    const { data: rawData = [], loading, error } = useAsync(fetchFunc, []);
+export const useMarketData = ({ enabled = true } = {}) => {
+    const loadData = useCallback(async () => {
+        if (!enabled) return [];
+        return fetchFunc();
+    }, [enabled]);
+
+    const { data: rawData = [], loading, error } = useAsync(loadData, [enabled], enabled);
 
     const hierarchy = useMemo(() => buildHierarchyFromRawData(rawData), [rawData]);
 

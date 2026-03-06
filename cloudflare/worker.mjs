@@ -6,7 +6,15 @@
  * - Publishes Market Map aggregate snapshots from R2
  */
 
-import { readMarketMapSnapshot, storeMarketMapSnapshots } from './marketMapSnapshot.mjs';
+import {
+    readMarketMapSnapshot,
+    readMarketMapSnapshotManifest,
+    readMarketMapSnapshotVersion,
+    readThemeChartSnapshot,
+    readThemeChartSnapshotManifest,
+    readThemeChartSnapshotVersion,
+    storeMarketMapSnapshots
+} from './marketMapSnapshot.mjs';
 
 const API_V1_REWRITES = new Map([
     ['/api/v1/fuckyouuuu', '/api/fuckyouuuu'],
@@ -488,14 +496,31 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
     const scope = rawScope === 'all' ? 'all' : 'nse';
 
     try {
-        const stored = await readMarketMapSnapshot(env, scope);
-        if (!stored?.snapshot) {
+        const stored = await readMarketMapSnapshotManifest(env, scope);
+        if (!stored?.manifest) {
+            const legacy = await readMarketMapSnapshot(env, scope);
+            if (legacy?.snapshot) {
+                return createJsonResponse(200, {
+                    ok: true,
+                    scope,
+                    manifest: {
+                        version: legacy.snapshot.version,
+                        versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || scope}`,
+                        scope,
+                        generatedAt: legacy.snapshot.generatedAt,
+                        legacy: true,
+                    },
+                }, {
+                    'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                    'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                });
+            }
             if (ctx?.waitUntil) {
                 ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
             }
             return createJsonResponse(404, {
                 ok: false,
-                error: 'Market Map snapshot not found',
+                error: 'Market Map snapshot manifest not found',
                 code: 'MARKET_MAP_SNAPSHOT_MISSING',
                 scope,
             });
@@ -504,14 +529,211 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
         return createJsonResponse(200, {
             ok: true,
             scope,
-            snapshot: stored.snapshot,
+            manifest: stored.manifest,
         }, {
             'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+            'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
         });
     } catch (error) {
         return createJsonResponse(500, {
             ok: false,
-            error: 'Failed to read Market Map snapshot',
+            error: 'Failed to read Market Map snapshot manifest',
+            details: error?.message || 'Unknown error',
+        });
+    }
+}
+
+async function handleMarketMapSnapshotVersion(request, env, url) {
+    if (request.method === 'OPTIONS') return createOptionsResponse('GET, OPTIONS');
+    if (request.method !== 'GET') return createMethodNotAllowedResponse('GET');
+
+    const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
+    const scope = rawScope === 'all' ? 'all' : 'nse';
+    const versionId = (url.searchParams.get('version') || '').trim();
+
+    if (!versionId) {
+        return createJsonResponse(400, {
+            ok: false,
+            error: 'Missing version',
+            code: 'MARKET_MAP_SNAPSHOT_VERSION_REQUIRED',
+        });
+    }
+
+    try {
+        const stored = await readMarketMapSnapshotVersion(env, scope, versionId);
+        if (!stored?.snapshot) {
+            if (versionId.startsWith('legacy-')) {
+                const legacy = await readMarketMapSnapshot(env, scope);
+                if (legacy?.snapshot) {
+                    return createJsonResponse(200, {
+                        ok: true,
+                        scope,
+                        versionId,
+                        snapshot: legacy.snapshot,
+                    }, {
+                        'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                        'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                        ETag: `"market-map-${scope}-${versionId}"`,
+                    });
+                }
+            }
+            return createJsonResponse(404, {
+                ok: false,
+                error: 'Market Map snapshot version not found',
+                code: 'MARKET_MAP_SNAPSHOT_VERSION_MISSING',
+                scope,
+                versionId,
+            });
+        }
+
+        return createJsonResponse(200, {
+            ok: true,
+            scope,
+            versionId,
+            snapshot: stored.snapshot,
+        }, {
+            'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
+            'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
+            ETag: `"market-map-${scope}-${versionId}"`,
+        });
+    } catch (error) {
+        return createJsonResponse(500, {
+            ok: false,
+            error: 'Failed to read Market Map snapshot version',
+            details: error?.message || 'Unknown error',
+        });
+    }
+}
+
+async function handleMarketMapChartSnapshot(request, env, url, ctx) {
+    if (request.method === 'OPTIONS') return createOptionsResponse('GET, OPTIONS');
+    if (request.method !== 'GET') return createMethodNotAllowedResponse('GET');
+
+    const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
+    const scope = rawScope === 'all' ? 'all' : 'nse';
+    const theme = (url.searchParams.get('theme') || '').trim();
+
+    if (!theme) {
+        return createJsonResponse(400, {
+            ok: false,
+            error: 'Missing theme',
+            code: 'MARKET_MAP_CHART_THEME_REQUIRED',
+        });
+    }
+
+    try {
+        const stored = await readThemeChartSnapshotManifest(env, scope, theme);
+        if (!stored?.manifest) {
+            const legacy = await readThemeChartSnapshot(env, scope, theme);
+            if (legacy?.snapshot) {
+                return createJsonResponse(200, {
+                    ok: true,
+                    scope,
+                    theme,
+                    manifest: {
+                        version: legacy.snapshot.version,
+                        versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || theme}`,
+                        scope,
+                        theme,
+                        generatedAt: legacy.snapshot.generatedAt,
+                        legacy: true,
+                    },
+                }, {
+                    'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                    'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                });
+            }
+            if (ctx?.waitUntil) {
+                ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
+            }
+            return createJsonResponse(404, {
+                ok: false,
+                error: 'Market Map chart snapshot manifest not found',
+                code: 'MARKET_MAP_CHART_SNAPSHOT_MISSING',
+                scope,
+                theme,
+            });
+        }
+
+        return createJsonResponse(200, {
+            ok: true,
+            scope,
+            theme,
+            manifest: stored.manifest,
+        }, {
+            'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+            'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+        });
+    } catch (error) {
+        return createJsonResponse(500, {
+            ok: false,
+            error: 'Failed to read Market Map chart snapshot manifest',
+            details: error?.message || 'Unknown error',
+        });
+    }
+}
+
+async function handleMarketMapChartSnapshotVersion(request, env, url) {
+    if (request.method === 'OPTIONS') return createOptionsResponse('GET, OPTIONS');
+    if (request.method !== 'GET') return createMethodNotAllowedResponse('GET');
+
+    const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
+    const scope = rawScope === 'all' ? 'all' : 'nse';
+    const theme = (url.searchParams.get('theme') || '').trim();
+    const versionId = (url.searchParams.get('version') || '').trim();
+
+    if (!theme || !versionId) {
+        return createJsonResponse(400, {
+            ok: false,
+            error: 'Missing theme or version',
+            code: 'MARKET_MAP_CHART_SNAPSHOT_VERSION_REQUIRED',
+        });
+    }
+
+    try {
+        const stored = await readThemeChartSnapshotVersion(env, scope, theme, versionId);
+        if (!stored?.snapshot) {
+            if (versionId.startsWith('legacy-')) {
+                const legacy = await readThemeChartSnapshot(env, scope, theme);
+                if (legacy?.snapshot) {
+                    return createJsonResponse(200, {
+                        ok: true,
+                        scope,
+                        theme,
+                        versionId,
+                        snapshot: legacy.snapshot,
+                    }, {
+                        'Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                        'CDN-Cache-Control': legacy?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
+                        ETag: `"market-map-chart-${scope}-${versionId}"`,
+                    });
+                }
+            }
+            return createJsonResponse(404, {
+                ok: false,
+                error: 'Market Map chart snapshot version not found',
+                code: 'MARKET_MAP_CHART_SNAPSHOT_VERSION_MISSING',
+                scope,
+                theme,
+                versionId,
+            });
+        }
+
+        return createJsonResponse(200, {
+            ok: true,
+            scope,
+            theme,
+            versionId,
+            snapshot: stored.snapshot,
+        }, {
+            'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
+            'CDN-Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable',
+            ETag: `"market-map-chart-${scope}-${versionId}"`,
+        });
+    } catch (error) {
+        return createJsonResponse(500, {
+            ok: false,
+            error: 'Failed to read Market Map chart snapshot version',
             details: error?.message || 'Unknown error',
         });
     }
@@ -529,6 +751,12 @@ async function handleApi(request, env, url, ctx) {
     switch (url.pathname) {
         case '/api/market-map/snapshot':
             return handleMarketMapSnapshot(request, env, url, ctx);
+        case '/api/market-map/snapshot/version':
+            return handleMarketMapSnapshotVersion(request, env, url);
+        case '/api/market-map/chart-snapshot':
+            return handleMarketMapChartSnapshot(request, env, url, ctx);
+        case '/api/market-map/chart-snapshot/version':
+            return handleMarketMapChartSnapshotVersion(request, env, url);
         case '/api/fuckyouuuu':
             return handleGoogleBatch(request, url, { encryptedPost: true });
         case '/api/mobile-batch':

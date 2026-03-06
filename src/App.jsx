@@ -176,12 +176,13 @@ const App = () => {
         setTrackerTimeframe,
         setComparisonTimeframe
     } = useUrlState();
-    const { hierarchy, rawData, loading, error } = useMarketData();
+    const normalizedView = useMemo(() => (VALID_VIEWS.has(view) ? view : VIEWS.UNIVERSE), [view]);
+    const needsGlobalMarketData = normalizedView !== VIEWS.MARKET_MAP;
+    const { hierarchy, rawData, loading, error } = useMarketData({ enabled: needsGlobalMarketData });
     const [insightsCompany, setInsightsCompany] = React.useState(null);
 
     // Source of truth from hierarchy to avoid drift between lists and lookup map.
     const sectors = useMemo(() => Object.keys(hierarchy).sort(), [hierarchy]);
-    const normalizedView = useMemo(() => (VALID_VIEWS.has(view) ? view : VIEWS.UNIVERSE), [view]);
 
     const currentIndustries = useMemo(() => {
         if (!sector || !hierarchy[sector]) return [];

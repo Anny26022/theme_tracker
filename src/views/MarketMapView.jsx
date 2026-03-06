@@ -6,6 +6,7 @@ import { cn } from '../lib/utils';
 import { useIntervalVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 import { useThematicHeatmap } from '../hooks/useThematicHeatmap';
 import { mergeMarketMapHeatmapData, useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
+import { useMarketData } from '../hooks/useMarketData';
 import { cleanSymbol, getCachedIntervalEntry } from '../services/priceService';
 import { Search, X, BarChart3, LayoutGrid } from 'lucide-react';
 import { UniverseLoader } from '../components/UniverseLoader';
@@ -130,6 +131,10 @@ const buildNseThemeCompaniesMap = (allThemeCompaniesMap) => {
 
     return next;
 };
+
+const hasThemeConstituents = (themeConstituents) => (
+    Object.values(themeConstituents || {}).some((companies) => Array.isArray(companies) && companies.length > 0)
+);
 
 function useCompositionPerfMap(companies, snapshotSymbolPerf, fallbackPerfMapRef, fallbackPerfMap, allowNetworkFetch = true) {
     const { subscribeIntervalSymbols } = useMarketDataRegistry();
@@ -920,38 +925,48 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         }
     }, [isSearchFocused, searchQuery]);
 
+    const snapshotScope = hideBSE ? 'nse' : 'all';
+    const {
+        snapshotHeatmapData,
+        snapshotThemeConstituents,
+        snapshotSymbolPerf,
+        hasSnapshot,
+        snapshotAgeMs,
+        snapshotIsComplete,
+        snapshotSource,
+        snapshotLoading,
+        snapshotResolved,
+    } = useMarketMapSnapshot(snapshotScope);
+    const hasSnapshotThemeCompanies = hasThemeConstituents(snapshotThemeConstituents);
+    const shouldLoadHierarchyFallback = !hierarchy && snapshotResolved && !hasSnapshot;
+    const { hierarchy: fallbackHierarchy, loading: hierarchyFallbackLoading } = useMarketData({ enabled: shouldLoadHierarchyFallback });
+    const resolvedHierarchy = hierarchy || fallbackHierarchy;
+    const scopedSnapshotThemeCompaniesMap = hasSnapshotThemeCompanies ? snapshotThemeConstituents : null;
+
     const nseHierarchy = useMemo(() => {
-        if (!hierarchy) return null;
+        if (!resolvedHierarchy) return null;
 
         const newHierarchy = {};
-        Object.keys(hierarchy).forEach((sector) => {
+        Object.keys(resolvedHierarchy).forEach((sector) => {
             newHierarchy[sector] = {};
-            Object.keys(hierarchy[sector]).forEach((industry) => {
-                newHierarchy[sector][industry] = hierarchy[sector][industry].filter((company) => !isBSESymbol(company.symbol));
+            Object.keys(resolvedHierarchy[sector]).forEach((industry) => {
+                newHierarchy[sector][industry] = resolvedHierarchy[sector][industry].filter((company) => !isBSESymbol(company.symbol));
             });
         });
 
         return newHierarchy;
-    }, [hierarchy]);
+    }, [resolvedHierarchy]);
 
-    const allIndustryMap = useMemo(() => buildIndustryMap(hierarchy), [hierarchy]);
+    const allIndustryMap = useMemo(() => buildIndustryMap(resolvedHierarchy), [resolvedHierarchy]);
     const allSymbolNameMap = useMemo(() => buildSymbolNameMap(allIndustryMap), [allIndustryMap]);
 
-    const allThemeCompaniesMap = useMemo(
+    const fallbackAllThemeCompaniesMap = useMemo(
         () => buildThemeCompaniesMap(allIndustryMap, allSymbolNameMap),
         [allIndustryMap, allSymbolNameMap]
     );
-    const nseThemeCompaniesMap = useMemo(
-        () => buildNseThemeCompaniesMap(allThemeCompaniesMap),
-        [allThemeCompaniesMap]
-    );
-    const thematicSyncDataAll = useMemo(
-        () => buildSyncData(THEMATIC_MAP, allThemeCompaniesMap),
-        [allThemeCompaniesMap]
-    );
-    const thematicSyncDataNse = useMemo(
-        () => buildSyncData(THEMATIC_MAP, nseThemeCompaniesMap),
-        [nseThemeCompaniesMap]
+    const fallbackNseThemeCompaniesMap = useMemo(
+        () => buildNseThemeCompaniesMap(fallbackAllThemeCompaniesMap),
+        [fallbackAllThemeCompaniesMap]
     );
 
     const macroMap = useMemo(() => {
@@ -963,17 +978,10 @@ const MarketMapViewComponent = ({ hierarchy }) => {
             )
         }));
     }, []);
-    const macroSyncDataAll = useMemo(
-        () => buildSyncData(macroMap, allThemeCompaniesMap),
-        [macroMap, allThemeCompaniesMap]
-    );
-    const macroSyncDataNse = useMemo(
-        () => buildSyncData(macroMap, nseThemeCompaniesMap),
-        [macroMap, nseThemeCompaniesMap]
-    );
 
-    const filteredHierarchy = hideBSE ? nseHierarchy : hierarchy;
-    const themeCompaniesMap = hideBSE ? nseThemeCompaniesMap : allThemeCompaniesMap;
+    const filteredHierarchy = hideBSE ? nseHierarchy : resolvedHierarchy;
+    const fallbackThemeCompaniesMap = hideBSE ? fallbackNseThemeCompaniesMap : fallbackAllThemeCompaniesMap;
+    const themeCompaniesMap = scopedSnapshotThemeCompaniesMap || fallbackThemeCompaniesMap;
     const deferredViewMode = useDeferredValue(viewMode);
     const deferredFilteredHierarchy = useDeferredValue(filteredHierarchy);
     const deferredThemeCompaniesMap = useDeferredValue(themeCompaniesMap);
@@ -1030,23 +1038,11 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         }
     };
 
-    const snapshotScope = hideBSE ? 'nse' : 'all';
-    const {
-        snapshotHeatmapData,
-        snapshotThemeConstituents,
-        snapshotSymbolPerf,
-        hasSnapshot,
-        snapshotAgeMs,
-        snapshotIsComplete,
-        snapshotSource,
-        snapshotLoading,
-        snapshotResolved,
-    } = useMarketMapSnapshot(snapshotScope);
     const liveHeatmapEnabled = snapshotResolved && !hasSnapshot;
     const { heatmapData, stockPerfMap, loading, pendingIntervals, intervalProgress, secondaryPhaseActive } = useThematicHeatmap(
         THEMATIC_MAP,
         deferredFilteredHierarchy,
-        { enabled: liveHeatmapEnabled }
+        { enabled: liveHeatmapEnabled && Boolean(deferredFilteredHierarchy) }
     );
     const effectiveHeatmapData = useMemo(
         () => mergeMarketMapHeatmapData(snapshotHeatmapData, heatmapData),
@@ -1075,15 +1071,12 @@ const MarketMapViewComponent = ({ hierarchy }) => {
     const snapshotAgeLabel = formatSnapshotAge(snapshotAgeMs);
     const isBackgroundRefreshing = hasSnapshot && pendingIntervals.length > 0;
     const isPrimaryStageOnly = !secondaryPhaseActive && pendingIntervals.length > 0;
-    const showInitialLoader = !hasHeatmapData && (snapshotLoading || loading);
+    const showInitialLoader = !hasHeatmapData && (snapshotLoading || hierarchyFallbackLoading || loading);
     const allowCompositionNetworkFetch = !hasSnapshot || snapshotSource !== 'server';
-
-    const activeSyncData = useMemo(() => {
-        if (deferredViewMode === 'MACRO') {
-            return hideBSE ? macroSyncDataNse : macroSyncDataAll;
-        }
-        return hideBSE ? thematicSyncDataNse : thematicSyncDataAll;
-    }, [deferredViewMode, hideBSE, macroSyncDataAll, macroSyncDataNse, thematicSyncDataAll, thematicSyncDataNse]);
+    const activeSyncData = useMemo(
+        () => buildSyncData(deferredViewMode === 'MACRO' ? macroMap : THEMATIC_MAP, deferredThemeCompaniesMap),
+        [deferredThemeCompaniesMap, deferredViewMode, macroMap]
+    );
     const deferredActiveSyncData = useDeferredValue(activeSyncData);
 
     return (
@@ -1295,6 +1288,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
                         themeName={selectedThemeName}
                         companies={themeCompaniesMap[selectedThemeName] || []}
                         allThemeCompanies={themeCompaniesMap}
+                        snapshotScope={snapshotScope}
                         onBack={onExitCharts}
                         onSelectTheme={setSelectedThemeName}
                         onViewModeChange={setViewMode}

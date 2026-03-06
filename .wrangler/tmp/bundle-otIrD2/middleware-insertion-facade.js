@@ -1,0 +1,11 @@
+				import worker, * as OTHER_EXPORTS from "/Users/aniketmahato/Desktop/theme tracker/cloudflare/worker.mjs";
+				import * as __MIDDLEWARE_0__ from "/Users/aniketmahato/Desktop/theme tracker/node_modules/wrangler/templates/middleware/middleware-ensure-req-body-drained.ts";
+import * as __MIDDLEWARE_1__ from "/Users/aniketmahato/Desktop/theme tracker/node_modules/wrangler/templates/middleware/middleware-scheduled.ts";
+
+				export * from "/Users/aniketmahato/Desktop/theme tracker/cloudflare/worker.mjs";
+				const MIDDLEWARE_TEST_INJECT = "__INJECT_FOR_TESTING_WRANGLER_MIDDLEWARE__";
+				export const __INTERNAL_WRANGLER_MIDDLEWARE__ = [
+					
+					__MIDDLEWARE_0__.default,__MIDDLEWARE_1__.default
+				]
+				export default worker;

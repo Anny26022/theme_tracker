@@ -5,14 +5,19 @@ import { THEMATIC_MAP } from '../src/data/thematicMap.js';
 import { RPC_CHART, RPC_PRICE } from '../src/lib/stealth.js';
 
 const SNAPSHOT_VERSION = 4;
+const CHART_SNAPSHOT_VERSION = 1;
 const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD', '5Y', 'MAX'];
 const SNAPSHOT_KEY_PREFIX = 'market-map/snapshots';
+const CHART_SNAPSHOT_KEY_PREFIX = 'market-map/chart-snapshots/cards';
+const SNAPSHOT_MANIFEST_KEY_PREFIX = 'market-map/manifests';
+const CHART_SNAPSHOT_MANIFEST_KEY_PREFIX = 'market-map/chart-snapshots/manifests/cards';
 const PRICE_BATCH_SIZE = 500;
 const CHART_BATCH_SIZE = 250;
 const CHART_CONCURRENCY = 3;
 const ONE_YEAR_CHART_WINDOW = 6;
 const MAX_CHART_WINDOW = 8;
 const SNAPSHOT_CACHE_CONTROL = 'public, max-age=60, s-maxage=300, stale-while-revalidate=900';
+const SNAPSHOT_IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const GOOGLE_HEADERS = {
     'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
     Origin: 'https://www.google.com',
@@ -163,6 +168,76 @@ function extractCloseSeriesFromFrame(payload) {
     return {
         symbol: cleanSymbol(symbolInfo[0]),
         series
+    };
+}
+
+function extractWideChartSeriesFromFrame(payload) {
+    const root = payload?.[0]?.[0];
+    if (!Array.isArray(root)) return null;
+
+    const symbolInfo = root[0];
+    const absolutePrice = Number(symbolInfo?.[2]);
+
+    let points = root[3]?.[0]?.[1];
+    if (!Array.isArray(points) || points.length < 2) {
+        points = root[3]?.[1];
+    }
+
+    if (!Array.isArray(symbolInfo) || !Array.isArray(points) || points.length === 0) {
+        return null;
+    }
+
+    const parseTime = (value) => {
+        if (typeof value === 'number') return value;
+        if (Array.isArray(value)) {
+            const [year, month, day, hour, minute] = value;
+            return new Date(year, month - 1, day, hour || 0, minute || 0).getTime();
+        }
+        return 0;
+    };
+
+    const rawSeries = points
+        .map((point) => {
+            const stats = point?.[1];
+            const time = parseTime(point?.[0]);
+            const close = Number(stats?.[0] || 0);
+
+            const validateAbs = (val) => {
+                const num = Number(val || 0);
+                if (!(num > 0)) return close;
+                if (close > 0 && num < close * 0.1) return close;
+                return num;
+            };
+
+            const high = validateAbs(stats?.[3]);
+            const low = validateAbs(stats?.[4]);
+            const open = validateAbs(stats?.[5]);
+            const volume = Number(point?.[2] || 0);
+
+            return { time, close, open, high, low, volume };
+        })
+        .filter((point) => Number.isFinite(point.time) && point.time > 0 && Number.isFinite(point.close) && point.close > 0)
+        .sort((a, b) => a.time - b.time);
+
+    if (rawSeries.length === 0) return null;
+
+    const lastRawClose = rawSeries[rawSeries.length - 1].close;
+    const needsScaling = absolutePrice > 5 && lastRawClose > 0 && Math.abs(lastRawClose - absolutePrice) > absolutePrice * 0.5;
+    const scaleFactor = needsScaling ? (absolutePrice / lastRawClose) : 1;
+
+    const series = rawSeries.map((point) => ({
+        time: point.time,
+        close: point.close * scaleFactor,
+        open: point.open * scaleFactor,
+        high: point.high * scaleFactor,
+        low: point.low * scaleFactor,
+        volume: point.volume,
+        price: point.close * scaleFactor,
+    }));
+
+    return {
+        symbol: cleanSymbol(symbolInfo[0]),
+        series,
     };
 }
 
@@ -364,6 +439,33 @@ async function fetchBaseChartSeriesMap(symbols) {
         } catch {
             // Keep snapshot generation best-effort; missing chunks reduce coverage but should
             // not prevent serving the rest of the map.
+        }
+    }, CHART_CONCURRENCY);
+
+    return results;
+}
+
+async function fetchOneYearWideChartSeriesMap(symbols) {
+    const results = new Map();
+
+    await runInChunks(symbols, CHART_BATCH_SIZE, async (chunk) => {
+        try {
+            const entries = chunk.map((symbol) => [
+                RPC_CHART,
+                JSON.stringify([[[null, [symbol, getExchange(symbol)]]], ONE_YEAR_CHART_WINDOW, null, null, null, null, null, 0]),
+                null,
+                'generic'
+            ]);
+
+            const text = await executeGoogleBatch(entries);
+            parseAllFrames(text)
+                .filter((frame) => frame.rpcId === RPC_CHART)
+                .forEach((frame) => {
+                    const extracted = extractWideChartSeriesFromFrame(frame.payload);
+                    if (extracted) results.set(extracted.symbol, extracted.series);
+                });
+        } catch {
+            // Best-effort snapshot generation.
         }
     }, CHART_CONCURRENCY);
 
@@ -583,18 +685,54 @@ function buildScopeSnapshot(scope, themeToCompanies, perfByInterval, livePrices,
     };
 }
 
-export async function buildMarketMapSnapshots() {
+function buildThemeChartSnapshots(scope, themeToCompanies, oneYearChartSeries, generatedAt) {
+    const chartSnapshots = new Map();
+
+    themeToCompanies.forEach((companies, themeName) => {
+        const symbols = {};
+
+        companies.forEach((company) => {
+            const symbol = company?.symbol;
+            const series = oneYearChartSeries.get(symbol);
+            if (!symbol || !Array.isArray(series) || series.length < 2) return;
+
+            symbols[symbol] = {
+                name: company?.name || symbol,
+                series,
+            };
+        });
+
+        chartSnapshots.set(themeName, {
+            version: CHART_SNAPSHOT_VERSION,
+            generatedAt,
+            scope,
+            theme: themeName,
+            interval: '1Y',
+            symbolCount: Object.keys(symbols).length,
+            symbols,
+        });
+    });
+
+    return chartSnapshots;
+}
+
+export async function buildMarketMapArtifacts() {
     const generatedAt = new Date().toISOString();
     const hierarchyData = buildHierarchyFromRawData(rawMarketData);
     const allMapping = buildThemeToCompanies(hierarchyData, { includeBse: true });
     const nseMapping = buildThemeToCompanies(hierarchyData, { includeBse: false });
     const allSymbols = [...new Set(allMapping.allSymbols.map((symbol) => cleanSymbol(symbol)).filter(Boolean))].sort();
 
-    const [livePrices, oneYearBaseCharts, maxBaseCharts] = await Promise.all([
+    const [livePrices, oneYearWideCharts, maxBaseCharts] = await Promise.all([
         fetchLivePriceMap(allSymbols),
-        fetchBaseChartSeriesMap(allSymbols),
+        fetchOneYearWideChartSeriesMap(allSymbols),
         fetchMaxChartSeriesMap(allSymbols),
     ]);
+
+    const oneYearBaseCharts = new Map();
+    oneYearWideCharts.forEach((series, symbol) => {
+        oneYearBaseCharts.set(symbol, series.map((point) => ({ time: point.time, close: point.close })));
+    });
 
     const perfByInterval = new Map(SNAPSHOT_INTERVALS.map((interval) => [interval, new Map()]));
     const symbolTechnicals = buildSymbolTechnicals(oneYearBaseCharts, livePrices);
@@ -623,13 +761,49 @@ export async function buildMarketMapSnapshots() {
     const nseMetrics = buildScopeCoverage(nseMapping.themeToCompanies, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals);
 
     return {
-        all: buildScopeSnapshot('all', allMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, allMetrics),
-        nse: buildScopeSnapshot('nse', nseMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, nseMetrics),
+        marketSnapshots: {
+            all: buildScopeSnapshot('all', allMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, allMetrics),
+            nse: buildScopeSnapshot('nse', nseMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, nseMetrics),
+        },
+        chartSnapshots: {
+            all: buildThemeChartSnapshots('all', allMapping.themeToCompanies, oneYearWideCharts, generatedAt),
+            nse: buildThemeChartSnapshots('nse', nseMapping.themeToCompanies, oneYearWideCharts, generatedAt),
+        }
     };
+}
+
+export async function buildMarketMapSnapshots() {
+    const artifacts = await buildMarketMapArtifacts();
+    return artifacts.marketSnapshots;
 }
 
 function getSnapshotKey(scope) {
     return `${SNAPSHOT_KEY_PREFIX}/${scope}.json`;
+}
+
+function encodeThemeSnapshotKey(themeName) {
+    const bytes = new TextEncoder().encode(String(themeName || ''));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function getThemeChartSnapshotKey(scope, themeName) {
+    return `${CHART_SNAPSHOT_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}.json`;
+}
+
+function getSnapshotVersionKey(scope, versionId) {
+    return `${SNAPSHOT_KEY_PREFIX}/${scope}/versions/${versionId}.json`;
+}
+
+function getSnapshotManifestKey(scope) {
+    return `${SNAPSHOT_MANIFEST_KEY_PREFIX}/snapshots/${scope}/current.json`;
+}
+
+function getThemeChartSnapshotVersionKey(scope, themeName, versionId) {
+    return `${CHART_SNAPSHOT_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}/versions/${versionId}.json`;
+}
+
+function getThemeChartSnapshotManifestKey(scope, themeName) {
+    return `${CHART_SNAPSHOT_MANIFEST_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}/current.json`;
 }
 
 export async function storeMarketMapSnapshots(env) {
@@ -638,23 +812,127 @@ export async function storeMarketMapSnapshots(env) {
         throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
     }
 
-    const snapshots = await buildMarketMapSnapshots();
+    const { marketSnapshots, chartSnapshots } = await buildMarketMapArtifacts();
+    const versionId = String(Date.now());
 
-    await Promise.all(Object.entries(snapshots).map(([scope, snapshot]) =>
-        bucket.put(getSnapshotKey(scope), JSON.stringify(snapshot), {
-            httpMetadata: {
-                contentType: 'application/json; charset=utf-8',
-                cacheControl: SNAPSHOT_CACHE_CONTROL,
-            },
-            customMetadata: {
-                generatedAt: snapshot.generatedAt,
+    const marketWrites = Object.entries(marketSnapshots).flatMap(([scope, snapshot]) => {
+        const versionKey = getSnapshotVersionKey(scope, versionId);
+        const manifestKey = getSnapshotManifestKey(scope);
+        const manifest = {
+            version: SNAPSHOT_VERSION,
+            versionId,
+            scope,
+            generatedAt: snapshot.generatedAt,
+            payloadKey: versionKey,
+        };
+
+        return [
+            bucket.put(versionKey, JSON.stringify(snapshot), {
+                httpMetadata: {
+                    contentType: 'application/json; charset=utf-8',
+                    cacheControl: SNAPSHOT_IMMUTABLE_CACHE_CONTROL,
+                },
+                customMetadata: {
+                    generatedAt: snapshot.generatedAt,
+                    scope,
+                    version: String(SNAPSHOT_VERSION),
+                    versionId,
+                }
+            }),
+            bucket.put(manifestKey, JSON.stringify(manifest), {
+                httpMetadata: {
+                    contentType: 'application/json; charset=utf-8',
+                    cacheControl: SNAPSHOT_CACHE_CONTROL,
+                },
+                customMetadata: {
+                    generatedAt: snapshot.generatedAt,
+                    scope,
+                    version: String(SNAPSHOT_VERSION),
+                    versionId,
+                    kind: 'manifest',
+                }
+            }),
+            // Legacy stable key retained for backward compatibility / manual inspection.
+            bucket.put(getSnapshotKey(scope), JSON.stringify(snapshot), {
+                httpMetadata: {
+                    contentType: 'application/json; charset=utf-8',
+                    cacheControl: SNAPSHOT_CACHE_CONTROL,
+                },
+                customMetadata: {
+                    generatedAt: snapshot.generatedAt,
+                    scope,
+                    version: String(SNAPSHOT_VERSION),
+                    versionId,
+                }
+            }),
+        ];
+    });
+
+    const chartWrites = Object.entries(chartSnapshots).flatMap(([scope, snapshots]) =>
+        Array.from(snapshots.entries()).flatMap(([themeName, snapshot]) => {
+            const versionKey = getThemeChartSnapshotVersionKey(scope, themeName, versionId);
+            const manifestKey = getThemeChartSnapshotManifestKey(scope, themeName);
+            const manifest = {
+                version: CHART_SNAPSHOT_VERSION,
+                versionId,
                 scope,
-                version: String(SNAPSHOT_VERSION),
-            }
-        })
-    ));
+                theme: themeName,
+                generatedAt: snapshot.generatedAt,
+                payloadKey: versionKey,
+            };
 
-    return snapshots;
+            return [
+                bucket.put(versionKey, JSON.stringify(snapshot), {
+                    httpMetadata: {
+                        contentType: 'application/json; charset=utf-8',
+                        cacheControl: SNAPSHOT_IMMUTABLE_CACHE_CONTROL,
+                    },
+                    customMetadata: {
+                        generatedAt: snapshot.generatedAt,
+                        scope,
+                        theme: themeName,
+                        interval: '1Y',
+                        version: String(CHART_SNAPSHOT_VERSION),
+                        versionId,
+                    }
+                }),
+                bucket.put(manifestKey, JSON.stringify(manifest), {
+                    httpMetadata: {
+                        contentType: 'application/json; charset=utf-8',
+                        cacheControl: SNAPSHOT_CACHE_CONTROL,
+                    },
+                    customMetadata: {
+                        generatedAt: snapshot.generatedAt,
+                        scope,
+                        theme: themeName,
+                        interval: '1Y',
+                        version: String(CHART_SNAPSHOT_VERSION),
+                        versionId,
+                        kind: 'manifest',
+                    }
+                }),
+                // Legacy stable key retained for compatibility / manual inspection.
+                bucket.put(getThemeChartSnapshotKey(scope, themeName), JSON.stringify(snapshot), {
+                    httpMetadata: {
+                        contentType: 'application/json; charset=utf-8',
+                        cacheControl: SNAPSHOT_CACHE_CONTROL,
+                    },
+                    customMetadata: {
+                        generatedAt: snapshot.generatedAt,
+                        scope,
+                        theme: themeName,
+                        interval: '1Y',
+                        version: String(CHART_SNAPSHOT_VERSION),
+                        versionId,
+                    }
+                }),
+            ];
+        })
+    );
+
+    await Promise.all([...marketWrites, ...chartWrites]);
+
+    return marketSnapshots;
 }
 
 export async function readMarketMapSnapshot(env, scope) {
@@ -664,6 +942,106 @@ export async function readMarketMapSnapshot(env, scope) {
     }
 
     const key = getSnapshotKey(scope);
+    const object = await bucket.get(key);
+    if (!object) return null;
+
+    const text = await object.text();
+    const snapshot = JSON.parse(text);
+    return {
+        key,
+        snapshot,
+        httpMetadata: object.httpMetadata,
+        customMetadata: object.customMetadata || {},
+    };
+}
+
+export async function readThemeChartSnapshot(env, scope, themeName) {
+    const bucket = env?.MARKET_MAP_SNAPSHOTS;
+    if (!bucket || typeof bucket.get !== 'function') {
+        throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
+    }
+
+    const key = getThemeChartSnapshotKey(scope, themeName);
+    const object = await bucket.get(key);
+    if (!object) return null;
+
+    const text = await object.text();
+    const snapshot = JSON.parse(text);
+    return {
+        key,
+        snapshot,
+        httpMetadata: object.httpMetadata,
+        customMetadata: object.customMetadata || {},
+    };
+}
+
+export async function readMarketMapSnapshotManifest(env, scope) {
+    const bucket = env?.MARKET_MAP_SNAPSHOTS;
+    if (!bucket || typeof bucket.get !== 'function') {
+        throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
+    }
+
+    const key = getSnapshotManifestKey(scope);
+    const object = await bucket.get(key);
+    if (!object) return null;
+
+    const text = await object.text();
+    const manifest = JSON.parse(text);
+    return {
+        key,
+        manifest,
+        httpMetadata: object.httpMetadata,
+        customMetadata: object.customMetadata || {},
+    };
+}
+
+export async function readThemeChartSnapshotManifest(env, scope, themeName) {
+    const bucket = env?.MARKET_MAP_SNAPSHOTS;
+    if (!bucket || typeof bucket.get !== 'function') {
+        throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
+    }
+
+    const key = getThemeChartSnapshotManifestKey(scope, themeName);
+    const object = await bucket.get(key);
+    if (!object) return null;
+
+    const text = await object.text();
+    const manifest = JSON.parse(text);
+    return {
+        key,
+        manifest,
+        httpMetadata: object.httpMetadata,
+        customMetadata: object.customMetadata || {},
+    };
+}
+
+export async function readMarketMapSnapshotVersion(env, scope, versionId) {
+    const bucket = env?.MARKET_MAP_SNAPSHOTS;
+    if (!bucket || typeof bucket.get !== 'function') {
+        throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
+    }
+
+    const key = getSnapshotVersionKey(scope, versionId);
+    const object = await bucket.get(key);
+    if (!object) return null;
+
+    const text = await object.text();
+    const snapshot = JSON.parse(text);
+    return {
+        key,
+        snapshot,
+        httpMetadata: object.httpMetadata,
+        customMetadata: object.customMetadata || {},
+    };
+}
+
+export async function readThemeChartSnapshotVersion(env, scope, themeName, versionId) {
+    const bucket = env?.MARKET_MAP_SNAPSHOTS;
+    if (!bucket || typeof bucket.get !== 'function') {
+        throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
+    }
+
+    const key = getThemeChartSnapshotVersionKey(scope, themeName, versionId);
     const object = await bucket.get(key);
     if (!object) return null;
 

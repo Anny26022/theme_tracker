@@ -6,6 +6,7 @@ import ProChartModal from '../components/ProChartModal';
 import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 import { VirtuosoGrid } from 'react-virtuoso';
+import { useThemeChartSnapshot } from '../hooks/useThemeChartSnapshot';
 
 const ChartSkeleton = ({ company, height }) => (
     <div className="flex flex-col w-full h-full">
@@ -37,7 +38,7 @@ const ChartSkeleton = ({ company, height }) => (
     </div>
 );
 
-const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe, disabled }) => (
+const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe, disabled, snapshotScope }) => (
     <FinvizChart
         symbol={company.symbol}
         name={company.name}
@@ -47,12 +48,14 @@ const FinvizChartCard = React.memo(({ company, series, height, onExpand, initial
         initialTimeframe={initialTimeframe}
         disabled={disabled}
         useExternalSeries={true}
+        snapshotScope={snapshotScope}
     />
 ), (prevProps, nextProps) => {
     if (prevProps.series !== nextProps.series) return false;
     if (prevProps.height !== nextProps.height) return false;
     if (prevProps.company?.symbol !== nextProps.company?.symbol) return false;
     if (prevProps.company?.name !== nextProps.company?.name) return false;
+    if (prevProps.snapshotScope !== nextProps.snapshotScope) return false;
     return true;
 });
 
@@ -131,6 +134,7 @@ const ThematicGridChartView = ({
     themeName,
     companies = [],
     allThemeCompanies = {},
+    snapshotScope = 'nse',
     onBack,
     onSelectTheme,
     onViewModeChange,
@@ -191,6 +195,12 @@ const ThematicGridChartView = ({
         [companies]
     );
 
+    const {
+        chartSnapshotSeriesBySymbol,
+        chartSnapshotLoading,
+        hasChartSnapshot,
+    } = useThemeChartSnapshot(themeName, snapshotScope);
+
     // Build the hierarchical menu data based on viewMode
     const switcherData = useMemo(() => {
         if (viewMode === 'THEMATIC') {
@@ -212,19 +222,15 @@ const ThematicGridChartView = ({
         }
     }, [viewMode]);
 
-    useEffect(() => {
-        if (!normalizedSymbols.length) return;
-        return subscribeChartSymbols('1Y', normalizedSymbols);
-    }, [normalizedSymbols, subscribeChartSymbols]);
-
     const seriesBySymbol = useMemo(() => {
+        if (hasChartSnapshot) return chartSnapshotSeriesBySymbol;
         const map = new Map();
         normalizedSymbols.forEach((symbol) => {
             const series = getCachedComparisonSeries(symbol, '1Y', { silent: true });
             if (series) map.set(symbol, series);
         });
         return map;
-    }, [normalizedSymbols, chartVersion]);
+    }, [chartSnapshotSeriesBySymbol, chartVersion, hasChartSnapshot, normalizedSymbols]);
 
     // Handle Pro View Symbol Subscription
     useEffect(() => {
@@ -386,6 +392,7 @@ const ThematicGridChartView = ({
                                             setProViewSymbol(item.company);
                                             setProViewTimeframe(data.timeframe);
                                         }}
+                                        snapshotScope={snapshotScope}
                                     />
                                 ) : (
                                     <ChartSkeleton company={item.company} height={320} />
@@ -410,6 +417,7 @@ const ThematicGridChartView = ({
                                         setProViewSymbol(item.company);
                                         setProViewTimeframe(data.timeframe);
                                     }}
+                                    snapshotScope={snapshotScope}
                                 />
                             ) : (
                                 <ChartSkeleton company={item.company} height={isMobileMode ? 320 : 280} />
@@ -426,6 +434,11 @@ const ThematicGridChartView = ({
                     </span>
                 </div>
             )}
+            {!loading && companies.length > 0 && chartSnapshotLoading && !hasChartSnapshot && (
+                <div className="flex flex-col items-center justify-center py-10 opacity-40">
+                    <span className="text-[10px] font-black uppercase tracking-[0.4em]">Loading Chart Snapshot...</span>
+                </div>
+            )}
             {proViewSymbol && (
                 <ProChartModal
                     isOpen={!!proViewSymbol}
@@ -436,6 +449,7 @@ const ThematicGridChartView = ({
                     navigationCompanies={companies}
                     initialTimeframe={proViewTimeframe}
                     themeName={themeName}
+                    snapshotScope={snapshotScope}
                     onSelectTheme={onSelectTheme}
                     onViewModeChange={onViewModeChange}
                     viewMode={viewMode}

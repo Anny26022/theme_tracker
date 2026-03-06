@@ -130,7 +130,8 @@ const ChartCell = memo(function ChartCell({
     onTimeframeChange,
     companyNameBySymbol,
     resolvedChartStyle,
-    resolvedMaConfig
+    resolvedMaConfig,
+    snapshotScope
 }) {
     return (
         <div
@@ -175,6 +176,7 @@ const ChartCell = memo(function ChartCell({
                     preferMaxHistory={true}
                     chartStyle={resolvedChartStyle}
                     maConfig={resolvedMaConfig}
+                    snapshotScope={snapshotScope}
                 />
             </div>
         </div>
@@ -187,6 +189,7 @@ const ChartCell = memo(function ChartCell({
     if (prevProps.chart !== nextProps.chart) return false;
     if (prevProps.resolvedChartStyle !== nextProps.resolvedChartStyle) return false;
     if (prevProps.resolvedMaConfig !== nextProps.resolvedMaConfig) return false;
+    if (prevProps.snapshotScope !== nextProps.snapshotScope) return false;
     return true;
 });
 
@@ -203,7 +206,8 @@ const ProChartModal = ({
     onSelectTheme,
     onViewModeChange,
     viewMode = 'THEMATIC',
-    initialTimeframe = '1D'
+    initialTimeframe = '1D',
+    snapshotScope = 'all'
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -588,7 +592,7 @@ const ProChartModal = ({
     const activeSymbol = useMemo(() => cleanSymbol(currentChart.symbol), [currentChart.symbol]);
     const liveHeaderSymbol = layoutId === '1' ? activeSymbol : '';
     const liveData = useLivePrice(liveHeaderSymbol, { allowStrike: false });
-    const snapshotQuote = useMarketMapSnapshotQuote(activeSymbol);
+    const snapshotQuote = useMarketMapSnapshotQuote(activeSymbol, snapshotScope);
     const TF_MAP = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
     const perf = getCachedInterval(activeSymbol, TF_MAP[currentChart.timeframe] || '1D', { silent: true });
     let changePct = perf?.changePct ?? snapshotQuote?.changePct ?? 0;

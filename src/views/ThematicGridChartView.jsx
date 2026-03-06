@@ -38,6 +38,8 @@ const ChartSkeleton = ({ company, height }) => (
     </div>
 );
 
+const DEEP_DIVE_SNAPSHOT_INTERVAL = 'MAX';
+
 const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe, disabled, snapshotScope }) => (
     <FinvizChart
         symbol={company.symbol}
@@ -199,7 +201,7 @@ const ThematicGridChartView = ({
         chartSnapshotSeriesBySymbol,
         chartSnapshotLoading,
         hasChartSnapshot,
-    } = useThemeChartSnapshot(themeName, snapshotScope);
+    } = useThemeChartSnapshot(themeName, snapshotScope, DEEP_DIVE_SNAPSHOT_INTERVAL);
 
     // Build the hierarchical menu data based on viewMode
     const switcherData = useMemo(() => {
@@ -226,7 +228,7 @@ const ThematicGridChartView = ({
         if (hasChartSnapshot) return chartSnapshotSeriesBySymbol;
         const map = new Map();
         normalizedSymbols.forEach((symbol) => {
-            const series = getCachedComparisonSeries(symbol, '1Y', { silent: true });
+            const series = getCachedComparisonSeries(symbol, DEEP_DIVE_SNAPSHOT_INTERVAL, { silent: true });
             if (series) map.set(symbol, series);
         });
         return map;

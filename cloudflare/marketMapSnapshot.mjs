@@ -7,6 +7,7 @@ import { RPC_CHART, RPC_PRICE } from '../src/lib/stealth.js';
 const SNAPSHOT_VERSION = 4;
 const CHART_SNAPSHOT_VERSION = 1;
 const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD', '5Y', 'MAX'];
+const CHART_SNAPSHOT_INTERVALS = ['1Y', 'MAX'];
 const SNAPSHOT_KEY_PREFIX = 'market-map/snapshots';
 const CHART_SNAPSHOT_KEY_PREFIX = 'market-map/chart-snapshots/cards';
 const SNAPSHOT_MANIFEST_KEY_PREFIX = 'market-map/manifests';
@@ -268,6 +269,8 @@ function deriveIntervalPerfFromBaseSeries(series, interval, currentPriceOverride
     if (interval === 'YTD') {
         const year = new Date(points[points.length - 1].time).getUTCFullYear();
         anchor = points.find((point) => new Date(point.time).getUTCFullYear() === year)?.close ?? points[0]?.close ?? null;
+    } else if (interval === 'MAX') {
+        anchor = points[0]?.close ?? null;
     } else {
         const lookbackBars = {
             '5D': 5,
@@ -691,15 +694,16 @@ function buildScopeSnapshot(scope, themeToCompanies, perfByInterval, livePrices,
     };
 }
 
-function buildThemeChartSnapshots(scope, themeToCompanies, oneYearChartSeries, generatedAt) {
+function buildThemeChartSnapshots(scope, themeToCompanies, chartSeriesBySymbol, generatedAt, interval = '1Y') {
     const chartSnapshots = new Map();
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
 
     themeToCompanies.forEach((companies, themeName) => {
         const symbols = {};
 
         companies.forEach((company) => {
             const symbol = company?.symbol;
-            const series = oneYearChartSeries.get(symbol);
+            const series = chartSeriesBySymbol.get(symbol);
             if (!symbol || !Array.isArray(series) || series.length < 2) return;
 
             symbols[symbol] = {
@@ -713,7 +717,7 @@ function buildThemeChartSnapshots(scope, themeToCompanies, oneYearChartSeries, g
             generatedAt,
             scope,
             theme: themeName,
-            interval: '1Y',
+            interval: normalizedInterval,
             symbolCount: Object.keys(symbols).length,
             symbols,
         });
@@ -772,8 +776,14 @@ export async function buildMarketMapArtifacts() {
             nse: buildScopeSnapshot('nse', nseMapping.themeToCompanies, perfByInterval, livePrices, symbolTechnicals, generatedAt, nseMetrics),
         },
         chartSnapshots: {
-            all: buildThemeChartSnapshots('all', allMapping.themeToCompanies, oneYearWideCharts, generatedAt),
-            nse: buildThemeChartSnapshots('nse', nseMapping.themeToCompanies, oneYearWideCharts, generatedAt),
+            all: {
+                '1Y': buildThemeChartSnapshots('all', allMapping.themeToCompanies, oneYearWideCharts, generatedAt, '1Y'),
+                MAX: buildThemeChartSnapshots('all', allMapping.themeToCompanies, maxBaseCharts, generatedAt, 'MAX'),
+            },
+            nse: {
+                '1Y': buildThemeChartSnapshots('nse', nseMapping.themeToCompanies, oneYearWideCharts, generatedAt, '1Y'),
+                MAX: buildThemeChartSnapshots('nse', nseMapping.themeToCompanies, maxBaseCharts, generatedAt, 'MAX'),
+            },
         }
     };
 }
@@ -787,13 +797,26 @@ function getSnapshotKey(scope) {
     return `${SNAPSHOT_KEY_PREFIX}/${scope}.json`;
 }
 
+function normalizeChartSnapshotInterval(interval) {
+    return String(interval || '1Y').toUpperCase() === 'MAX' ? 'MAX' : '1Y';
+}
+
 function encodeThemeSnapshotKey(themeName) {
     const bytes = new TextEncoder().encode(String(themeName || ''));
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function getThemeChartSnapshotKey(scope, themeName) {
-    return `${CHART_SNAPSHOT_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}.json`;
+function getThemeChartSnapshotPath(scope, themeName, interval = '1Y') {
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const encodedTheme = encodeThemeSnapshotKey(themeName);
+    if (normalizedInterval === '1Y') {
+        return `${scope}/${encodedTheme}`;
+    }
+    return `${scope}/${normalizedInterval}/${encodedTheme}`;
+}
+
+function getThemeChartSnapshotKey(scope, themeName, interval = '1Y') {
+    return `${CHART_SNAPSHOT_KEY_PREFIX}/${getThemeChartSnapshotPath(scope, themeName, interval)}.json`;
 }
 
 function getSnapshotVersionKey(scope, versionId) {
@@ -804,12 +827,12 @@ function getSnapshotManifestKey(scope) {
     return `${SNAPSHOT_MANIFEST_KEY_PREFIX}/snapshots/${scope}/current.json`;
 }
 
-function getThemeChartSnapshotVersionKey(scope, themeName, versionId) {
-    return `${CHART_SNAPSHOT_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}/versions/${versionId}.json`;
+function getThemeChartSnapshotVersionKey(scope, themeName, versionId, interval = '1Y') {
+    return `${CHART_SNAPSHOT_KEY_PREFIX}/${getThemeChartSnapshotPath(scope, themeName, interval)}/versions/${versionId}.json`;
 }
 
-function getThemeChartSnapshotManifestKey(scope, themeName) {
-    return `${CHART_SNAPSHOT_MANIFEST_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}/current.json`;
+function getThemeChartSnapshotManifestKey(scope, themeName, interval = '1Y') {
+    return `${CHART_SNAPSHOT_MANIFEST_KEY_PREFIX}/${getThemeChartSnapshotPath(scope, themeName, interval)}/current.json`;
 }
 
 function getSnapshotBucket(env) {
@@ -970,13 +993,15 @@ async function writeScopeSnapshot(bucket, scope, snapshot, versionId) {
 
 async function writeThemeChartSnapshots(bucket, scope, chartSnapshots, versionId) {
     const writes = Array.from(chartSnapshots.entries()).flatMap(([themeName, snapshot]) => {
-        const versionKey = getThemeChartSnapshotVersionKey(scope, themeName, versionId);
-        const manifestKey = getThemeChartSnapshotManifestKey(scope, themeName);
+        const interval = normalizeChartSnapshotInterval(snapshot?.interval);
+        const versionKey = getThemeChartSnapshotVersionKey(scope, themeName, versionId, interval);
+        const manifestKey = getThemeChartSnapshotManifestKey(scope, themeName, interval);
         const manifest = {
             version: CHART_SNAPSHOT_VERSION,
             versionId,
             scope,
             theme: themeName,
+            interval,
             generatedAt: snapshot.generatedAt,
             payloadKey: versionKey,
         };
@@ -986,7 +1011,7 @@ async function writeThemeChartSnapshots(bucket, scope, chartSnapshots, versionId
                 generatedAt: snapshot.generatedAt,
                 scope,
                 theme: themeName,
-                interval: '1Y',
+                interval,
                 version: String(CHART_SNAPSHOT_VERSION),
                 versionId,
             }),
@@ -994,16 +1019,16 @@ async function writeThemeChartSnapshots(bucket, scope, chartSnapshots, versionId
                 generatedAt: snapshot.generatedAt,
                 scope,
                 theme: themeName,
-                interval: '1Y',
+                interval,
                 version: String(CHART_SNAPSHOT_VERSION),
                 versionId,
                 kind: 'manifest',
             }),
-            putJsonObject(bucket, getThemeChartSnapshotKey(scope, themeName), snapshot, SNAPSHOT_CACHE_CONTROL, {
+            putJsonObject(bucket, getThemeChartSnapshotKey(scope, themeName, interval), snapshot, SNAPSHOT_CACHE_CONTROL, {
                 generatedAt: snapshot.generatedAt,
                 scope,
                 theme: themeName,
-                interval: '1Y',
+                interval,
                 version: String(CHART_SNAPSHOT_VERSION),
                 versionId,
             }),
@@ -1078,8 +1103,14 @@ async function processRefreshChunk(bucket, state, chunkIndex) {
 
     const allSelectedThemes = createSelectedThemeMap(allMapping.themeToCompanies, chunk.themes);
     const nseSelectedThemes = createSelectedThemeMap(nseMapping.themeToCompanies, chunk.themes);
-    const allChartSnapshots = buildThemeChartSnapshots('all', allSelectedThemes, oneYearWideCharts, state.generatedAt);
-    const nseChartSnapshots = buildThemeChartSnapshots('nse', nseSelectedThemes, oneYearWideCharts, state.generatedAt);
+    const allChartSnapshotsByInterval = {
+        '1Y': buildThemeChartSnapshots('all', allSelectedThemes, oneYearWideCharts, state.generatedAt, '1Y'),
+        MAX: buildThemeChartSnapshots('all', allSelectedThemes, maxBaseCharts, state.generatedAt, 'MAX'),
+    };
+    const nseChartSnapshotsByInterval = {
+        '1Y': buildThemeChartSnapshots('nse', nseSelectedThemes, oneYearWideCharts, state.generatedAt, '1Y'),
+        MAX: buildThemeChartSnapshots('nse', nseSelectedThemes, maxBaseCharts, state.generatedAt, 'MAX'),
+    };
 
     await Promise.all([
         putJsonObject(bucket, getRefreshPartialKey(state.jobId, 'all', chunkIndex), buildScopeChunkPartial('all', allSelectedThemes, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals), SNAPSHOT_CACHE_CONTROL, {
@@ -1092,8 +1123,8 @@ async function processRefreshChunk(bucket, state, chunkIndex) {
             scope: 'nse',
             chunkIndex: String(chunkIndex),
         }),
-        writeThemeChartSnapshots(bucket, 'all', allChartSnapshots, state.versionId),
-        writeThemeChartSnapshots(bucket, 'nse', nseChartSnapshots, state.versionId),
+        ...CHART_SNAPSHOT_INTERVALS.map((interval) => writeThemeChartSnapshots(bucket, 'all', allChartSnapshotsByInterval[interval], state.versionId)),
+        ...CHART_SNAPSHOT_INTERVALS.map((interval) => writeThemeChartSnapshots(bucket, 'nse', nseChartSnapshotsByInterval[interval], state.versionId)),
     ]);
 }
 
@@ -1356,15 +1387,18 @@ export async function storeMarketMapSnapshots(env) {
         ];
     });
 
-    const chartWrites = Object.entries(chartSnapshots).flatMap(([scope, snapshots]) =>
-        Array.from(snapshots.entries()).flatMap(([themeName, snapshot]) => {
-            const versionKey = getThemeChartSnapshotVersionKey(scope, themeName, versionId);
-            const manifestKey = getThemeChartSnapshotManifestKey(scope, themeName);
+    const chartWrites = Object.entries(chartSnapshots).flatMap(([scope, snapshotsByInterval]) =>
+        Object.values(snapshotsByInterval).flatMap((snapshots) =>
+            Array.from(snapshots.entries()).flatMap(([themeName, snapshot]) => {
+                const interval = normalizeChartSnapshotInterval(snapshot?.interval);
+                const versionKey = getThemeChartSnapshotVersionKey(scope, themeName, versionId, interval);
+                const manifestKey = getThemeChartSnapshotManifestKey(scope, themeName, interval);
             const manifest = {
                 version: CHART_SNAPSHOT_VERSION,
                 versionId,
                 scope,
                 theme: themeName,
+                interval,
                 generatedAt: snapshot.generatedAt,
                 payloadKey: versionKey,
             };
@@ -1379,7 +1413,7 @@ export async function storeMarketMapSnapshots(env) {
                         generatedAt: snapshot.generatedAt,
                         scope,
                         theme: themeName,
-                        interval: '1Y',
+                        interval,
                         version: String(CHART_SNAPSHOT_VERSION),
                         versionId,
                     }
@@ -1393,14 +1427,14 @@ export async function storeMarketMapSnapshots(env) {
                         generatedAt: snapshot.generatedAt,
                         scope,
                         theme: themeName,
-                        interval: '1Y',
+                        interval,
                         version: String(CHART_SNAPSHOT_VERSION),
                         versionId,
                         kind: 'manifest',
                     }
                 }),
                 // Legacy stable key retained for compatibility / manual inspection.
-                bucket.put(getThemeChartSnapshotKey(scope, themeName), JSON.stringify(snapshot), {
+                bucket.put(getThemeChartSnapshotKey(scope, themeName, interval), JSON.stringify(snapshot), {
                     httpMetadata: {
                         contentType: 'application/json; charset=utf-8',
                         cacheControl: SNAPSHOT_CACHE_CONTROL,
@@ -1409,13 +1443,14 @@ export async function storeMarketMapSnapshots(env) {
                         generatedAt: snapshot.generatedAt,
                         scope,
                         theme: themeName,
-                        interval: '1Y',
+                        interval,
                         version: String(CHART_SNAPSHOT_VERSION),
                         versionId,
                     }
                 }),
             ];
-        })
+            })
+        )
     );
 
     await Promise.all([...marketWrites, ...chartWrites]);
@@ -1443,13 +1478,14 @@ export async function readMarketMapSnapshot(env, scope) {
     };
 }
 
-export async function readThemeChartSnapshot(env, scope, themeName) {
+export async function readThemeChartSnapshot(env, scope, themeName, interval = '1Y') {
     const bucket = env?.MARKET_MAP_SNAPSHOTS;
     if (!bucket || typeof bucket.get !== 'function') {
         throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
     }
 
-    const key = getThemeChartSnapshotKey(scope, themeName);
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const key = getThemeChartSnapshotKey(scope, themeName, normalizedInterval);
     const object = await bucket.get(key);
     if (!object) return null;
 
@@ -1483,13 +1519,14 @@ export async function readMarketMapSnapshotManifest(env, scope) {
     };
 }
 
-export async function readThemeChartSnapshotManifest(env, scope, themeName) {
+export async function readThemeChartSnapshotManifest(env, scope, themeName, interval = '1Y') {
     const bucket = env?.MARKET_MAP_SNAPSHOTS;
     if (!bucket || typeof bucket.get !== 'function') {
         throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
     }
 
-    const key = getThemeChartSnapshotManifestKey(scope, themeName);
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const key = getThemeChartSnapshotManifestKey(scope, themeName, normalizedInterval);
     const object = await bucket.get(key);
     if (!object) return null;
 
@@ -1523,13 +1560,14 @@ export async function readMarketMapSnapshotVersion(env, scope, versionId) {
     };
 }
 
-export async function readThemeChartSnapshotVersion(env, scope, themeName, versionId) {
+export async function readThemeChartSnapshotVersion(env, scope, themeName, versionId, interval = '1Y') {
     const bucket = env?.MARKET_MAP_SNAPSHOTS;
     if (!bucket || typeof bucket.get !== 'function') {
         throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
     }
 
-    const key = getThemeChartSnapshotVersionKey(scope, themeName, versionId);
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const key = getThemeChartSnapshotVersionKey(scope, themeName, versionId, normalizedInterval);
     const object = await bucket.get(key);
     if (!object) return null;
 

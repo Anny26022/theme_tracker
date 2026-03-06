@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { buildWorkerApiUrl } from '../lib/workerApi';
 import { cleanSymbol } from '../services/priceService';
 
-const CHART_SNAPSHOT_SCHEMA_VERSION = 2;
-const CHART_SNAPSHOT_STORAGE_KEY = 'tt_market_map_chart_snapshot_v2';
+const CHART_SNAPSHOT_SCHEMA_VERSION = 3;
+const CHART_SNAPSHOT_STORAGE_KEY = 'tt_market_map_chart_snapshot_v3';
 const CHART_SNAPSHOT_TTL_MS = 45 * 60 * 1000;
 const chartSnapshotManifestRequestCache = new Map();
 const chartSnapshotPayloadRequestCache = new Map();
@@ -34,12 +34,16 @@ function writeSnapshotStore(store) {
     }
 }
 
-function getStorageKey(scope, themeName) {
-    return `${scope || 'nse'}:${themeName || ''}`;
+function normalizeChartSnapshotInterval(interval) {
+    return String(interval || '1Y').toUpperCase() === 'MAX' ? 'MAX' : '1Y';
 }
 
-function readThemeSnapshot(scope, themeName) {
-    const key = getStorageKey(scope, themeName);
+function getStorageKey(scope, themeName, interval = '1Y') {
+    return `${scope || 'nse'}:${normalizeChartSnapshotInterval(interval)}:${themeName || ''}`;
+}
+
+function readThemeSnapshot(scope, themeName, interval = '1Y') {
+    const key = getStorageKey(scope, themeName, interval);
     if (!themeName) return null;
 
     const store = readSnapshotStore();
@@ -56,10 +60,10 @@ function readThemeSnapshot(scope, themeName) {
     };
 }
 
-function writeThemeSnapshot(scope, themeName, snapshot) {
+function writeThemeSnapshot(scope, themeName, snapshot, interval = '1Y') {
     if (!themeName) return;
 
-    const key = getStorageKey(scope, themeName);
+    const key = getStorageKey(scope, themeName, interval);
     const store = readSnapshotStore() || { version: CHART_SNAPSHOT_SCHEMA_VERSION, entries: {} };
     writeSnapshotStore({
         version: CHART_SNAPSHOT_SCHEMA_VERSION,
@@ -70,13 +74,14 @@ function writeThemeSnapshot(scope, themeName, snapshot) {
     });
 }
 
-function fetchRemoteThemeChartSnapshotManifest(scope, themeName) {
-    const key = getStorageKey(scope, themeName);
+function fetchRemoteThemeChartSnapshotManifest(scope, themeName, interval = '1Y') {
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const key = getStorageKey(scope, themeName, normalizedInterval);
     const cached = chartSnapshotManifestRequestCache.get(key);
     if (cached) return cached;
 
     const request = fetch(
-        buildWorkerApiUrl(`/api/market-map/chart-snapshot?scope=${encodeURIComponent(scope)}&theme=${encodeURIComponent(themeName)}`),
+        buildWorkerApiUrl(`/api/market-map/chart-snapshot?scope=${encodeURIComponent(scope)}&theme=${encodeURIComponent(themeName)}&interval=${encodeURIComponent(normalizedInterval)}`),
         {
             method: 'GET',
             headers: { Accept: 'application/json' },
@@ -103,13 +108,14 @@ function fetchRemoteThemeChartSnapshotManifest(scope, themeName) {
     return request;
 }
 
-function fetchRemoteThemeChartSnapshotVersion(scope, themeName, versionId) {
-    const key = `${getStorageKey(scope, themeName)}:${versionId}`;
+function fetchRemoteThemeChartSnapshotVersion(scope, themeName, versionId, interval = '1Y') {
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const key = `${getStorageKey(scope, themeName, normalizedInterval)}:${versionId}`;
     const cached = chartSnapshotPayloadRequestCache.get(key);
     if (cached) return cached;
 
     const request = fetch(
-        buildWorkerApiUrl(`/api/market-map/chart-snapshot/version?scope=${encodeURIComponent(scope)}&theme=${encodeURIComponent(themeName)}&version=${encodeURIComponent(versionId)}`),
+        buildWorkerApiUrl(`/api/market-map/chart-snapshot/version?scope=${encodeURIComponent(scope)}&theme=${encodeURIComponent(themeName)}&interval=${encodeURIComponent(normalizedInterval)}&version=${encodeURIComponent(versionId)}`),
         {
             method: 'GET',
             headers: { Accept: 'application/json' },
@@ -132,7 +138,7 @@ function fetchRemoteThemeChartSnapshotVersion(scope, themeName, versionId) {
     return request;
 }
 
-export function useThemeChartSnapshot(themeName, scope = 'nse') {
+export function useThemeChartSnapshot(themeName, scope = 'nse', interval = '1Y') {
     const [revision, setRevision] = useState(0);
     const [hydratedSnapshot, setHydratedSnapshot] = useState(null);
     const [networkState, setNetworkState] = useState({
@@ -141,8 +147,9 @@ export function useThemeChartSnapshot(themeName, scope = 'nse') {
         error: null,
     });
 
-    const storedSnapshot = useMemo(() => readThemeSnapshot(scope, themeName), [scope, themeName, revision]);
-    const snapshotState = hydratedSnapshot && hydratedSnapshot.scope === scope && hydratedSnapshot.theme === themeName
+    const normalizedInterval = normalizeChartSnapshotInterval(interval);
+    const storedSnapshot = useMemo(() => readThemeSnapshot(scope, themeName, normalizedInterval), [normalizedInterval, scope, themeName, revision]);
+    const snapshotState = hydratedSnapshot && hydratedSnapshot.scope === scope && hydratedSnapshot.theme === themeName && hydratedSnapshot.interval === normalizedInterval
         ? hydratedSnapshot
         : storedSnapshot;
     const cachedSeriesCount = useMemo(() => {
@@ -165,10 +172,11 @@ export function useThemeChartSnapshot(themeName, scope = 'nse') {
         }
         setHydratedSnapshot((prev) => (
             prev && prev.scope === scope && prev.theme === themeName
+                && prev.interval === normalizedInterval
                 ? prev
                 : null
         ));
-    }, [scope, themeName]);
+    }, [normalizedInterval, scope, themeName]);
 
     useEffect(() => {
         if (!themeName || typeof window === 'undefined') {
@@ -185,7 +193,7 @@ export function useThemeChartSnapshot(themeName, scope = 'nse') {
 
         const load = async () => {
             try {
-                const manifest = await fetchRemoteThemeChartSnapshotManifest(scope, themeName);
+                const manifest = await fetchRemoteThemeChartSnapshotManifest(scope, themeName, normalizedInterval);
                 if (cancelled || !manifest) return;
 
                 if (hasUsableCachedSnapshot && snapshotVersionId === manifest.versionId) {
@@ -193,7 +201,7 @@ export function useThemeChartSnapshot(themeName, scope = 'nse') {
                     return;
                 }
 
-                const snapshot = await fetchRemoteThemeChartSnapshotVersion(scope, themeName, manifest.versionId);
+                const snapshot = await fetchRemoteThemeChartSnapshotVersion(scope, themeName, manifest.versionId, normalizedInterval);
                 if (cancelled || !snapshot) return;
 
                 const nextSnapshot = {
@@ -202,11 +210,11 @@ export function useThemeChartSnapshot(themeName, scope = 'nse') {
                     source: 'server',
                     theme: snapshot.theme,
                     scope: snapshot.scope,
-                    interval: snapshot.interval,
+                    interval: normalizeChartSnapshotInterval(snapshot.interval),
                     symbols: snapshot.symbols,
                 };
                 setHydratedSnapshot(nextSnapshot);
-                writeThemeSnapshot(scope, themeName, nextSnapshot);
+                writeThemeSnapshot(scope, themeName, nextSnapshot, normalizedInterval);
                 setRevision((value) => value + 1);
                 setNetworkState({ loading: false, resolved: true, error: null });
             } catch (error) {
@@ -219,7 +227,7 @@ export function useThemeChartSnapshot(themeName, scope = 'nse') {
         return () => {
             cancelled = true;
         };
-    }, [hasUsableCachedSnapshot, scope, snapshotVersionId, themeName]);
+    }, [hasUsableCachedSnapshot, normalizedInterval, scope, snapshotVersionId, themeName]);
 
     const seriesBySymbol = useMemo(() => {
         const map = new Map();

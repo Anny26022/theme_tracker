@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildWorkerApiUrl } from '../lib/workerApi';
 
-const SNAPSHOT_SCHEMA_VERSION = 5;
-const SNAPSHOT_STORAGE_KEY = 'tt_market_map_snapshot_v5';
+const SNAPSHOT_SCHEMA_VERSION = 6;
+const SNAPSHOT_STORAGE_KEY = 'tt_market_map_snapshot_v6';
 const SNAPSHOT_TTL_MS = 45 * 60 * 1000;
 const SNAPSHOT_INTERVALS = ['1D', '5D', '1M', '3M', '6M', '1Y', 'YTD', '5Y', 'MAX'];
 const snapshotManifestRequestCache = new Map();

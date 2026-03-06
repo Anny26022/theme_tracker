@@ -80,6 +80,10 @@ function withSnapshotDebugHeaders(headers, values = {}) {
     };
 }
 
+function normalizeThemeChartInterval(interval) {
+    return String(interval || '1Y').toUpperCase() === 'MAX' ? 'MAX' : '1Y';
+}
+
 function getAuthorizationBearerToken(request) {
     const header = request.headers.get('authorization') || '';
     const match = header.match(/^Bearer\s+(.+)$/i);
@@ -635,11 +639,6 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
     const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
     const scope = rawScope === 'all' ? 'all' : 'nse';
 
-    const cached = await matchWorkerCache(url);
-    if (cached) {
-        return cloneResponseWithHeaders(cached, { 'X-Worker-Cache': 'HIT' });
-    }
-
     try {
         const stored = await readMarketMapSnapshotManifest(env, scope);
         if (!stored?.manifest) {
@@ -663,9 +662,8 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
                     versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || scope}`,
                     source: 'legacy-manifest',
                     cachePolicy: 'manifest',
-                    workerCache: 'MISS'
+                    workerCache: 'BYPASS'
                 }));
-                if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
                 return response;
             }
             enqueueMarketMapRefresh(ctx, env, 'snapshot-missing-manifest');
@@ -689,9 +687,8 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
             versionId: stored.manifest?.versionId || '',
             source: 'manifest',
             cachePolicy: 'manifest',
-            workerCache: 'MISS'
+            workerCache: 'BYPASS'
         }));
-        if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
         return response;
     } catch (error) {
         return createJsonResponse(500, {
@@ -792,6 +789,7 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
     const rawScope = (url.searchParams.get('scope') || 'nse').toLowerCase();
     const scope = rawScope === 'all' ? 'all' : 'nse';
     const theme = (url.searchParams.get('theme') || '').trim();
+    const interval = normalizeThemeChartInterval(url.searchParams.get('interval'));
 
     if (!theme) {
         return createJsonResponse(400, {
@@ -801,15 +799,10 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
         });
     }
 
-    const cached = await matchWorkerCache(url);
-    if (cached) {
-        return cloneResponseWithHeaders(cached, { 'X-Worker-Cache': 'HIT' });
-    }
-
     try {
-        const stored = await readThemeChartSnapshotManifest(env, scope, theme);
+        const stored = await readThemeChartSnapshotManifest(env, scope, theme, interval);
         if (!stored?.manifest) {
-            const legacy = await readThemeChartSnapshot(env, scope, theme);
+            const legacy = await readThemeChartSnapshot(env, scope, theme, interval);
             if (legacy?.snapshot) {
                 const response = createJsonResponse(200, {
                     ok: true,
@@ -820,6 +813,7 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
                         versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || theme}`,
                         scope,
                         theme,
+                        interval,
                         generatedAt: legacy.snapshot.generatedAt,
                         legacy: true,
                     },
@@ -831,9 +825,8 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
                     versionId: legacy.customMetadata?.versionId || `legacy-${legacy.snapshot.generatedAt || theme}`,
                     source: 'legacy-chart-manifest',
                     cachePolicy: 'chart-manifest',
-                    workerCache: 'MISS'
+                    workerCache: 'BYPASS'
                 }));
-                if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
                 return response;
             }
             enqueueMarketMapRefresh(ctx, env, 'chart-missing-manifest');
@@ -843,6 +836,7 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
                 code: 'MARKET_MAP_CHART_SNAPSHOT_MISSING',
                 scope,
                 theme,
+                interval,
             });
         }
 
@@ -850,6 +844,7 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
             ok: true,
             scope,
             theme,
+            interval,
             manifest: stored.manifest,
         }, withSnapshotDebugHeaders({
             'Cache-Control': stored?.httpMetadata?.cacheControl || 'public, max-age=60, s-maxage=300, stale-while-revalidate=900',
@@ -859,9 +854,8 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
             versionId: stored.manifest?.versionId || '',
             source: 'chart-manifest',
             cachePolicy: 'chart-manifest',
-            workerCache: 'MISS'
+            workerCache: 'BYPASS'
         }));
-        if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
         return response;
     } catch (error) {
         return createJsonResponse(500, {
@@ -880,6 +874,7 @@ async function handleMarketMapChartSnapshotVersion(request, env, url, ctx) {
     const scope = rawScope === 'all' ? 'all' : 'nse';
     const theme = (url.searchParams.get('theme') || '').trim();
     const versionId = (url.searchParams.get('version') || '').trim();
+    const interval = normalizeThemeChartInterval(url.searchParams.get('interval'));
 
     if (!theme || !versionId) {
         return createJsonResponse(400, {
@@ -895,15 +890,16 @@ async function handleMarketMapChartSnapshotVersion(request, env, url, ctx) {
     }
 
     try {
-        const stored = await readThemeChartSnapshotVersion(env, scope, theme, versionId);
+        const stored = await readThemeChartSnapshotVersion(env, scope, theme, versionId, interval);
         if (!stored?.snapshot) {
             if (versionId.startsWith('legacy-')) {
-                const legacy = await readThemeChartSnapshot(env, scope, theme);
+                const legacy = await readThemeChartSnapshot(env, scope, theme, interval);
                 if (legacy?.snapshot) {
                     const response = createJsonResponse(200, {
                         ok: true,
                         scope,
                         theme,
+                        interval,
                         versionId,
                         snapshot: legacy.snapshot,
                     }, withSnapshotDebugHeaders({
@@ -927,6 +923,7 @@ async function handleMarketMapChartSnapshotVersion(request, env, url, ctx) {
                 code: 'MARKET_MAP_CHART_SNAPSHOT_VERSION_MISSING',
                 scope,
                 theme,
+                interval,
                 versionId,
             });
         }
@@ -935,6 +932,7 @@ async function handleMarketMapChartSnapshotVersion(request, env, url, ctx) {
             ok: true,
             scope,
             theme,
+            interval,
             versionId,
             snapshot: stored.snapshot,
         }, withSnapshotDebugHeaders({

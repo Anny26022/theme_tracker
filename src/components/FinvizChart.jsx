@@ -22,6 +22,8 @@ const buildEmaSeries = (values, period) => {
 };
 const MA_COLORS = { 5: '#ff6b6b', 10: '#ffa94d', 21: '#ffd43b', 50: '#51cf66', 100: '#22b8cf', 200: '#9d27b0' };
 const _defaultMa = [{ type: 'SMA', period: 50 }, { type: 'SMA', period: 200 }];
+const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
+
 const NOOP_SUBSCRIBE = () => () => { };
 let _maSnap = { raw: null, pb: null, val: { lines: _defaultMa, paintBars: false } };
 let _styleSnap = { raw: null, val: 'candles' };
@@ -71,6 +73,8 @@ const areFinvizChartPropsEqual = (prevProps, nextProps) => {
     if (prevProps.enableLivePrice !== nextProps.enableLivePrice) return false;
     if (prevProps.preferMaxHistory !== nextProps.preferMaxHistory) return false;
     if (prevProps.snapshotScope !== nextProps.snapshotScope) return false;
+    if (prevProps.snapshotPerf !== nextProps.snapshotPerf) return false;
+    if (prevProps.snapshotQuote !== nextProps.snapshotQuote) return false;
     return true;
 };
 
@@ -93,6 +97,8 @@ function FinvizChartBase({
     enableLivePrice = false,
     preferMaxHistory = false,
     snapshotScope = 'all',
+    snapshotPerf = null,
+    snapshotQuote = null,
     chartVersion = 0,
     subscribeChartSymbols = null
 }) {
@@ -791,20 +797,25 @@ function FinvizChartBase({
     const allowStrike = allowStrikeProp ?? false;
     const liveData = useLivePrice(shouldLive ? cleaned : '', { allowStrike });
     const snapshotSymbol = useMarketMapSnapshotSymbol(cleaned, snapshotScope);
+    const resolvedSnapshotPerf = snapshotPerf ?? snapshotSymbol?.perf ?? null;
+    const resolvedSnapshotQuote = snapshotQuote ?? snapshotSymbol?.quote ?? null;
 
-    // Map chart timeframe → interval key for actual period performance
-    const TIMEFRAME_TO_INTERVAL = { '1D': '1D', '1W': '5D', '1M': '1M', '1Y': '1Y' };
     const intervalKey = TIMEFRAME_TO_INTERVAL[timeframe] || '1D';
     const cachedPerf = getCachedInterval(cleaned, intervalKey, { silent: true });
-    const snapshotPerfPct = snapshotSymbol?.perf?.[intervalKey];
-    const snapshotQuote = snapshotSymbol?.quote;
+    const snapshotPerfPct = resolvedSnapshotPerf?.[intervalKey];
+    const shouldUseQuoteOnlyDayChange = useExternalSeries && timeframe === '1D';
 
-    let changePct = cachedPerf?.changePct ?? (Number.isFinite(snapshotPerfPct) ? snapshotPerfPct : 0);
-    let change = cachedPerf?.close
-        ? cachedPerf.close - cachedPerf.close / (1 + changePct / 100)
-        : (Number.isFinite(snapshotQuote?.price) && Number.isFinite(changePct)
-            ? snapshotQuote.price - snapshotQuote.price / (1 + changePct / 100)
-            : 0);
+    let changePct = shouldUseQuoteOnlyDayChange
+        ? (Number.isFinite(resolvedSnapshotQuote?.changePct) ? resolvedSnapshotQuote.changePct : 0)
+        : (cachedPerf?.changePct
+            ?? (Number.isFinite(snapshotPerfPct) ? snapshotPerfPct : 0));
+    let change = shouldUseQuoteOnlyDayChange
+        ? (Number.isFinite(resolvedSnapshotQuote?.change) ? resolvedSnapshotQuote.change : 0)
+        : (cachedPerf?.close
+            ? cachedPerf.close - cachedPerf.close / (1 + changePct / 100)
+            : (Number.isFinite(resolvedSnapshotQuote?.price) && Number.isFinite(changePct)
+                ? resolvedSnapshotQuote.price - resolvedSnapshotQuote.price / (1 + changePct / 100)
+                : 0));
 
     // When rendered inside a mobile gallery or pure display mode, disable interaction hooks
     // to allow native browser swiping (overflow-x-auto) to work properly.
@@ -908,9 +919,9 @@ function FinvizChartBase({
     if (timeframe === '1D' && liveData.changePct !== null) {
         change = liveData.change ?? 0;
         changePct = liveData.changePct;
-    } else if (timeframe === '1D' && snapshotQuote && Number.isFinite(snapshotQuote.changePct)) {
-        change = Number.isFinite(snapshotQuote.change) ? snapshotQuote.change : change;
-        changePct = snapshotQuote.changePct;
+    } else if (timeframe === '1D' && resolvedSnapshotQuote && Number.isFinite(resolvedSnapshotQuote.changePct)) {
+        change = Number.isFinite(resolvedSnapshotQuote.change) ? resolvedSnapshotQuote.change : change;
+        changePct = resolvedSnapshotQuote.changePct;
     }
 
     return (

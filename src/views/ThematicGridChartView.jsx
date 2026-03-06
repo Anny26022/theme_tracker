@@ -7,6 +7,7 @@ import { THEMATIC_MAP, MACRO_PILLARS } from '../data/thematicMap';
 import { useChartVersion, useMarketDataRegistry } from '../context/MarketDataContext';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { useThemeChartSnapshot } from '../hooks/useThemeChartSnapshot';
+import { useMarketMapSnapshot } from '../hooks/useMarketMapSnapshot';
 
 const ChartSkeleton = ({ company, height }) => (
     <div className="flex flex-col w-full h-full">
@@ -40,7 +41,7 @@ const ChartSkeleton = ({ company, height }) => (
 
 const DEEP_DIVE_SNAPSHOT_INTERVAL = 'MAX';
 
-const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe, disabled, snapshotScope }) => (
+const FinvizChartCard = React.memo(({ company, series, height, onExpand, initialTimeframe, disabled, snapshotScope, snapshotPerf, snapshotQuote }) => (
     <FinvizChart
         symbol={company.symbol}
         name={company.name}
@@ -51,6 +52,8 @@ const FinvizChartCard = React.memo(({ company, series, height, onExpand, initial
         disabled={disabled}
         useExternalSeries={true}
         snapshotScope={snapshotScope}
+        snapshotPerf={snapshotPerf || null}
+        snapshotQuote={snapshotQuote || null}
     />
 ), (prevProps, nextProps) => {
     if (prevProps.series !== nextProps.series) return false;
@@ -58,6 +61,8 @@ const FinvizChartCard = React.memo(({ company, series, height, onExpand, initial
     if (prevProps.company?.symbol !== nextProps.company?.symbol) return false;
     if (prevProps.company?.name !== nextProps.company?.name) return false;
     if (prevProps.snapshotScope !== nextProps.snapshotScope) return false;
+    if (prevProps.snapshotPerf !== nextProps.snapshotPerf) return false;
+    if (prevProps.snapshotQuote !== nextProps.snapshotQuote) return false;
     return true;
 });
 
@@ -202,6 +207,10 @@ const ThematicGridChartView = ({
         chartSnapshotLoading,
         hasChartSnapshot,
     } = useThemeChartSnapshot(themeName, snapshotScope, DEEP_DIVE_SNAPSHOT_INTERVAL);
+    const {
+        snapshotSymbolPerf,
+        snapshotSymbolQuotes,
+    } = useMarketMapSnapshot(snapshotScope);
 
     // Build the hierarchical menu data based on viewMode
     const switcherData = useMemo(() => {
@@ -248,9 +257,11 @@ const ThematicGridChartView = ({
     const companySeries = useMemo(() => {
         return companies.map((company) => ({
             company,
-            series: seriesBySymbol.get(cleanSymbol(company.symbol)) || []
+            series: seriesBySymbol.get(cleanSymbol(company.symbol)) || [],
+            snapshotPerf: snapshotSymbolPerf?.[cleanSymbol(company.symbol)] || null,
+            snapshotQuote: snapshotSymbolQuotes?.[cleanSymbol(company.symbol)] || null,
         }));
-    }, [companies, seriesBySymbol]);
+    }, [companies, seriesBySymbol, snapshotSymbolPerf, snapshotSymbolQuotes]);
 
     const handleCloseProView = useCallback(() => {
         setProViewSymbol(null);
@@ -388,6 +399,8 @@ const ThematicGridChartView = ({
                                     <FinvizChartCard
                                         company={item.company}
                                         series={item.series}
+                                        snapshotPerf={item.snapshotPerf}
+                                        snapshotQuote={item.snapshotQuote}
                                         height={320}
                                         disabled={true}
                                         onExpand={(data) => {
@@ -414,6 +427,8 @@ const ThematicGridChartView = ({
                                 <FinvizChartCard
                                     company={item.company}
                                     series={item.series}
+                                    snapshotPerf={item.snapshotPerf}
+                                    snapshotQuote={item.snapshotQuote}
                                     height={isMobileMode ? 320 : 280}
                                     onExpand={(data) => {
                                         setProViewSymbol(item.company);

@@ -11,6 +11,12 @@ const SNAPSHOT_KEY_PREFIX = 'market-map/snapshots';
 const CHART_SNAPSHOT_KEY_PREFIX = 'market-map/chart-snapshots/cards';
 const SNAPSHOT_MANIFEST_KEY_PREFIX = 'market-map/manifests';
 const CHART_SNAPSHOT_MANIFEST_KEY_PREFIX = 'market-map/chart-snapshots/manifests/cards';
+const REFRESH_STATE_KEY = 'market-map/refresh/state.json';
+const REFRESH_PARTIAL_KEY_PREFIX = 'market-map/refresh/partials';
+const REFRESH_STATE_VERSION = 1;
+const REFRESH_THEME_SYMBOL_TARGET = 50;
+const REFRESH_THEME_MAX_COUNT = 4;
+const REFRESH_STALE_MS = 45 * 60 * 1000;
 const PRICE_BATCH_SIZE = 500;
 const CHART_BATCH_SIZE = 250;
 const CHART_CONCURRENCY = 3;
@@ -806,11 +812,493 @@ function getThemeChartSnapshotManifestKey(scope, themeName) {
     return `${CHART_SNAPSHOT_MANIFEST_KEY_PREFIX}/${scope}/${encodeThemeSnapshotKey(themeName)}/current.json`;
 }
 
-export async function storeMarketMapSnapshots(env) {
+function getSnapshotBucket(env) {
     const bucket = env?.MARKET_MAP_SNAPSHOTS;
     if (!bucket || typeof bucket.put !== 'function') {
         throw new Error('MARKET_MAP_SNAPSHOTS R2 binding is not configured');
     }
+    return bucket;
+}
+
+function getRefreshPartialKey(jobId, scope, chunkIndex) {
+    return `${REFRESH_PARTIAL_KEY_PREFIX}/${jobId}/${scope}/${chunkIndex}.json`;
+}
+
+async function readJsonObject(bucket, key) {
+    const object = await bucket.get(key);
+    if (!object) return null;
+    return JSON.parse(await object.text());
+}
+
+async function putJsonObject(bucket, key, value, cacheControl = SNAPSHOT_CACHE_CONTROL, customMetadata = {}) {
+    await bucket.put(key, JSON.stringify(value), {
+        httpMetadata: {
+            contentType: 'application/json; charset=utf-8',
+            cacheControl,
+        },
+        customMetadata,
+    });
+}
+
+function createSelectedThemeMap(themeToCompanies, themeNames) {
+    const selected = new Map();
+    themeNames.forEach((themeName) => {
+        selected.set(themeName, themeToCompanies.get(themeName) || []);
+    });
+    return selected;
+}
+
+function buildRefreshPlan() {
+    const hierarchyData = buildHierarchyFromRawData(rawMarketData);
+    const allMapping = buildThemeToCompanies(hierarchyData, { includeBse: true });
+    const nseMapping = buildThemeToCompanies(hierarchyData, { includeBse: false });
+    const themeNames = Array.from(allMapping.themeToCompanies.keys());
+    const chunks = [];
+    let currentThemes = [];
+    let currentSymbols = new Set();
+
+    const flushChunk = () => {
+        if (currentThemes.length === 0) return;
+        chunks.push({
+            index: chunks.length,
+            themes: currentThemes,
+            symbols: Array.from(currentSymbols).sort(),
+        });
+        currentThemes = [];
+        currentSymbols = new Set();
+    };
+
+    themeNames.forEach((themeName) => {
+        const companies = allMapping.themeToCompanies.get(themeName) || [];
+        const themeSymbols = companies
+            .map((company) => cleanSymbol(company?.symbol))
+            .filter(Boolean);
+        const nextSymbols = new Set([...currentSymbols, ...themeSymbols]);
+        const wouldOverflowSymbols = currentThemes.length > 0 && nextSymbols.size > REFRESH_THEME_SYMBOL_TARGET;
+        const wouldOverflowThemes = currentThemes.length >= REFRESH_THEME_MAX_COUNT;
+
+        if (wouldOverflowSymbols || wouldOverflowThemes) {
+            flushChunk();
+        }
+
+        currentThemes.push(themeName);
+        themeSymbols.forEach((symbol) => currentSymbols.add(symbol));
+    });
+
+    flushChunk();
+
+    return {
+        allMapping,
+        nseMapping,
+        chunks,
+    };
+}
+
+function buildChunkPerfMaps(symbols, livePrices, oneYearBaseCharts, maxBaseCharts) {
+    const perfByInterval = new Map(SNAPSHOT_INTERVALS.map((interval) => [interval, new Map()]));
+
+    symbols.forEach((symbol) => {
+        const liveData = livePrices.get(symbol) || null;
+        const oneYearSeries = oneYearBaseCharts.get(symbol) || null;
+        const maxSeries = maxBaseCharts.get(symbol) || null;
+
+        const oneDay = deriveOneDayPerf(liveData, oneYearSeries || maxSeries);
+        if (oneDay) perfByInterval.get('1D').set(symbol, oneDay);
+
+        ['5D', '1M', '3M', '6M', '1Y', 'YTD'].forEach((interval) => {
+            const derived = deriveIntervalPerfFromBaseSeries(oneYearSeries, interval, liveData?.price);
+            if (derived) perfByInterval.get(interval).set(symbol, derived);
+        });
+
+        ['5Y', 'MAX'].forEach((interval) => {
+            const derived = deriveIntervalPerfFromBaseSeries(maxSeries, interval, liveData?.price);
+            if (derived) perfByInterval.get(interval).set(symbol, derived);
+        });
+    });
+
+    return perfByInterval;
+}
+
+function buildScopeChunkPartial(scope, selectedThemes, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals) {
+    const metrics = buildScopeCoverage(selectedThemes, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals);
+    return {
+        scope,
+        symbolCount: metrics.symbolCount,
+        themeCount: selectedThemes.size,
+        coverage: metrics.coverage,
+        heatmapData: aggregateHeatmap(selectedThemes, perfByInterval),
+        themeConstituents: buildThemeConstituents(selectedThemes),
+        symbolPerf: buildScopeSymbolPerf(selectedThemes, perfByInterval),
+        symbolQuotes: buildScopeSymbolQuotes(selectedThemes, livePrices, perfByInterval),
+        symbolTechnicals: buildScopeSymbolTechnicals(selectedThemes, symbolTechnicals),
+    };
+}
+
+async function writeScopeSnapshot(bucket, scope, snapshot, versionId) {
+    const versionKey = getSnapshotVersionKey(scope, versionId);
+    const manifestKey = getSnapshotManifestKey(scope);
+    const manifest = {
+        version: SNAPSHOT_VERSION,
+        versionId,
+        scope,
+        generatedAt: snapshot.generatedAt,
+        payloadKey: versionKey,
+    };
+
+    await Promise.all([
+        putJsonObject(bucket, versionKey, snapshot, SNAPSHOT_IMMUTABLE_CACHE_CONTROL, {
+            generatedAt: snapshot.generatedAt,
+            scope,
+            version: String(SNAPSHOT_VERSION),
+            versionId,
+        }),
+        putJsonObject(bucket, manifestKey, manifest, SNAPSHOT_CACHE_CONTROL, {
+            generatedAt: snapshot.generatedAt,
+            scope,
+            version: String(SNAPSHOT_VERSION),
+            versionId,
+            kind: 'manifest',
+        }),
+        putJsonObject(bucket, getSnapshotKey(scope), snapshot, SNAPSHOT_CACHE_CONTROL, {
+            generatedAt: snapshot.generatedAt,
+            scope,
+            version: String(SNAPSHOT_VERSION),
+            versionId,
+        }),
+    ]);
+}
+
+async function writeThemeChartSnapshots(bucket, scope, chartSnapshots, versionId) {
+    const writes = Array.from(chartSnapshots.entries()).flatMap(([themeName, snapshot]) => {
+        const versionKey = getThemeChartSnapshotVersionKey(scope, themeName, versionId);
+        const manifestKey = getThemeChartSnapshotManifestKey(scope, themeName);
+        const manifest = {
+            version: CHART_SNAPSHOT_VERSION,
+            versionId,
+            scope,
+            theme: themeName,
+            generatedAt: snapshot.generatedAt,
+            payloadKey: versionKey,
+        };
+
+        return [
+            putJsonObject(bucket, versionKey, snapshot, SNAPSHOT_IMMUTABLE_CACHE_CONTROL, {
+                generatedAt: snapshot.generatedAt,
+                scope,
+                theme: themeName,
+                interval: '1Y',
+                version: String(CHART_SNAPSHOT_VERSION),
+                versionId,
+            }),
+            putJsonObject(bucket, manifestKey, manifest, SNAPSHOT_CACHE_CONTROL, {
+                generatedAt: snapshot.generatedAt,
+                scope,
+                theme: themeName,
+                interval: '1Y',
+                version: String(CHART_SNAPSHOT_VERSION),
+                versionId,
+                kind: 'manifest',
+            }),
+            putJsonObject(bucket, getThemeChartSnapshotKey(scope, themeName), snapshot, SNAPSHOT_CACHE_CONTROL, {
+                generatedAt: snapshot.generatedAt,
+                scope,
+                theme: themeName,
+                interval: '1Y',
+                version: String(CHART_SNAPSHOT_VERSION),
+                versionId,
+            }),
+        ];
+    });
+
+    await Promise.all(writes);
+}
+
+function createRefreshState({ source = 'manual' } = {}) {
+    const { chunks } = buildRefreshPlan();
+    const now = new Date().toISOString();
+    return {
+        version: REFRESH_STATE_VERSION,
+        jobId: String(Date.now()),
+        status: 'running',
+        source,
+        createdAt: now,
+        updatedAt: now,
+        generatedAt: now,
+        versionId: String(Date.now()),
+        chunkCount: chunks.length,
+        nextChunkIndex: 0,
+        lastError: null,
+        completedAt: null,
+    };
+}
+
+async function readRefreshState(bucket) {
+    return readJsonObject(bucket, REFRESH_STATE_KEY);
+}
+
+async function writeRefreshState(bucket, state) {
+    const nextState = {
+        ...state,
+        updatedAt: new Date().toISOString(),
+    };
+    await putJsonObject(bucket, REFRESH_STATE_KEY, nextState, 'no-store', {
+        status: nextState.status,
+        jobId: nextState.jobId,
+        version: String(REFRESH_STATE_VERSION),
+    });
+    return nextState;
+}
+
+function isRefreshStateStale(state) {
+    const updatedAt = Date.parse(state?.updatedAt || state?.createdAt || '');
+    if (!Number.isFinite(updatedAt)) return true;
+    return (Date.now() - updatedAt) > REFRESH_STALE_MS;
+}
+
+async function processRefreshChunk(bucket, state, chunkIndex) {
+    const { allMapping, nseMapping, chunks } = buildRefreshPlan();
+    const chunk = chunks[chunkIndex];
+    if (!chunk) {
+        throw new Error(`Market map refresh chunk ${chunkIndex} is out of range`);
+    }
+
+    const livePrices = await fetchLivePriceMap(chunk.symbols);
+    const [oneYearWideCharts, maxBaseCharts] = await Promise.all([
+        fetchOneYearWideChartSeriesMap(chunk.symbols),
+        fetchMaxChartSeriesMap(chunk.symbols),
+    ]);
+
+    const oneYearBaseCharts = new Map();
+    oneYearWideCharts.forEach((series, symbol) => {
+        oneYearBaseCharts.set(symbol, series.map((point) => ({ time: point.time, close: point.close })));
+    });
+
+    const perfByInterval = buildChunkPerfMaps(chunk.symbols, livePrices, oneYearBaseCharts, maxBaseCharts);
+    const symbolTechnicals = buildSymbolTechnicals(oneYearBaseCharts, livePrices);
+
+    const allSelectedThemes = createSelectedThemeMap(allMapping.themeToCompanies, chunk.themes);
+    const nseSelectedThemes = createSelectedThemeMap(nseMapping.themeToCompanies, chunk.themes);
+    const allChartSnapshots = buildThemeChartSnapshots('all', allSelectedThemes, oneYearWideCharts, state.generatedAt);
+    const nseChartSnapshots = buildThemeChartSnapshots('nse', nseSelectedThemes, oneYearWideCharts, state.generatedAt);
+
+    await Promise.all([
+        putJsonObject(bucket, getRefreshPartialKey(state.jobId, 'all', chunkIndex), buildScopeChunkPartial('all', allSelectedThemes, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals), SNAPSHOT_CACHE_CONTROL, {
+            jobId: state.jobId,
+            scope: 'all',
+            chunkIndex: String(chunkIndex),
+        }),
+        putJsonObject(bucket, getRefreshPartialKey(state.jobId, 'nse', chunkIndex), buildScopeChunkPartial('nse', nseSelectedThemes, perfByInterval, livePrices, oneYearBaseCharts, maxBaseCharts, symbolTechnicals), SNAPSHOT_CACHE_CONTROL, {
+            jobId: state.jobId,
+            scope: 'nse',
+            chunkIndex: String(chunkIndex),
+        }),
+        writeThemeChartSnapshots(bucket, 'all', allChartSnapshots, state.versionId),
+        writeThemeChartSnapshots(bucket, 'nse', nseChartSnapshots, state.versionId),
+    ]);
+}
+
+function mergeCoverageTotals(target, source) {
+    target.coveredSymbols += Number(source?.coveredSymbols || 0);
+    target.livePriceSymbols += Number(source?.livePriceSymbols || 0);
+    target.oneYearBaseChartSymbols += Number(source?.oneYearBaseChartSymbols || 0);
+    target.maxBaseChartSymbols += Number(source?.maxBaseChartSymbols || 0);
+    target.technicalSymbols += Number(source?.technicalSymbols || 0);
+}
+
+async function finalizeRefreshState(bucket, state) {
+    const mergedScopes = new Map();
+
+    for (const scope of ['all', 'nse']) {
+        const merged = {
+            version: SNAPSHOT_VERSION,
+            generatedAt: state.generatedAt,
+            scope,
+            intervals: SNAPSHOT_INTERVALS,
+            symbolCount: 0,
+            themeCount: 0,
+            coverage: {
+                coveredSymbols: 0,
+                livePriceSymbols: 0,
+                oneYearBaseChartSymbols: 0,
+                maxBaseChartSymbols: 0,
+                technicalSymbols: 0,
+            },
+            heatmapData: {},
+            themeConstituents: {},
+            symbolPerf: {},
+            symbolQuotes: {},
+            symbolTechnicals: {},
+        };
+
+        for (let chunkIndex = 0; chunkIndex < state.chunkCount; chunkIndex += 1) {
+            const partial = await readJsonObject(bucket, getRefreshPartialKey(state.jobId, scope, chunkIndex));
+            if (!partial) {
+                throw new Error(`Missing ${scope} partial for chunk ${chunkIndex} in job ${state.jobId}`);
+            }
+
+            merged.symbolCount += Number(partial.symbolCount || 0);
+            merged.themeCount += Number(partial.themeCount || 0);
+            mergeCoverageTotals(merged.coverage, partial.coverage || {});
+            Object.assign(merged.heatmapData, partial.heatmapData || {});
+            Object.assign(merged.themeConstituents, partial.themeConstituents || {});
+            Object.assign(merged.symbolPerf, partial.symbolPerf || {});
+            Object.assign(merged.symbolQuotes, partial.symbolQuotes || {});
+            Object.assign(merged.symbolTechnicals, partial.symbolTechnicals || {});
+        }
+
+        mergedScopes.set(scope, merged);
+    }
+
+    await Promise.all(Array.from(mergedScopes.entries()).map(([scope, snapshot]) =>
+        writeScopeSnapshot(bucket, scope, snapshot, state.versionId)
+    ));
+
+    const partialKeys = [];
+    for (const scope of ['all', 'nse']) {
+        for (let chunkIndex = 0; chunkIndex < state.chunkCount; chunkIndex += 1) {
+            partialKeys.push(getRefreshPartialKey(state.jobId, scope, chunkIndex));
+        }
+    }
+    if (partialKeys.length > 0 && typeof bucket.delete === 'function') {
+        await bucket.delete(partialKeys);
+    }
+
+    return {
+        ...state,
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        lastError: null,
+    };
+}
+
+function getRefreshSelfUrl(env) {
+    const configured = String(env?.MARKET_MAP_REFRESH_SELF_URL || '').trim();
+    if (configured) return configured.replace(/\/+$/, '');
+    return 'https://nexus.themetracker.workers.dev';
+}
+
+async function dispatchRefreshContinuation(env, payload) {
+    const token = String(env?.MARKET_MAP_REFRESH_TOKEN || '').trim();
+    if (!token) {
+        throw new Error('MARKET_MAP_REFRESH_TOKEN secret is not configured');
+    }
+
+    const response = await fetch(`${getRefreshSelfUrl(env)}/api/internal/market-map-refresh`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`Failed to dispatch market map refresh continuation: ${response.status} ${body.slice(0, 200)}`);
+    }
+}
+
+async function failRefreshState(bucket, state, error) {
+    const failedState = {
+        ...state,
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+        lastError: error?.message || 'Unknown error',
+    };
+    await writeRefreshState(bucket, failedState);
+    return failedState;
+}
+
+export async function readMarketMapRefreshState(env) {
+    const bucket = getSnapshotBucket(env);
+    return readRefreshState(bucket);
+}
+
+export async function triggerMarketMapRefresh(env, options = {}) {
+    const bucket = getSnapshotBucket(env);
+    const { force = false, source = 'manual' } = options;
+    let state = await readRefreshState(bucket);
+
+    if (!force && state?.status === 'running' && !isRefreshStateStale(state)) {
+        return state;
+    }
+
+    if (!force && state?.status === 'finalizing' && !isRefreshStateStale(state)) {
+        return state;
+    }
+
+    state = createRefreshState({ source });
+    return writeRefreshState(bucket, state);
+}
+
+export async function advanceMarketMapRefresh(env, options = {}) {
+    const bucket = getSnapshotBucket(env);
+    const { force = false, jobId = '', source = 'manual' } = options;
+    let state = await readRefreshState(bucket);
+
+    if (jobId && state?.jobId && state.jobId !== jobId) {
+        return state;
+    }
+
+    if (!state || force || isRefreshStateStale(state) || state.status === 'failed' || state.status === 'completed') {
+        if (jobId && state?.status === 'completed') {
+            return state;
+        }
+        state = await triggerMarketMapRefresh(env, { force: true, source });
+    }
+
+    try {
+        if (state.status === 'running' && state.nextChunkIndex < state.chunkCount) {
+            const chunkIndex = state.nextChunkIndex;
+            await processRefreshChunk(bucket, state, chunkIndex);
+            state = await writeRefreshState(bucket, {
+                ...state,
+                status: chunkIndex + 1 >= state.chunkCount ? 'finalizing' : 'running',
+                nextChunkIndex: chunkIndex + 1,
+                lastError: null,
+            });
+
+            if (state.status !== 'completed' && state.nextChunkIndex <= state.chunkCount) {
+                try {
+                    await dispatchRefreshContinuation(env, {
+                        jobId: state.jobId,
+                        source: state.source,
+                    });
+                } catch (error) {
+                    console.warn('Market map refresh continuation dispatch deferred', {
+                        jobId: state.jobId,
+                        nextChunkIndex: state.nextChunkIndex,
+                        error: error?.message || 'Unknown error',
+                    });
+                    return writeRefreshState(bucket, {
+                        ...state,
+                        lastError: error?.message || 'Unknown error',
+                    });
+                }
+            }
+
+            return state;
+        }
+
+        if (state.status === 'finalizing') {
+            state = await finalizeRefreshState(bucket, state);
+            return writeRefreshState(bucket, state);
+        }
+
+        return state;
+    } catch (error) {
+        console.error('Market map refresh failed', {
+            jobId: state?.jobId || '',
+            status: state?.status || '',
+            nextChunkIndex: state?.nextChunkIndex ?? null,
+            error: error?.message || 'Unknown error',
+        });
+        return failRefreshState(bucket, state || createRefreshState({ source }), error);
+    }
+}
+
+export async function storeMarketMapSnapshots(env) {
+    const bucket = getSnapshotBucket(env);
 
     const { marketSnapshots, chartSnapshots } = await buildMarketMapArtifacts();
     const versionId = String(Date.now());

@@ -1,6 +1,7 @@
 name = "nexus"
 main = "cloudflare/worker.mjs"
 compatibility_date = "2026-03-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 workers_dev = true
 
 [assets]
@@ -10,6 +11,7 @@ binding = "ASSETS"
 [vars]
 # Optional fallback origin. Leave empty for fully standalone Cloudflare mode.
 # ORIGIN_BASE_URL = "https://your-origin.example.com"
+MARKET_MAP_REFRESH_SELF_URL = "https://nexus.themetracker.workers.dev"
 
 [[r2_buckets]]
 binding = "MARKET_MAP_SNAPSHOTS"

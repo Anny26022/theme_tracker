@@ -7,13 +7,14 @@
  */
 
 import {
+    advanceMarketMapRefresh,
     readMarketMapSnapshot,
+    readMarketMapRefreshState,
     readMarketMapSnapshotManifest,
     readMarketMapSnapshotVersion,
     readThemeChartSnapshot,
     readThemeChartSnapshotManifest,
-    readThemeChartSnapshotVersion,
-    storeMarketMapSnapshots
+    readThemeChartSnapshotVersion
 } from './marketMapSnapshot.mjs';
 
 const API_V1_REWRITES = new Map([
@@ -23,7 +24,7 @@ const API_V1_REWRITES = new Map([
 ]);
 
 const TV_UPSTREAM_BASE = 'https://www.tradingview.com/api/v1';
-const WORKER_BUILD_ID = '2026-03-05-006';
+const WORKER_BUILD_ID = '2026-03-06-007';
 
 const AES_KEY_BYTES = new Uint8Array([
     0x4a, 0x9c, 0x2e, 0xf1, 0x83, 0xd7, 0x56, 0xbb,
@@ -77,6 +78,46 @@ function withSnapshotDebugHeaders(headers, values = {}) {
         'X-Snapshot-Cache-Policy': values.cachePolicy || '',
         'X-Worker-Cache': values.workerCache || '',
     };
+}
+
+function getAuthorizationBearerToken(request) {
+    const header = request.headers.get('authorization') || '';
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1].trim() : '';
+}
+
+function isMarketMapRefreshAuthorized(request, env) {
+    const expected = String(env?.MARKET_MAP_REFRESH_TOKEN || '').trim();
+    if (!expected) return false;
+    return getAuthorizationBearerToken(request) === expected;
+}
+
+async function parseOptionalJsonRequest(request) {
+    const contentType = request.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+        return {};
+    }
+
+    try {
+        return await request.json();
+    } catch {
+        return {};
+    }
+}
+
+function logMarketMapRefreshFailure(source, error) {
+    console.error('Market map refresh background failure', {
+        source,
+        error: error?.message || 'Unknown error',
+    });
+}
+
+function enqueueMarketMapRefresh(ctx, env, source, options = {}) {
+    if (!ctx?.waitUntil) return;
+    ctx.waitUntil(
+        advanceMarketMapRefresh(env, { source, force: options.force === true })
+            .catch((error) => logMarketMapRefreshFailure(source, error))
+    );
 }
 
 function buildWorkerCacheKey(url) {
@@ -520,6 +561,64 @@ async function handleWorkerVersion(request) {
     });
 }
 
+async function handleMarketMapRefreshInternal(request, env) {
+    if (request.method === 'OPTIONS') {
+        return createOptionsResponse('POST, OPTIONS', 'Authorization, Content-Type');
+    }
+    if (request.method !== 'POST') {
+        return createMethodNotAllowedResponse('POST, OPTIONS');
+    }
+    if (!isMarketMapRefreshAuthorized(request, env)) {
+        return createJsonResponse(403, { ok: false, error: 'Forbidden' });
+    }
+
+    const body = await parseOptionalJsonRequest(request);
+    const state = await advanceMarketMapRefresh(env, {
+        jobId: String(body?.jobId || ''),
+        source: String(body?.source || 'internal'),
+        force: body?.force === true,
+    });
+    return createJsonResponse(202, {
+        ok: true,
+        state,
+    });
+}
+
+async function handleMarketMapRefreshAdmin(request, env, url) {
+    if (request.method === 'OPTIONS') {
+        return createOptionsResponse('GET, POST, OPTIONS', 'Authorization, Content-Type');
+    }
+    if (!isMarketMapRefreshAuthorized(request, env)) {
+        return createJsonResponse(403, { ok: false, error: 'Forbidden' });
+    }
+
+    if (url.pathname === '/api/admin/market-map-refresh/status') {
+        if (request.method !== 'GET') {
+            return createMethodNotAllowedResponse('GET, OPTIONS');
+        }
+        const state = await readMarketMapRefreshState(env);
+        return createJsonResponse(200, {
+            ok: true,
+            state,
+        });
+    }
+
+    if (request.method !== 'POST') {
+        return createMethodNotAllowedResponse('POST, OPTIONS');
+    }
+
+    const body = await parseOptionalJsonRequest(request);
+    const state = await advanceMarketMapRefresh(env, {
+        jobId: String(body?.jobId || ''),
+        source: String(body?.source || 'admin'),
+        force: body?.force === true,
+    });
+    return createJsonResponse(202, {
+        ok: true,
+        state,
+    });
+}
+
 function handleRemovedNseRoutes(request) {
     if (request.method === 'OPTIONS') return createOptionsResponse('GET, POST, OPTIONS');
     return createJsonResponse(410, {
@@ -569,9 +668,7 @@ async function handleMarketMapSnapshot(request, env, url, ctx) {
                 if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
                 return response;
             }
-            if (ctx?.waitUntil) {
-                ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
-            }
+            enqueueMarketMapRefresh(ctx, env, 'snapshot-missing-manifest');
             return createJsonResponse(404, {
                 ok: false,
                 error: 'Market Map snapshot manifest not found',
@@ -739,9 +836,7 @@ async function handleMarketMapChartSnapshot(request, env, url, ctx) {
                 if (ctx?.waitUntil) ctx.waitUntil(putWorkerCache(url, response));
                 return response;
             }
-            if (ctx?.waitUntil) {
-                ctx.waitUntil(storeMarketMapSnapshots(env).catch(() => {}));
-            }
+            enqueueMarketMapRefresh(ctx, env, 'chart-missing-manifest');
             return createJsonResponse(404, {
                 ok: false,
                 error: 'Market Map chart snapshot manifest not found',
@@ -874,6 +969,11 @@ async function handleApi(request, env, url, ctx) {
     }
 
     switch (url.pathname) {
+        case '/api/internal/market-map-refresh':
+            return handleMarketMapRefreshInternal(request, env);
+        case '/api/admin/market-map-refresh':
+        case '/api/admin/market-map-refresh/status':
+            return handleMarketMapRefreshAdmin(request, env, url);
         case '/api/market-map/snapshot':
             return handleMarketMapSnapshot(request, env, url, ctx);
         case '/api/market-map/snapshot/version':
@@ -917,6 +1017,6 @@ export default {
     },
 
     async scheduled(_controller, env, ctx) {
-        ctx.waitUntil(storeMarketMapSnapshots(env));
+        enqueueMarketMapRefresh(ctx, env, 'scheduled');
     },
 };

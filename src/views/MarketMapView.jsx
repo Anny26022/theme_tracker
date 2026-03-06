@@ -938,7 +938,7 @@ const MarketMapViewComponent = ({ hierarchy }) => {
         snapshotResolved,
     } = useMarketMapSnapshot(snapshotScope);
     const hasSnapshotThemeCompanies = hasThemeConstituents(snapshotThemeConstituents);
-    const shouldLoadHierarchyFallback = !hierarchy && snapshotResolved && !hasSnapshot;
+    const shouldLoadHierarchyFallback = !hierarchy && snapshotResolved && (!hasSnapshot || !hasSnapshotThemeCompanies);
     const { hierarchy: fallbackHierarchy, loading: hierarchyFallbackLoading } = useMarketData({ enabled: shouldLoadHierarchyFallback });
     const resolvedHierarchy = hierarchy || fallbackHierarchy;
     const scopedSnapshotThemeCompaniesMap = hasSnapshotThemeCompanies ? snapshotThemeConstituents : null;

@@ -186,14 +186,16 @@ export function mergeMarketMapHeatmapData(snapshotHeatmapData, liveHeatmapData) 
 }
 
 export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
-    const [revision, setRevision] = useState(0);
+    const [snapshotState, setSnapshotState] = useState(() => readScopeSnapshot(scope));
     const [networkState, setNetworkState] = useState({
         loading: Boolean(scope),
         resolved: false,
         error: null
     });
 
-    const snapshotState = useMemo(() => readScopeSnapshot(scope), [scope, revision]);
+    useEffect(() => {
+        setSnapshotState(readScopeSnapshot(scope));
+    }, [scope]);
     const snapshotHeatmapData = snapshotState?.heatmapData || null;
     const snapshotThemeConstituents = snapshotState?.themeConstituents || null;
     const snapshotSymbolPerf = snapshotState?.symbolPerf || null;
@@ -231,7 +233,7 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
                 const snapshot = await fetchRemoteSnapshotVersion(scope, manifest.versionId);
                 if (cancelled || !snapshot) return;
 
-                writeScopeSnapshot(scope, {
+                const nextSnapshotState = {
                     generatedAtMs: Date.parse(snapshot.generatedAt) || Date.now(),
                     versionId: manifest.versionId,
                     complete: true,
@@ -241,8 +243,10 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
                     symbolQuotes: snapshot.symbolQuotes,
                     symbolTechnicals: snapshot.symbolTechnicals,
                     source: 'server'
-                });
-                setRevision((value) => value + 1);
+                };
+
+                writeScopeSnapshot(scope, nextSnapshotState);
+                setSnapshotState(nextSnapshotState);
                 setNetworkState({ loading: false, resolved: true, error: null });
             } catch (error) {
                 if (cancelled) return;
@@ -261,13 +265,13 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
         if (!scope || !hasAnyHeatmapValues(liveHeatmapData)) return;
 
         const nextComplete = !Array.isArray(pendingIntervals) || pendingIntervals.length === 0;
-        const currentSnapshot = readScopeSnapshot(scope);
+        const currentSnapshot = snapshotState;
 
         // Persist client-derived fallback snapshots only when there is no server snapshot yet.
         const shouldPersist = !currentSnapshot || (currentSnapshot.source !== 'server' && !currentSnapshot.complete && nextComplete);
         if (!shouldPersist) return;
 
-        writeScopeSnapshot(scope, {
+        const nextSnapshotState = {
             generatedAtMs: Date.now(),
             versionId: currentSnapshot?.versionId || null,
             complete: nextComplete,
@@ -277,9 +281,11 @@ export function useMarketMapSnapshot(scope, liveHeatmapData, pendingIntervals) {
             symbolQuotes: currentSnapshot?.symbolQuotes || {},
             symbolTechnicals: currentSnapshot?.symbolTechnicals || {},
             source: 'client'
-        });
-        setRevision((value) => value + 1);
-    }, [scope, liveHeatmapData, pendingIntervals]);
+        };
+
+        writeScopeSnapshot(scope, nextSnapshotState);
+        setSnapshotState(nextSnapshotState);
+    }, [scope, liveHeatmapData, pendingIntervals, snapshotState]);
 
     return {
         snapshotHeatmapData,

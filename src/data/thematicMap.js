@@ -93,7 +93,6 @@ export const THEMATIC_MAP = [
         title: "ENGINEERING & MANUFACTURING",
         themes: [
             { name: "Heavy Electrical Equip", symbols: ["BHEL", "ENRIN", "AZAD", "ELECON", "GVPIL", "INOXWIND", "TDPOWERSYS", "THERMAX", "SKIPPER", "TRANSRAILL", "TARIL", "BAJEL", "544150", "ATLANTAELE"] },
-            { name: "Compressors & Pumps", industries: ["Compressors, Pumps & Diesel Engines Companies"] },
             { name: "Refractories", industries: ["Electrodes & Refractories Companies"], symbols: ["RHIM", "ORIENTREF", "IFGL"] },
             { name: "Welding & Cryogenics", industries: ["Industrial Gases Companies"], symbols: ["ESABINDIA", "ADORWELD"] },
             { name: "Material Handling & Storage", industries: ["Food Storage Facilities Companies"], symbols: ["ACTIONCONST", "ELGI EQUIP"] },
@@ -160,8 +159,7 @@ export const THEMATIC_MAP = [
             { name: "Footwear & Leather", industries: ["Footwear Companies", "Leather And Leather Products Companies"], symbols: ["RELAXO", "BATAINDIA", "CAMPUS", "METROBRAND", "MIRZAINT", "MAYURUNIQ"] },
             { name: "Apparel Retail Chains", industries: ["Speciality Retail Companies", "Trading - Textile Products Companies"], symbols: ["ABFRL", "V2RETAIL", "GOKEX", "TCNSBRANDS", "ETHOSLTD"] },
             { name: "Hypermarkets & Dept. Stores", industries: ["Diversified Retail Companies"], symbols: ["TRENT", "DMART", "WESTLIFE"] },
-            { name: "Heath & Pharma Retail", industries: ["Pharmacy Retail Companies"], symbols: ["MEDPLUS"] },
-            { name: "E-Retail & Digital Direct", industries: ["E-Retail/ E-Commerce Companies"], symbols: ["NYKAA", "MEESHO", "FIRSTCRY", "URBANCO", "WOMANCART"] }
+            { name: "Heath & Pharma Retail", industries: ["Pharmacy Retail Companies"], symbols: ["MEDPLUS"] }
         ]
     },
     {
@@ -284,7 +282,6 @@ export const THEMATIC_MAP = [
     {
         title: "Env & Sustainability",
         themes: [
-            { name: "Environmental Eng.", industries: ["Engineering Services Companies"] },
             { name: "Waste Management", industries: ["Waste Management Companies"] },
             { name: "Water & Effluent Mgmt", industries: ["Water Supply & Management Companies", "Other Utilities Companies"], symbols: ["IONEXCHANG", "VA TECH WABAG"] }
         ]
@@ -294,7 +291,6 @@ export const THEMATIC_MAP = [
         title: "DATA CENTER ECOSYSTEM",
         themes: [
             { name: "Power Grid & Distribution", industries: ["Power Distribution Companies"], symbols: ["POWERGRID", "RECLTD", "PFC"] },
-            { name: "Hardware & Server Proxies", symbols: ["NETWEB", "ABB", "SIEMENS", "E2E"] },
             { name: "EPC / Buildout", industries: ["Civil Construction Companies"], symbols: ["LT"] }
         ]
     },
@@ -303,7 +299,6 @@ export const THEMATIC_MAP = [
         themes: [
             { name: "Diversified Conglomerates", industries: ["Diversified Companies"], symbols: ["RELIANCE", "ADANIENT", "ITC", "GRASIM"] },
             { name: "Commodity Trading", industries: ["Trading - Minerals Companies", "Trading - Metals Companies", "Trading - Chemicals Companies"] },
-            { name: "PSU / State Enterprises", symbols: ["PFC", "RECLTD", "HAL", "BEL", "RVNL", "IRFC", "MAZDOCK", "COALINDIA"] },
             { name: "General Trading & Dist.", industries: ["Trading & Distributors Companies", "Distributors Companies"] }
         ]
     }
